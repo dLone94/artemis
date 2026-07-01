@@ -1281,7 +1281,10 @@ async function handleRequest(req, res) {
       let upstream = null;
       let used = "deepgram";
       if (provider === "elevenlabs" && elevenEnabled) {
-        upstream = await elevenTTSResponse(text, elevenVoiceId);
+        // allow a specific ElevenLabs voice id from the picker (strictly validated)
+        const reqVoice = url.searchParams.get("voice") || "";
+        const vid = /^[A-Za-z0-9]{16,40}$/.test(reqVoice) ? reqVoice : elevenVoiceId;
+        upstream = await elevenTTSResponse(text, vid);
         if (upstream && upstream.ok) used = "elevenlabs";
         else upstream = null;
       }

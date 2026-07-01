@@ -218,8 +218,10 @@
           <option value="aura-2-vesta-en">Vesta</option>
           <option value="aura-2-helena-en">Helena</option>
           <option value="aura-2-apollo-en">Apollo</option>
-          <!-- verified against Deepgram /v1/models: accent=British, feminine, smooth/calm/melodic -->
-          <option value="aura-2-pandora-en">Pandora (British)</option>
+          <!-- human British voices via ElevenLabs (verified live on this account);
+               falls back to Deepgram automatically if the monthly quota runs out -->
+          <option value="eleven:pFZP5JQG7iQjIQuC4Bku">Lily (British)</option>
+          <option value="eleven:Xb7hH8MSUJpSbSDYk0k2">Alice (British)</option>
           <option value="aura-luna-en">Luna (older)</option>
         </select>
       </label>

@@ -131,11 +131,15 @@ const ttsEl = new Audio();
 let speaking = false;
 
 // Streaming TTS URL — the browser plays it progressively (first frames ~0.5s).
+// Voice values: "aura-*" → Deepgram; "eleven:<voiceId>" → that ElevenLabs voice
+// (e.g. Lily, British); legacy "elevenlabs" → the server's default eleven voice.
 function ttsUrl(text) {
-  const p =
-    settings.voice === "elevenlabs"
+  const v = settings.voice || "";
+  const p = v.startsWith("eleven:")
+    ? { text, provider: "elevenlabs", voice: v.slice(7) }
+    : v === "elevenlabs"
       ? { text, provider: "elevenlabs" }
-      : { text, provider: "deepgram", voice: settings.voice };
+      : { text, provider: "deepgram", voice: v };
   return "/api/tts?" + new URLSearchParams(p).toString();
 }
 
