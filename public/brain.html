@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Brain · Artemis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="app.css" />
+  <link rel="stylesheet" href="brain.css" />
+</head>
+<body class="page bp-body">
+  <nav class="nav scrolled" id="nav">
+    <div class="nav-inner">
+      <a class="brand" href="index.html"><span class="brand-dot"></span> Artemis</a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="index.html#features">Features</a>
+        <a href="index.html#team">Agents</a>
+        <a href="index.html#demo">Proof</a>
+      </nav>
+      <a class="nav-cta" href="index.html">← BACK HOME</a>
+    </div>
+  </nav>
+
+  <main class="bp-main">
+    <!-- LEFT: visualization pane (cinematic orb ⇄ engineer graph) -->
+    <section class="bp-left" aria-label="Pipeline visualization">
+      <div class="bp-viewtoggle" role="group" aria-label="Visualization view">
+        <button class="bp-view" id="viewCinematic" type="button" aria-pressed="true">Cinematic</button>
+        <button class="bp-view" id="viewEngineer" type="button" aria-pressed="false">Engineer</button>
+      </div>
+
+      <div class="bp-viz">
+        <!-- CinematicOrb: the existing BrainOrb renderer, unchanged -->
+        <div class="bp-pane" id="cinematicPane">
+          <div class="brain-orb bp-orb" id="brainOrb" role="img"
+               aria-label="Diagram of Artemis routing a request through wake, route, tool call, and respond to a sub-agent"></div>
+        </div>
+        <!-- EngineerGraph: node rail Mic→Wake→Router→Agent→Tool→LLM→TTS -->
+        <div class="bp-pane" id="engineerPane" hidden>
+          <div class="bp-rail" id="bpRail" role="img" aria-label="Engineering view: the request travels Mic, Wake, Router, Agent, Tool, LLM, TTS">
+            <div class="bp-track" aria-hidden="true"></div>
+            <div class="bp-packet" id="bpPacket" aria-hidden="true"></div>
+            <!-- nodes injected by brainPage.js -->
+          </div>
+        </div>
+      </div>
+
+      <p class="brain-caption bp-caption" id="brainCaption" aria-live="polite"></p>
+
+      <!-- StepControls + RouteChips: same classes/labels as the home Brain section -->
+      <div class="brain-steps" role="group" aria-label="Pipeline steps">
+        <button class="brain-step is-active" type="button" data-step="0">1 · Wake</button>
+        <button class="brain-step" type="button" data-step="1">2 · Route</button>
+        <button class="brain-step" type="button" data-step="2">3 · Tool call</button>
+        <button class="brain-step" type="button" data-step="3">4 · Respond</button>
+      </div>
+      <div class="brain-agents-row" role="group" aria-label="Route to sub-agent">
+        <span class="brain-agents-label">Route to</span>
+        <button class="brain-agent is-active" type="button" data-agent="0">Research</button>
+        <button class="brain-agent" type="button" data-agent="1">Email triage</button>
+        <button class="brain-agent" type="button" data-agent="2">Messaging</button>
+      </div>
+
+      <!-- TransportBar -->
+      <div class="bp-transport" role="group" aria-label="Playback controls">
+        <button class="bp-play" id="bpPlay" type="button" aria-pressed="true" aria-label="Pause the pipeline loop">⏸</button>
+        <input class="bp-scrub" id="bpScrub" type="range" min="0" max="8000" step="10" value="0" aria-label="Scrub through the pipeline timeline" />
+        <div class="bp-speeds" role="group" aria-label="Playback speed">
+          <button class="bp-speed" type="button" data-speed="0.5" aria-pressed="false">0.5×</button>
+          <button class="bp-speed" type="button" data-speed="1" aria-pressed="true">1×</button>
+          <button class="bp-speed" type="button" data-speed="2" aria-pressed="false">2×</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: trace panel -->
+    <section class="bp-right" aria-label="Pipeline trace">
+      <div class="bp-trace-head">
+        <span class="bp-trace-title">TRACE <span class="bp-source" id="bpSource">· demo</span></span>
+        <div class="bp-trace-tools">
+          <button class="bp-tool-btn" id="bpRedact" type="button" aria-pressed="true" title="Hide verbose payloads (keys are always masked)">redact</button>
+          <button class="bp-tool-btn" id="bpCopy" type="button" title="Copy the trace as JSON">copy trace</button>
+        </div>
+      </div>
+      <div class="bp-log" id="bpLog" aria-live="polite" aria-label="Trace log"></div>
+      <div class="bp-totals" id="bpTotals" aria-label="Stage latency totals">
+        <div class="bp-totals-bar" id="bpTotalsBar" role="img" aria-label="Stacked latency by stage"></div>
+        <div class="bp-totals-caption" id="bpTotalsCaption"></div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="brainPage.js"></script>
+</body>
+</html>
