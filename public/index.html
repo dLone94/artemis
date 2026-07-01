@@ -11,6 +11,13 @@
   <link rel="stylesheet" href="app.css" />
 </head>
 <body class="page">
+  <!-- TODO(webgl-hero): optional Phase-4 upgrade — ONE interactive WebGL hero orb
+       (drag-to-rotate, clickable pipeline nodes). Deliberately deferred: hand-rolled
+       WebGL in a zero-dependency app is meaningful weight/risk, and the Canvas-2D orb
+       now carries the depth pass (parallax, DoF, packet, perspective, morphing).
+       If built: capability-check WebGL, lazy-load the module on idle, fall back to
+       this 2D orb, render static under prefers-reduced-motion. Hero ONLY — the 2D
+       orbs elsewhere stay. -->
   <div id="sceneStage" class="scene-stage" aria-hidden="true"></div>
 
   <nav class="nav" id="nav">
