@@ -341,10 +341,24 @@
   min-height: 13px;
 }
 
+/* pulsing "in progress" dots for run-status trace lines */
+.bp-run-dots { display: inline-flex; gap: 3px; align-items: center; }
+.bp-run-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--amber, #ffb24d);
+  animation: bp-dotpulse 1s ease-in-out infinite;
+}
+.bp-run-dots i:nth-child(2) { animation-delay: 0.2s; }
+.bp-run-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bp-dotpulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
 /* ---- reduced motion: no spinner, no packet glide, instant reveals ---- */
 @media (prefers-reduced-motion: reduce) {
   .bp-node.is-active .bp-node-dot::after { animation: none; }
   .bp-packet { transition: none; }
   .bp-line { transition: none; transform: none; }
   .bp-totals-bar .bp-seg { transition: none; }
+  .bp-run-dots i { animation: none; opacity: 0.7; } /* static "···" still reads active */
 }

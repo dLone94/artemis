@@ -105,6 +105,7 @@ RAIL_NODES.forEach((n) => {
   el.dataset.node = n.key;
   el.dataset.tip = n.tip;
   el.tabIndex = 0; // keyboard users can focus a node to read its tooltip
+  el.setAttribute("aria-label", n.name + " — " + n.tip); // screen readers get the description too
   el.innerHTML =
     '<span class="bp-node-dot" aria-hidden="true">' + n.icon + "</span>" +
     "<span>" + n.name + "</span>" +
@@ -222,11 +223,18 @@ function lineFor(e) {
   const div = document.createElement("div");
   div.className = "bp-line";
   div.dataset.status = e.status;
+  // running stages get pulsing dots (an ACTIVE signal), not a "—" that reads
+  // like missing data; done stages get the latency; gated stays "—"
+  const lat = e.latencyMs
+    ? e.latencyMs + "ms"
+    : e.status === "run"
+      ? '<span class="bp-run-dots" role="img" aria-label="in progress"><i></i><i></i><i></i></span>'
+      : "—";
   div.innerHTML =
     '<span class="bp-dot" aria-hidden="true"></span>' +
     '<span class="bp-stage">' + e.stage + "</span>" +
     '<span class="bp-label"></span>' +
-    '<span class="bp-lat">' + (e.latencyMs ? e.latencyMs + "ms" : "—") + "</span>";
+    '<span class="bp-lat">' + lat + "</span>";
   div.querySelector(".bp-label").textContent = eventLabel(e);
   return div;
 }
