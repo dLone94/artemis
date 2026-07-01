@@ -1001,6 +1001,18 @@ initMiniOrbs();
   } else {
     startAuto();
   }
+
+  // The #brain section is taller than the viewport, so a top-aligned anchor jump
+  // leaves the interactive panel under the fixed dock. Center the panel instead,
+  // so every control lands fully clear of the dock and clickable.
+  const panel = document.querySelector(".brain-panel");
+  document.querySelectorAll('a[href="#brain"]').forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      (panel || host).scrollIntoView({ behavior: "smooth", block: "center" });
+      history.replaceState(null, "", "#brain");
+    });
+  });
 })();
 
 // ---- demo transcript: reveal lines in sequence, like a live exchange ----
@@ -1060,8 +1072,9 @@ document.addEventListener("visibilitychange", () => {
   const toggle = $("dockToggle");
   if (!dock) return;
   const syncHeight = () => {
-    // set on .page (body) itself — that's where padding-bottom reads --dock-h
-    document.body.style.setProperty("--dock-h", dock.offsetHeight + 30 + "px");
+    // set on :root so both .page padding-bottom and html scroll-padding-bottom
+    // (and any section clearance) read the dock's real, current height
+    document.documentElement.style.setProperty("--dock-height", dock.offsetHeight + 30 + "px");
   };
   syncHeight();
   if ("ResizeObserver" in window) new ResizeObserver(syncHeight).observe(dock);

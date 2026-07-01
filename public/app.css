@@ -1,5 +1,11 @@
 * { box-sizing: border-box; }
+/* --dock-height tracks the fixed dock's real height (updated by main.js on
+   expand/collapse + resize). Lives on :root so BOTH page padding and
+   scroll-padding-bottom can read it. Fallback covers first paint before JS runs. */
+:root { --dock-height: 150px; }
 html, body { margin: 0; background: var(--bg); }
+/* keep anchored navigation (nav links, scrollIntoView) clear of the fixed dock */
+html { scroll-padding-bottom: calc(var(--dock-height) + 16px); }
 body { scroll-behavior: smooth; }
 
 .page {
@@ -8,10 +14,8 @@ body { scroll-behavior: smooth; }
   color: var(--white);
   font-family: var(--font-body);
   overflow-x: hidden;
-  /* reserve room for the fixed dock so it never covers content; --dock-h is kept
-     in sync with the dock's real height (incl. collapse + mobile wrap) by main.js */
-  --dock-h: 150px;
-  padding-bottom: var(--dock-h);
+  /* reserve room at the document end so the footer clears the fixed dock */
+  padding-bottom: var(--dock-height);
   background:
     radial-gradient(1200px 820px at 78% 12%, var(--bg-navy-1), transparent 58%),
     radial-gradient(900px 720px at 12% 88%, var(--bg-navy-2), transparent 58%),
