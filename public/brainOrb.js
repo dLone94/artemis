@@ -58,6 +58,20 @@ export class BrainOrb {
       this._io.observe(container);
     }
 
+    // mouse-parallax tilt (subtle: ≤6px translate, ≤3° rotate) — motion, so
+    // it's fully disabled under prefers-reduced-motion
+    this._px = 0; this._py = 0;   // smoothed parallax position (-1..1)
+    this._tx = 0; this._ty = 0;   // raw target from the pointer
+    if (!this.reduced) {
+      this._onMove = (e) => {
+        const r = this.cv.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        this._tx = Math.max(-1, Math.min(1, (e.clientX - (r.left + r.width / 2)) / (r.width / 2)));
+        this._ty = Math.max(-1, Math.min(1, (e.clientY - (r.top + r.height / 2)) / (r.height / 2)));
+      };
+      window.addEventListener("pointermove", this._onMove, { passive: true });
+    }
+
     this._t0 = performance.now();
     if (this.reduced) this._draw(0.6); // one static, representative frame
     else this._loop();
@@ -92,8 +106,14 @@ export class BrainOrb {
 
   _draw(t) {
     const ctx = this.ctx, dpr = this.dpr, W = this.W, H = this.H;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H); // transparent — sits on the section background
+
+    // ease the parallax toward the pointer (0 when reduced — listeners never attach)
+    this._px += (this._tx - this._px) * 0.06;
+    this._py += (this._ty - this._py) * 0.06;
+    const parX = this._px * 6, parY = this._py * 6; // ≤6px translate
+
+    ctx.setTransform(dpr, 0, 0, dpr, parX * dpr, parY * dpr); // whole orb shifts together
+    ctx.clearRect(-parX, -parY, W, H); // transparent — sits on the section background
 
     const cx = W / 2, cy = H / 2;
     const base = Math.min(W, H) * 0.42;
@@ -106,6 +126,7 @@ export class BrainOrb {
 
     ctx.save();
     ctx.translate(cx, cy);
+    ctx.rotate(this._px * 0.052); // ≤3° parallax tilt (0.052 rad), core-centered
     ctx.globalCompositeOperation = "lighter";
 
     // --- core (brightens while routing / working / responding) ---
@@ -122,10 +143,17 @@ export class BrainOrb {
     ctx.fillStyle = cd; ctx.beginPath(); ctx.arc(0, 0, base * 0.13, 0, Math.PI * 2); ctx.fill();
 
     // --- HUD framing (shared primitives, same look as the hero) ---
+    // Depth of field, the cheap Canvas-2D way: the OUTER rings are drawn in two
+    // slightly-offset low-alpha passes with a wide glow (reads as defocused),
+    // while the core + inner reticle stay sharp. No ctx.filter → works in WebKit.
     const spin = this.reduced ? 0 : tt;
-    arcs(ctx, base * 0.94, [[0.1, 1.5], [2.2, 3.0], [3.6, 5.2]], 2, spin * 0.1, PAL.O, 0.4, 6);
-    ticks(ctx, base * 0.86, 42, base * 0.03, -spin * 0.05, PAL.D, 0.4);
-    poly(ctx, base * 0.34, 6, spin * 0.15, 1.2, PAL.B, 0.5);
+    const SEGS = [[0.1, 1.5], [2.2, 3.0], [3.6, 5.2]];
+    arcs(ctx, base * 0.94 + 2, SEGS, 3, spin * 0.1, PAL.O, 0.14, 14); // defocus halo
+    arcs(ctx, base * 0.94 - 2, SEGS, 3, spin * 0.1, PAL.O, 0.14, 14);
+    arcs(ctx, base * 0.94, SEGS, 2, spin * 0.1, PAL.O, 0.26, 8);      // soft main pass
+    ticks(ctx, base * 0.86 + 1.2, 42, base * 0.03, -spin * 0.05, PAL.D, 0.16);
+    ticks(ctx, base * 0.86, 42, base * 0.03, -spin * 0.05, PAL.D, 0.3);
+    poly(ctx, base * 0.34, 6, spin * 0.15, 1.2, PAL.B, 0.5);          // inner: sharp
 
     // --- wake: an expanding "listening" pulse ---
     if (listening) {
@@ -174,6 +202,19 @@ export class BrainOrb {
       ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + ((0.3 + 0.35 * shimmer) * ease) + ")";
       ctx.lineWidth = 1.5 + (tooling ? 1 : 0);
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(np.x, np.y); ctx.stroke();
+
+      // glowing data packet: core → agent (request out), then back (answer home),
+      // each cycle. Pure motion, so it's skipped entirely under reduced motion.
+      if (!this.reduced) {
+        const cyc = (tt % 1.6) / 1.6;                    // 1.6s round trip
+        const k = cyc < 0.5 ? cyc * 2 : (1 - cyc) * 2;   // ping-pong 0→1→0
+        const kk = k * k * (3 - 2 * k);                  // smoothstep glide
+        ctx.fillStyle = "rgba(255,240,215," + (0.9 * ease) + ")";
+        ctx.shadowColor = "rgba(" + r + "," + g + "," + b + ",0.95)";
+        ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(np.x * kk, np.y * kk, 2.6, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
     }
 
     // --- respond: a speaking wave ripples outward ---
@@ -190,11 +231,15 @@ export class BrainOrb {
     ctx.globalCompositeOperation = "source-over";
     if (routed && nodePos[this.agent]) {
       const np = nodePos[this.agent];
+      // nodePos lives in the parallax-rotated frame; rotate the label anchor by
+      // the same angle so the label stays glued to its node
+      const pa = this._px * 0.052, pc = Math.cos(pa), ps = Math.sin(pa);
+      const nx = np.x * pc - np.y * ps, ny = np.x * ps + np.y * pc;
       ctx.font = "600 " + Math.max(10, Math.round(base * 0.07)) + 'px "JetBrains Mono", monospace';
       ctx.fillStyle = "rgba(255,236,208,0.95)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.shadowColor = "rgba(255,170,90,0.8)"; ctx.shadowBlur = 8;
-      const ly = Math.max(14, cy + np.y - 14);
-      ctx.fillText(AGENTS[this.agent].name.toUpperCase(), cx + np.x, ly);
+      const ly = Math.max(14, cy + ny - 14);
+      ctx.fillText(AGENTS[this.agent].name.toUpperCase(), cx + nx, ly);
       ctx.shadowBlur = 0;
     }
     // step label under the orb
@@ -209,6 +254,7 @@ export class BrainOrb {
     if (this._ro) this._ro.disconnect();
     else window.removeEventListener("resize", this._onResize);
     if (this._io) this._io.disconnect();
+    if (this._onMove) window.removeEventListener("pointermove", this._onMove);
     if (this.cv.parentNode) this.cv.parentNode.removeChild(this.cv);
   }
 }
