@@ -24,6 +24,11 @@
   <nav class="nav" id="nav">
     <div class="nav-inner">
       <a class="brand" href="#top"><span class="brand-dot"></span> Artemis</a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#brain">The Brain</a>
+        <a href="#features">Features</a>
+        <a href="#team">Agents</a>
+      </nav>
       <a class="nav-cta" id="navCta" href="#top">TALK TO ARTEMIS →</a>
     </div>
   </nav>
@@ -87,6 +92,33 @@
           <p class="card-desc">Watches the competition and the world so you don't have to refresh.</p>
           <div class="card-tag">MONITOR · ALERT · BRIEF</div>
         </article>
+      </div>
+    </section>
+
+    <section class="brain" id="brain">
+      <div class="brain-head reveal">
+        <div class="eyebrow">◦ THE BRAIN · HOW SHE THINKS</div>
+        <h2 class="brain-title">Not a widget.<br /><span class="grad">A router you can watch.</span></h2>
+        <p class="brain-sub">The orb isn't decoration — it's a live picture of her pipeline. Every request runs the same four steps. Step through them, or pick who handles it, and watch the sub-agent light up.</p>
+      </div>
+      <div class="brain-stage reveal">
+        <div class="brain-orb" id="brainOrb" role="img" aria-label="Diagram of Artemis routing a request through wake, route, tool call, and respond to a sub-agent"></div>
+        <div class="brain-panel">
+          <div class="brain-steps" role="group" aria-label="Pipeline steps">
+            <button class="brain-step is-active" type="button" data-step="0">1 · Wake</button>
+            <button class="brain-step" type="button" data-step="1">2 · Route</button>
+            <button class="brain-step" type="button" data-step="2">3 · Tool call</button>
+            <button class="brain-step" type="button" data-step="3">4 · Respond</button>
+          </div>
+          <p class="brain-caption" id="brainCaption" aria-live="polite">You say “Artemis.” The outer ring pulses as she wakes and starts listening.</p>
+          <div class="brain-agents-row" role="group" aria-label="Route to sub-agent">
+            <span class="brain-agents-label">Route to</span>
+            <button class="brain-agent is-active" type="button" data-agent="0">Research</button>
+            <button class="brain-agent" type="button" data-agent="1">Email triage</button>
+            <button class="brain-agent" type="button" data-agent="2">Messaging</button>
+          </div>
+          <p class="brain-hint">Auto-playing the pipeline — tap any step to take the wheel.</p>
+        </div>
       </div>
     </section>
 

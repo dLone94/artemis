@@ -68,6 +68,20 @@ body { scroll-behavior: smooth; }
 }
 .nav-cta:hover { border-color: var(--teal); box-shadow: 0 0 16px rgba(255, 158, 72, 0.25); }
 
+/* section links (center of the nav) */
+.nav-links { display: flex; align-items: center; gap: 26px; }
+.nav-links a {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.nav-links a:hover { color: var(--teal); }
+@media (max-width: 760px) { .nav-links { display: none; } }
+
 @keyframes pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 12px 2px rgba(255, 158, 72, 0.8); }
   50% { opacity: 0.55; box-shadow: 0 0 6px 1px rgba(255, 158, 72, 0.4); }
@@ -676,6 +690,117 @@ main, .foot { position: relative; z-index: 1; }
 .voice-bars.voice-active span:nth-child(5) { animation-delay: -0.45s; }
 
 /* ---- "The team" — sub-agents mapped to the skills layer ---- */
+/* ---- the brain (explanatory orb) ---- */
+.brain {
+  position: relative;
+  padding: 70px 28px 80px;
+  background: linear-gradient(180deg, rgba(8, 11, 14, 0) 0%, rgba(8, 11, 14, 0.72) 22%, rgba(8, 11, 14, 0.72) 100%);
+}
+.brain-head { text-align: center; max-width: 660px; margin: 0 auto 34px; }
+.brain-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(28px, 4.4vw, 46px);
+  letter-spacing: -0.02em;
+  line-height: 1.26;
+  padding-bottom: 0.14em;
+  margin: 12px 0 0;
+  color: var(--text-bright);
+}
+.brain-sub { color: var(--text-muted); margin: 16px auto 0; line-height: 1.6; max-width: 560px; }
+
+.brain-stage {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) 1.1fr;
+  gap: clamp(20px, 4vw, 56px);
+  align-items: center;
+}
+@media (max-width: 860px) { .brain-stage { grid-template-columns: 1fr; } }
+
+/* the canvas host — a responsive square the BrainOrb draws into */
+.brain-orb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-width: 460px;
+  margin: 0 auto;
+  border-radius: 22px;
+  background: radial-gradient(circle at 50% 46%, rgba(255, 158, 72, 0.06), transparent 66%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.brain-orb canvas { border-radius: 22px; }
+
+.brain-panel { display: flex; flex-direction: column; gap: 18px; }
+
+.brain-steps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 520px) { .brain-steps { grid-template-columns: repeat(4, 1fr); } }
+.brain-step {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--gray);
+  background: rgba(12, 15, 19, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-pill);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+.brain-step:hover { color: var(--text-bright); border-color: rgba(255, 158, 72, 0.4); }
+.brain-step.is-active {
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 55%, transparent);
+  box-shadow: 0 0 18px rgba(255, 158, 72, 0.22);
+  background: rgba(255, 158, 72, 0.08);
+}
+
+.brain-caption {
+  min-height: 3.4em;
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.6;
+  font-size: 16px;
+}
+.brain-caption strong { color: var(--text-bright); font-weight: 600; }
+
+.brain-agents-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.brain-agents-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin-right: 2px;
+}
+.brain-agent {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--gray);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-pill);
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.brain-agent:hover { color: var(--text-bright); border-color: rgba(255, 158, 72, 0.4); }
+.brain-agent.is-active {
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 55%, transparent);
+  background: rgba(255, 158, 72, 0.08);
+}
+.brain-hint {
+  margin: 2px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--gray);
+  opacity: 0.75;
+}
+.brain.is-manual .brain-hint { opacity: 0; }
+
 .team {
   position: relative;
   padding: 60px 28px 90px;

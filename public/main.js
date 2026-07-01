@@ -6,6 +6,7 @@ import { VoiceOrb } from "./voiceOrb.js";
 import { resolveOpenIntent } from "./siteRegistry.js";
 import { matchWake } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
+import { BrainOrb } from "./brainOrb.js";
 
 const $ = (id) => document.getElementById(id);
 const conversation = [];
@@ -924,6 +925,81 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
 
 // upgrade the flat card/agent orbs into mini animated 3D orbital nodes
 initMiniOrbs();
+
+// ---- "The Brain" explanatory orb + pipeline stepper ----
+// The orb is driven by a discrete state machine (wake→route→tool→respond) instead
+// of audio. The stepper buttons drive it manually; until the user touches them it
+// auto-plays the pipeline so the section reads as a live demo, not a static diagram.
+(function initBrain() {
+  const host = $("brainOrb");
+  if (!host) return;
+  const brain = new BrainOrb(host);
+  window.__brain = brain;
+
+  const stepBtns = Array.from(document.querySelectorAll(".brain-step"));
+  const agentBtns = Array.from(document.querySelectorAll(".brain-agent"));
+  const caption = $("brainCaption");
+  const section = document.querySelector(".brain");
+
+  // caption per step; {a} is replaced with the active sub-agent's name
+  const CAPTIONS = [
+    "You say <strong>“Artemis.”</strong> The outer ring pulses as she wakes and starts listening.",
+    "She reads your intent and <strong>routes</strong> it to {a} — that node lights up and links back to the core.",
+    "{a} runs its <strong>tool</strong> — a web search, a draft, a lookup. Its node spins while the work runs.",
+    "She composes the answer and <strong>speaks</strong> it — the core flares and a voice wave ripples outward."
+  ];
+
+  function setActive(list, idx) {
+    list.forEach((b, i) => b.classList.toggle("is-active", i === idx));
+  }
+  function renderCaption() {
+    if (!caption) return;
+    const name = ["Research", "Email triage", "Messaging"][brain.agent];
+    caption.innerHTML = CAPTIONS[brain.step].replace(/\{a\}/g, "<strong>" + name + "</strong>");
+  }
+  function showStep(step) {
+    brain.setStep(step);
+    setActive(stepBtns, step);
+    renderCaption();
+  }
+  function showAgent(idx) {
+    brain.setAgent(idx);
+    setActive(agentBtns, idx);
+    renderCaption();
+  }
+
+  // auto-play the pipeline until the user interacts, then hand over control
+  let manual = false;
+  let timer = 0;
+  function stopAuto() {
+    if (manual) return;
+    manual = true;
+    clearInterval(timer);
+    if (section) section.classList.add("is-manual");
+  }
+  function startAuto() {
+    if (brain.reduced || manual) return; // reduced-motion: static, no auto-cycle
+    timer = setInterval(() => {
+      showStep((brain.step + 1) % 4);
+    }, 2600);
+  }
+
+  stepBtns.forEach((b) => b.addEventListener("click", () => { stopAuto(); showStep(+b.dataset.step); }));
+  agentBtns.forEach((b) => b.addEventListener("click", () => { stopAuto(); showAgent(+b.dataset.agent); }));
+
+  renderCaption();
+  // only start the auto-cycle once the section is actually seen
+  if ("IntersectionObserver" in window) {
+    const startIo = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) { startAuto(); startIo.disconnect(); }
+      });
+    }, { threshold: 0.35 });
+    startIo.observe(host);
+  } else {
+    startAuto();
+  }
+})();
 
 // pause a section's CSS ambient loops once it scrolls fully offscreen
 const pauseIo = new IntersectionObserver(
