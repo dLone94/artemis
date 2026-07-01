@@ -2,6 +2,8 @@
 // the hero HUD: a glowing core with tilted orbiting satellites, in each card's
 // --accent colour. One shared rAF; only visible orbs draw; reduced-motion → static.
 
+import { prefersReducedMotion } from "./orbShared.js";
+
 function hexToRgb(h) {
   h = (h || "").trim().replace("#", "");
   if (h.length === 3) h = h.split("").map((x) => x + x).join("");
@@ -10,7 +12,7 @@ function hexToRgb(h) {
 }
 
 export function initMiniOrbs(selector = ".card-orb, .agent-orb") {
-  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduced = prefersReducedMotion();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const orbs = [];
 

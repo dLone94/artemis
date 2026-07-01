@@ -9,14 +9,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="app.css" />
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
-      }
-    }
-  </script>
 </head>
 <body class="page">
   <div id="sceneStage" class="scene-stage" aria-hidden="true"></div>
@@ -228,7 +220,8 @@
 
   <footer class="foot">
     <span>Artemis · voice-first AI</span>
-    <span class="foot-mono">THREE.JS · WEB AUDIO · CLAUDE · DEEPGRAM</span>
+    <!-- accurate stack: the orb is Canvas 2D (not Three.js); brain is provider-switchable -->
+    <span class="foot-mono">CANVAS 2D · WEB AUDIO · NVIDIA NIM · DEEPGRAM</span>
   </footer>
 
   <script src="celebration.js"></script>

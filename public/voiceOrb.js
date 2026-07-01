@@ -6,11 +6,12 @@
 // stopAudio(), dispose(), and `cur.amp` / `reduced`. Reacts to mic (LISTENING) and TTS
 // (SPEAKING) amplitude — rings spin faster, core brightens, scanner accelerates.
 
+import { prefersReducedMotion } from "./orbShared.js";
+
 export class VoiceOrb {
   constructor(container, opts = {}) {
     this.container = container;
-    this.reduced =
-      window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.reduced = prefersReducedMotion();
     this.status = "idle";
     this.cur = { amp: 0 };
     this._manualAmp = 0;
