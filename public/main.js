@@ -83,16 +83,39 @@ function setLiveStatus(t) {
   if (liveStatus) liveStatus.textContent = t;
 }
 
-// Open a URL so it ALWAYS opens. Prefer a new tab (keeps Artemis running); if the
-// browser blocks the pop-up — voice commands have no click, so WebKit/Orion usually
-// does — fall back to navigating THIS tab (always allowed). A short delay lets her
-// spoken "opening now" start first; the conversation is saved so Back restores it.
-function openUrl(url) {
+// Open a URL in a NEW tab — Artemis must NEVER navigate herself away (the old
+// same-tab fallback "closed" her mid-conversation). Voice commands carry no
+// click gesture, so the browser may block window.open; when that happens we
+// show a one-tap glowing "Open" pill (a real gesture — always allowed) instead
+// of hijacking this tab. TIP: allow pop-ups for this site (Safari/Orion:
+// Settings → Websites → Pop-up Windows → localhost → Allow) and every open is
+// fully hands-free.
+let openPill = null;
+function openUrl(url, label) {
   let w = null;
   try { w = window.open(url, "_blank"); } catch (e) {}
-  if (w) return true; // opened in a new tab
-  setTimeout(() => { try { window.location.assign(url); } catch (e) { window.location.href = url; } }, 1300);
+  if (w) return true; // opened in a new tab — Artemis stays put
+  showOpenPill(url, label);
   return false;
+}
+window.__openUrl = openUrl; // debug/test handle (used by preview verification)
+function showOpenPill(url, label) {
+  if (openPill) { openPill.remove(); openPill = null; }
+  let name = label || "";
+  if (!name) { try { name = new URL(url).hostname.replace(/^www\./, ""); } catch (e) { name = "link"; } }
+  const b = document.createElement("button");
+  b.className = "open-link";
+  b.type = "button";
+  b.textContent = "▶ Open " + (name.length > 42 ? name.slice(0, 39) + "…" : name);
+  b.addEventListener("click", () => {
+    try { window.open(url, "_blank"); } catch (e) {}
+    b.remove();
+    openPill = null;
+  });
+  document.body.appendChild(b);
+  openPill = b;
+  setLiveStatus("Pop-up blocked — tap Open. (Allow pop-ups for this site and I'll open tabs myself.)");
+  setTimeout(() => { if (openPill === b) { b.remove(); openPill = null; } }, 25000);
 }
 
 function addMsg(role, text, sources) {
@@ -279,8 +302,8 @@ function stopThinking() {
 function handleOpenIntent(text) {
   const r = resolveOpenIntent(text);
   if (!r) return false;
-  // opens in a new tab if pop-ups are allowed, else navigates this tab (always works)
-  openUrl(r.url);
+  // new tab if pop-ups are allowed, else the one-tap Open pill (never this tab)
+  openUrl(r.url, r.label);
   const phrase = r.kind === "search" ? `Opening a Google search for ${r.term}.` : `Opening ${r.label}.`;
   addMsg("user", text);
   addMsg("artemis", phrase, [{ title: `Open ${r.label}`, url: r.url }]);
@@ -539,7 +562,7 @@ async function ask(text) {
     // execute anything Artemis chose to open (maps location, a site, etc.)
     if (clientActions && clientActions.length) {
       for (const a of clientActions) {
-        if (a && a.url) openUrl(a.url);
+        if (a && a.url) openUrl(a.url, a.label);
       }
     }
     if (!ttsPlaying && !ttsQueue.length) { speaking = false; afterSpeak(); } // pump may have deferred to us while busy

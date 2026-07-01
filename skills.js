@@ -41,6 +41,34 @@ export const skillCtx = { readJson, writeJson, resolveContact, appendAction };
 // last check_email listing, so "read number 2" can resolve an id (per-process)
 let lastEmailList = [];
 
+// Find the top YouTube video for a query by scraping the search page's initial
+// data (zero-dep; the CONSENT/SOCS cookies skip the EU consent interstitial).
+// Returns { id, title } or null — callers fall back to the search page.
+async function findYouTubeVideo(query) {
+  try {
+    const res = await fetch("https://www.youtube.com/results?search_query=" + encodeURIComponent(query), {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept-Language": "en",
+        Cookie: "CONSENT=YES+cb.20240101-00-p0.en+FX+100; SOCS=CAI"
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/"videoRenderer":\{"videoId":"([\w-]{11})"/);
+    if (!m) return null;
+    let title = "the top result";
+    const t = html.slice(m.index, m.index + 3000).match(/"title":\{"runs":\[\{"text":"(.*?)"\}\]/);
+    if (t) {
+      try { title = JSON.parse('"' + t[1] + '"'); } catch (e) { title = t[1]; }
+    }
+    return { id: m[1], title };
+  } catch (e) {
+    return null;
+  }
+}
+
 // ---- skills ----------------------------------------------------------------
 const SKILLS = [
   {
@@ -150,6 +178,46 @@ const SKILLS = [
       c[p.alias.toLowerCase().trim()] = { name: p.name || p.alias, phone: p.phone || "", email: p.email || "" };
       await ctx.writeJson("contacts.json", c);
       return { ok: true, summary: "Saved " + (p.name || p.alias) + " to your contacts." };
+    }
+  },
+  {
+    name: "play_media",
+    description:
+      "PLAY music or a video for the user: finds the best YouTube video for the query and opens it " +
+      "directly in a new tab so playback actually STARTS. Use this — not open_url — whenever the user " +
+      "wants to LISTEN to or WATCH something: 'play X', 'put on some relaxing music', 'play that song', " +
+      "cheer-up music. Confirm out loud with the video's title after calling it.",
+    requiresConfirmation: false,
+    paramSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What to play, e.g. 'relaxing piano music' or a song/artist name." }
+      },
+      required: ["query"]
+    },
+    async execute(p) {
+      const q = String((p && p.query) || "").trim();
+      if (!q) return { ok: false, summary: "Nothing to play.", content: "No query was given to play." };
+      const vid = await findYouTubeVideo(q);
+      if (vid) {
+        const url = "https://www.youtube.com/watch?v=" + vid.id;
+        return {
+          ok: true,
+          openUrl: url,
+          label: vid.title,
+          summary: "Playing " + vid.title + " on YouTube.",
+          content: "Now playing on YouTube: \"" + vid.title + "\" — " + url + ". Tell the user the title."
+        };
+      }
+      // lookup failed → at least land them on the results page
+      const url = "https://www.youtube.com/results?search_query=" + encodeURIComponent(q);
+      return {
+        ok: true,
+        openUrl: url,
+        label: "YouTube results for " + q,
+        summary: "Opening YouTube results for " + q + ".",
+        content: "Couldn't pick a specific video; opened the YouTube search results for \"" + q + "\" instead."
+      };
     }
   },
   {
