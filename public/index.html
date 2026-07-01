@@ -174,7 +174,15 @@
             <p class="demo-bubble">Opening it now. <span class="demo-action">↗ opened a new tab</span></p>
           </div>
         </div>
-        <button class="demo-replay" id="demoReplay" type="button">↻ Replay</button>
+        <div class="demo-actions">
+          <button class="demo-replay" id="demoReplay" type="button">↻ Replay</button>
+          <button class="demo-replay demo-hear" id="demoHear" type="button" aria-pressed="false">🔊 Hear it spoken</button>
+        </div>
+        <!-- Short clip of Artemis's first answer so "spoken out loud" is literal.
+             Off by default; plays only when the user taps "Hear it spoken".
+             Generated with Deepgram TTS (aura-2-thalia-en) — see assets/README.md.
+             TODO: optionally re-record assets/demo-artemis.mp3 with your own voice/answer. -->
+        <audio id="demoAudio" preload="none" src="assets/demo-artemis.mp3"></audio>
       </div>
       <div class="demo-os reveal">
         <span class="demo-os-label">Free &amp; open source</span>

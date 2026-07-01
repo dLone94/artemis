@@ -908,9 +908,14 @@ main, .foot { position: relative; z-index: 1; }
 .demo-action { color: var(--teal); }
 .demo-src::before { content: ""; }
 
+.demo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+}
 .demo-replay {
-  display: block;
-  margin: 16px auto 0;
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.08em;
@@ -923,6 +928,12 @@ main, .foot { position: relative; z-index: 1; }
   transition: color 0.2s, border-color 0.2s;
 }
 .demo-replay:hover { color: var(--teal); border-color: rgba(255, 158, 72, 0.4); }
+.demo-hear[aria-pressed="true"] {
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 55%, transparent);
+  background: rgba(255, 158, 72, 0.08);
+}
+.demo-hear:disabled { opacity: 0.5; cursor: not-allowed; color: var(--gray); }
 
 .demo-os {
   display: flex;

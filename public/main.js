@@ -1050,6 +1050,26 @@ initMiniOrbs();
   }
   if (replay) replay.addEventListener("click", play);
 
+  // Optional spoken clip so "spoken out loud" is literally true. Off by default;
+  // plays only when the user taps "Hear it spoken". Replays the transcript in sync,
+  // and degrades gracefully if the audio asset is missing or blocked.
+  const audio = $("demoAudio");
+  const hearBtn = $("demoHear");
+  if (audio && hearBtn) {
+    const reset = () => { hearBtn.setAttribute("aria-pressed", "false"); hearBtn.textContent = "🔊 Hear it spoken"; };
+    hearBtn.addEventListener("click", () => {
+      if (!audio.paused) { audio.pause(); audio.currentTime = 0; return; }
+      audio.currentTime = 0;
+      play(); // re-run the transcript reveal alongside the voice
+      const p = audio.play();
+      if (p && p.catch) p.catch(() => { /* autoplay-blocked or missing file: no-op */ });
+    });
+    audio.addEventListener("play", () => { hearBtn.setAttribute("aria-pressed", "true"); hearBtn.textContent = "⏸ Stop"; });
+    audio.addEventListener("pause", reset);
+    audio.addEventListener("ended", reset);
+    audio.addEventListener("error", () => { hearBtn.disabled = true; hearBtn.textContent = "🔇 Audio unavailable"; });
+  }
+
   // play once when the section first scrolls into view
   if (reduced) {
     showAll();
