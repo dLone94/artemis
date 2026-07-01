@@ -858,19 +858,25 @@ async function pollCelebrations() {
 setInterval(pollCelebrations, 5000);
 pollCelebrations();
 
-// ---- navbar blur + scroll reveals + floating CTA ----
+// ---- navbar blur + scroll reveals + floating CTA + background-orb fade ----
 const nav = $("nav");
 const floatCta = $("floatCta");
-window.addEventListener(
-  "scroll",
-  () => {
-    const y = window.scrollY;
-    nav.classList.toggle("scrolled", y > 8);
-    // reveal the floating CTA once the hero is mostly scrolled past
-    if (floatCta) floatCta.classList.toggle("show", y > window.innerHeight * 0.6);
-  },
-  { passive: true }
-);
+const sceneStage = $("sceneStage");
+function onScroll() {
+  const y = window.scrollY;
+  nav.classList.toggle("scrolled", y > 8);
+  // reveal the floating CTA once the hero is mostly scrolled past
+  if (floatCta) floatCta.classList.toggle("show", y > window.innerHeight * 0.6);
+  // Fade the fixed hero-orb layer as you leave the hero so its rings + "ARTEMIS"
+  // wordmark stop bleeding through the #brain / Proof text below. Full brightness
+  // in the hero, down to a faint ambient glow past it (readability > ambiance).
+  if (sceneStage) {
+    const fade = Math.min(1, y / (window.innerHeight * 0.7));
+    sceneStage.style.opacity = (1 - fade * 0.92).toFixed(3);
+  }
+}
+window.addEventListener("scroll", onScroll, { passive: true });
+onScroll(); // set correct state if the page loads already scrolled
 if (floatCta) {
   floatCta.addEventListener("click", () => {
     document.getElementById("live").scrollIntoView({ behavior: "smooth", block: "center" });
