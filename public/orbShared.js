@@ -18,8 +18,14 @@ export function prefersReducedMotion() {
   return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
 
+// A negative radius throws IndexSizeError from ctx.arc and blanks the whole
+// frame - every primitive clamps to 0 (and skips the degenerate draw) so a
+// transient 0-sized layout can never crash the render loop.
 // A stroked circle with an amber glow.
 export function ring(ctx, r, w, c, a, blur, glow = PAL.GLOW) {
+  r = Math.max(0, r);
+  if (!r) return;
+
   ctx.beginPath();
   ctx.lineWidth = w;
   ctx.strokeStyle = c + a + ")";
@@ -32,6 +38,9 @@ export function ring(ctx, r, w, c, a, blur, glow = PAL.GLOW) {
 
 // Arc segments (a "broken" ring). `segs` is an array of [startAngle, endAngle].
 export function arcs(ctx, r, segs, w, rot, c, a, blur, glow = PAL.GLOW) {
+  r = Math.max(0, r);
+  if (!r) return;
+
   ctx.lineWidth = w;
   ctx.strokeStyle = c + a + ")";
   ctx.lineCap = "round";
@@ -48,6 +57,9 @@ export function arcs(ctx, r, segs, w, rot, c, a, blur, glow = PAL.GLOW) {
 
 // A ring of radial tick marks.
 export function ticks(ctx, r, n, len, rot, c, a) {
+  r = Math.max(0, r);
+  if (!r) return;
+
   ctx.strokeStyle = c + a + ")";
   ctx.lineWidth = 1;
   for (let i = 0; i < n; i++) {
@@ -61,6 +73,9 @@ export function ticks(ctx, r, n, len, rot, c, a) {
 
 // A regular polygon outline (the hex/triangle reticle).
 export function poly(ctx, r, sides, rot, w, c, a) {
+  r = Math.max(0, r);
+  if (!r) return;
+
   ctx.beginPath();
   ctx.lineWidth = w;
   ctx.strokeStyle = c + a + ")";

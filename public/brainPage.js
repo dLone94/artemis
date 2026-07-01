@@ -143,7 +143,11 @@ function renderControls() {
   agentBtns.forEach((b, i) => b.classList.toggle("is-active", AGENTS[i] === state.agent));
   const gatedNow = isGated() && state.t >= PHASE_MS * 1.5;
   const key = gatedNow ? "gated" : state.phase;
-  caption.innerHTML = CAPTIONS[key].replace(/\{a\}/g, "<strong>" + AGENT_LABELS[state.agent] + "</strong>");
+  // every phase/agent must resolve to SOME label — an undefined lookup here
+  // threw per-frame from the RAF loop and froze the whole page
+  const tpl = CAPTIONS[key] || CAPTIONS.wake || "";
+  const who = AGENT_LABELS[state.agent] || String(state.agent || "the agent");
+  caption.innerHTML = tpl.replace(/\{a\}/g, "<strong>" + who + "</strong>");
 }
 
 stepBtns.forEach((b) =>
@@ -351,7 +355,10 @@ window.ArtemisBrainTrace = {
 function phaseAt(t) {
   // gated agents hold at "route" — the pipeline honestly stops at the gate
   if (isGated() && t >= PHASE_MS * 1.5) return "route";
-  return PHASES[Math.min(3, Math.floor(t / PHASE_MS))];
+  // clamp BOTH ends and swallow NaN — an out-of-range index yields undefined,
+  // which cascades into the caption .replace crash
+  const idx = Math.floor(t / PHASE_MS);
+  return PHASES[Math.min(3, Math.max(0, Number.isFinite(idx) ? idx : 0))];
 }
 function seek(t) {
   state.t = Math.max(0, Math.min(LOOP_MS, t));

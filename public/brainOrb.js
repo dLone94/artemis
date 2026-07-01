@@ -38,6 +38,11 @@ export class BrainOrb {
     this.cv.style.cssText = "display:block;width:100%;height:100%;";
     container.appendChild(this.cv);
     this.ctx = this.cv.getContext("2d");
+    // frames render OFFSCREEN and blit on success — if a frame ever throws,
+    // the visible canvas keeps the last good frame instead of going blank
+    this.off = document.createElement("canvas");
+    this.octx = this.off.getContext("2d");
+    this._warned = false;
 
     this._resize();
     this._onResize = () => this._resize();
@@ -83,6 +88,8 @@ export class BrainOrb {
     this.H = Math.max(1, r.height);
     this.cv.width = Math.round(this.W * this.dpr);
     this.cv.height = Math.round(this.H * this.dpr);
+    this.off.width = this.cv.width;
+    this.off.height = this.cv.height;
     if (this.reduced) this._draw(0.6);
   }
 
@@ -104,8 +111,29 @@ export class BrainOrb {
     this._draw(this._elapsed);
   }
 
+  // Crash-proof frame: render offscreen, blit only on success. A bad frame can
+  // no longer blank the canvas — the last good frame stays up, and we warn ONCE
+  // instead of spamming (or killing) the RAF loop.
   _draw(t) {
-    const ctx = this.ctx, dpr = this.dpr, W = this.W, H = this.H;
+    // a 0/1px transient layout (hidden pane, pre-layout RO tick) has nothing
+    // meaningful to draw — and tiny bases are what made derived radii negative
+    if (this.W < 4 || this.H < 4) return;
+    try {
+      this._render(t);
+      const c = this.ctx;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, this.cv.width, this.cv.height);
+      c.drawImage(this.off, 0, 0);
+    } catch (e) {
+      if (!this._warned) {
+        this._warned = true;
+        console.warn("BrainOrb: frame error (keeping last good frame):", e);
+      }
+    }
+  }
+
+  _render(t) {
+    const ctx = this.octx, dpr = this.dpr, W = this.W, H = this.H;
 
     // ease the parallax toward the pointer (0 when reduced — listeners never attach)
     this._px += (this._tx - this._px) * 0.06;
@@ -113,7 +141,7 @@ export class BrainOrb {
     const parX = this._px * 6, parY = this._py * 6; // ≤6px translate
 
     ctx.setTransform(dpr, 0, 0, dpr, parX * dpr, parY * dpr); // whole orb shifts together
-    ctx.clearRect(-parX, -parY, W, H); // transparent — sits on the section background
+    ctx.clearRect(-parX - 8, -parY - 8, W + 16, H + 16); // transparent — sits on the section background
 
     const cx = W / 2, cy = H / 2;
     const base = Math.min(W, H) * 0.42;
@@ -148,10 +176,14 @@ export class BrainOrb {
     // while the core + inner reticle stay sharp. No ctx.filter → works in WebKit.
     const spin = this.reduced ? 0 : tt;
     const SEGS = [[0.1, 1.5], [2.2, 3.0], [3.6, 5.2]];
-    arcs(ctx, base * 0.94 + 2, SEGS, 3, spin * 0.1, PAL.O, 0.14, 14); // defocus halo
-    arcs(ctx, base * 0.94 - 2, SEGS, 3, spin * 0.1, PAL.O, 0.14, 14);
-    arcs(ctx, base * 0.94, SEGS, 2, spin * 0.1, PAL.O, 0.26, 8);      // soft main pass
-    ticks(ctx, base * 0.86 + 1.2, 42, base * 0.03, -spin * 0.05, PAL.D, 0.16);
+    // defocus offset scales with base and can never exceed it — a fixed ±2px
+    // underflowed to a NEGATIVE radius on tiny layouts (base 0.42 → -1.6) and
+    // crashed every frame
+    const dof = Math.min(2, base * 0.05);
+    arcs(ctx, base * 0.94 + dof, SEGS, 3, spin * 0.1, PAL.O, 0.14, 14); // defocus halo
+    arcs(ctx, base * 0.94 - dof, SEGS, 3, spin * 0.1, PAL.O, 0.14, 14);
+    arcs(ctx, base * 0.94, SEGS, 2, spin * 0.1, PAL.O, 0.26, 8);        // soft main pass
+    ticks(ctx, base * 0.86 + dof * 0.6, 42, base * 0.03, -spin * 0.05, PAL.D, 0.16);
     ticks(ctx, base * 0.86, 42, base * 0.03, -spin * 0.05, PAL.D, 0.3);
     poly(ctx, base * 0.34, 6, spin * 0.15, 1.2, PAL.B, 0.5);          // inner: sharp
 

@@ -1022,8 +1022,10 @@ initMiniOrbs();
   }
   function renderCaption() {
     if (!caption) return;
-    const name = ["Research", "Email triage", "Messaging"][brain.agent];
-    caption.innerHTML = CAPTIONS[brain.step].replace(/\{a\}/g, "<strong>" + name + "</strong>");
+    // guarded lookups: an out-of-range step/agent must degrade, never throw
+    const name = ["Research", "Email triage", "Messaging"][brain.agent] || "the agent";
+    const tpl = CAPTIONS[brain.step] || CAPTIONS[0] || "";
+    caption.innerHTML = tpl.replace(/\{a\}/g, "<strong>" + name + "</strong>");
   }
   function showStep(step) {
     brain.setStep(step);
