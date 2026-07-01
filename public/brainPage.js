@@ -206,6 +206,11 @@ const totalsBar = $("bpTotalsBar");
 const totalsCaption = $("bpTotalsCaption");
 let redactOn = true;
 
+// auto-follow the newest line; smooth normally, instant under reduced motion
+function followLog() {
+  logEl.scrollTo({ top: logEl.scrollHeight, behavior: reduced ? "auto" : "smooth" });
+}
+
 const SEG_COLORS = ["#8a5a2b", "#b3762f", "#d18f38", "#ff9e48", "#ffb24d", "#ffcf6a"];
 function eventLabel(e) {
   return maskKeys(!redactOn && e.full ? e.full : e.label);
@@ -234,7 +239,7 @@ function renderTrace(rebuild) {
     const line = lineFor(due[i]);
     logEl.appendChild(line);
     requestAnimationFrame(() => line.classList.add("shown"));
-    logEl.scrollTop = logEl.scrollHeight;
+    followLog();
   }
   renderTotals();
 }
@@ -325,7 +330,7 @@ window.ArtemisBrainTrace = {
     const line = lineFor(evt);
     logEl.appendChild(line);
     requestAnimationFrame(() => line.classList.add("shown"));
-    logEl.scrollTop = logEl.scrollHeight;
+    followLog();
     renderTotals();
   },
 };
