@@ -810,6 +810,21 @@ main, .foot { position: relative; z-index: 1; }
 }
 .brain.is-manual .brain-hint { opacity: 0; }
 
+/* CTA from the teaser to the full standalone Brain page */
+.brain-more {
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: var(--teal);
+  text-decoration: none;
+  border: 1px solid rgba(255, 158, 72, 0.3);
+  border-radius: var(--radius-pill);
+  padding: 9px 16px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.brain-more:hover { border-color: var(--teal); box-shadow: 0 0 16px rgba(255, 158, 72, 0.25); }
+
 /* ---- demo / proof (scripted spoken exchange + open-source links) ---- */
 .demo {
   position: relative;

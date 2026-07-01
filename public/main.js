@@ -1039,17 +1039,8 @@ initMiniOrbs();
     startAuto();
   }
 
-  // The #brain section is taller than the viewport, so a top-aligned anchor jump
-  // leaves the interactive panel under the fixed dock. Center the panel instead,
-  // so every control lands fully clear of the dock and clickable.
-  const panel = document.querySelector(".brain-panel");
-  document.querySelectorAll('a[href="#brain"]').forEach((a) => {
-    a.addEventListener("click", (e) => {
-      e.preventDefault();
-      (panel || host).scrollIntoView({ behavior: "smooth", block: "center" });
-      history.replaceState(null, "", "#brain");
-    });
-  });
+  // (the nav "The Brain" link now opens brain.html — the standalone page —
+  // so the old #brain anchor-centering handler is gone)
 })();
 
 // ---- demo transcript: reveal lines in sequence, like a live exchange ----
