@@ -996,6 +996,12 @@ initMiniOrbs();
   agentBtns.forEach((b) => b.addEventListener("click", () => { stopAuto(); showAgent(+b.dataset.agent); }));
 
   renderCaption();
+
+  // Under reduced motion the orb is static and the pipeline does NOT auto-advance,
+  // so the "Auto-playing…" hint would be a lie — reword it to reflect manual control.
+  const hintEl = section && section.querySelector(".brain-hint");
+  if (brain.reduced && hintEl) hintEl.textContent = "Tap any step to walk through the pipeline.";
+
   // only start the auto-cycle once the section is actually seen
   if ("IntersectionObserver" in window) {
     const startIo = new IntersectionObserver((entries) => {
