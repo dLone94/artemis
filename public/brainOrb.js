@@ -9,7 +9,7 @@
 // dispose(). It runs inline (sized to its container), pauses when off-screen or the
 // tab is hidden, and renders a single static frame under prefers-reduced-motion.
 
-import { PAL, prefersReducedMotion, arcs, ticks, poly } from "./orbShared.js";
+import { PAL, prefersReducedMotion, ring, arcs, ticks, poly } from "./orbShared.js";
 
 // The real sub-agents, each on its own tilted orbit. rgb picked to match the team cards.
 const AGENTS = [
@@ -106,6 +106,14 @@ export class BrainOrb {
     if (this.reduced) this._draw(0.6);
   }
 
+  // Voice reactivity: push 0..1 amplitude samples (from a Web Audio analyser)
+  // and the orb shimmers with the user's real voice, settling when they stop.
+  // The hero VoiceOrb also publishes window.__artemisAmp, which _render blends
+  // in automatically — so on the home page the brain orb reacts with no wiring.
+  feed(v) {
+    this._amp = Math.max(this._amp || 0, Math.max(0, Math.min(1, Number(v) || 0)));
+  }
+
   _loop() {
     this._raf = requestAnimationFrame(() => this._loop());
     if (document.hidden || !this._vis) return;
@@ -172,9 +180,17 @@ export class BrainOrb {
     ctx.rotate(this._px * 0.052); // ≤3° parallax tilt (0.052 rad), core-centered
     ctx.globalCompositeOperation = "lighter";
 
-    // --- core (brightens while routing / working / responding) ---
+    // --- live voice: blend fed samples + the hero orb's published amplitude;
+    // decay each frame so the shimmer settles naturally when the user stops ---
+    this._amp = (this._amp || 0) * 0.93;
+    const voiceAmp = this.reduced
+      ? 0
+      : Math.max(this._amp, typeof window.__artemisAmp === "number" ? window.__artemisAmp : 0);
+
+    // --- core (brightens while routing / working / responding, and breathes
+    // with the user's real voice) ---
     const flare = wgt(3); // fades in/out with proximity to "respond"
-    const corePulse = 0.5 + 0.14 * Math.sin(tt * 1.6) + flare * 0.5 + wgt(2) * 0.15;
+    const corePulse = 0.5 + 0.14 * Math.sin(tt * 1.6) + flare * 0.5 + wgt(2) * 0.15 + voiceAmp * 0.45;
     const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, base * 0.4);
     cg.addColorStop(0, "rgba(255,232,200," + (0.42 * corePulse) + ")");
     cg.addColorStop(0.4, "rgba(255,150,70," + (0.24 * corePulse) + ")");
@@ -220,6 +236,11 @@ export class BrainOrb {
       const lp = (tt % 1.4) / 1.4;
       ctx.strokeStyle = "rgba(255,190,120," + (0.55 * (1 - lp) * wl) + ")"; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(0, 0, base * (0.16 + lp * 0.52), 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // --- listening shimmer: a ring that swells with the user's REAL voice ---
+    if (voiceAmp > 0.03) {
+      ring(ctx, base * (0.5 + voiceAmp * 0.14), 1.5 + voiceAmp * 2, PAL.B, 0.25 + voiceAmp * 0.5, 10 + voiceAmp * 14);
     }
 
     // --- three agent orbits + nodes; the active one lights up when routed ---

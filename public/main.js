@@ -647,6 +647,28 @@ micToggle.addEventListener("click", () => {
   else startTalk();
 });
 
+/**
+ * Public barge-in hook — interrupt Artemis the moment the user starts speaking.
+ *
+ *   window.ArtemisBargeIn.interrupt()
+ *
+ * Cancels queued/playing TTS, aborts an in-flight reply stream, and releases
+ * the orb's speaking state. The live mic pipeline already barges in on its own
+ * (mic click / VAD via startBargeIn); this hook exists so OTHER surfaces — the
+ * Brain page's future live mode, an external VAD, a hardware button — can wire
+ * the same interruption without reaching into internals. Safe to call anytime.
+ */
+window.ArtemisBargeIn = {
+  interrupt() {
+    resetTtsPipe();
+    speaking = false;
+    orb.stopAudio();
+    if (currentAbort) { try { currentAbort.abort(); } catch (e) {} }
+    busy = false;
+    stopThinking();
+  },
+};
+
 // short rising blip + orb flash the instant a wake word fires (kills dead air)
 function playEarcon() {
   try {
@@ -1089,8 +1111,41 @@ initMiniOrbs();
   const reduced = prefersReducedMotion();
   let timers = [];
 
+  // STREAMING replies: Artemis's lines type out word-by-word, like TTS starting
+  // before the full answer is composed. The bubble's leading text node is
+  // wrapped so the source/action chips inside survive; chips fade in after.
+  lines.forEach((l) => {
+    if (!l.classList.contains("bot")) return;
+    const bubble = l.querySelector(".demo-bubble");
+    const first = bubble && bubble.firstChild;
+    if (!first || first.nodeType !== 3) return; // expect a leading text node
+    const span = document.createElement("span");
+    span.className = "demo-typed";
+    span.dataset.full = first.textContent.trim();
+    span.textContent = span.dataset.full;
+    bubble.replaceChild(span, first);
+  });
+  function typeLine(l) {
+    const typed = l.querySelector(".demo-typed");
+    if (!typed) return;
+    const words = (typed.dataset.full || "").split(" ");
+    const chips = Array.from(l.querySelectorAll(".demo-src, .demo-action"));
+    chips.forEach((c) => (c.style.opacity = "0"));
+    typed.textContent = "";
+    words.forEach((w, i) => {
+      timers.push(setTimeout(() => {
+        typed.textContent += (i ? " " : "") + w;
+        if (i === words.length - 1) chips.forEach((c) => { c.style.transition = "opacity 0.3s"; c.style.opacity = "1"; });
+      }, 90 + i * 55)); // ~word cadence of streamed speech
+    });
+  }
   function showAll() {
-    lines.forEach((l) => l.classList.add("shown"));
+    lines.forEach((l) => {
+      l.classList.add("shown");
+      const typed = l.querySelector(".demo-typed");
+      if (typed) typed.textContent = typed.dataset.full; // full text, no typing
+      l.querySelectorAll(".demo-src, .demo-action").forEach((c) => (c.style.opacity = "1"));
+    });
   }
   function play() {
     timers.forEach(clearTimeout);
@@ -1098,7 +1153,10 @@ initMiniOrbs();
     if (reduced) { showAll(); return; } // no sequential motion under reduced-motion
     lines.forEach((l) => l.classList.remove("shown"));
     lines.forEach((l) => {
-      timers.push(setTimeout(() => l.classList.add("shown"), +l.dataset.delay || 0));
+      timers.push(setTimeout(() => {
+        l.classList.add("shown");
+        if (l.classList.contains("bot")) typeLine(l);
+      }, +l.dataset.delay || 0));
     });
   }
   if (replay) replay.addEventListener("click", play);

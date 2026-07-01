@@ -79,7 +79,9 @@
     <!-- RIGHT: trace panel -->
     <section class="bp-right" aria-label="Pipeline trace">
       <div class="bp-trace-head">
-        <span class="bp-trace-title">TRACE <span class="bp-source" id="bpSource">· demo</span></span>
+        <span class="bp-trace-title">TRACE <span class="bp-source" id="bpSource">· demo</span>
+          <span class="bp-ttfw" id="bpTtfw" hidden title="Time to first spoken word — everything before TTS starts">TTFW —</span>
+        </span>
         <div class="bp-trace-tools">
           <button class="bp-tool-btn" id="bpRedact" type="button" aria-pressed="true" title="Hide verbose payloads (keys are always masked)">redact</button>
           <button class="bp-tool-btn" id="bpCopy" type="button" title="Copy the trace as JSON">copy trace</button>

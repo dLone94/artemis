@@ -147,13 +147,19 @@ function renderControls() {
   // threw per-frame from the RAF loop and froze the whole page
   const tpl = CAPTIONS[key] || CAPTIONS.wake || "";
   const who = AGENT_LABELS[state.agent] || String(state.agent || "the agent");
-  caption.innerHTML = tpl.replace(/\{a\}/g, "<strong>" + who + "</strong>");
+  // thinking backchannel: pulsing dots during the tool-call gap — the visual
+  // equivalent of "mm-hm, working on it" so there's never dead silence
+  const thinking = key === "tool"
+    ? ' <span class="bp-thinking" aria-hidden="true"><i>·</i><i>·</i><i>·</i></span>'
+    : "";
+  caption.innerHTML = tpl.replace(/\{a\}/g, "<strong>" + who + "</strong>") + thinking;
 }
 
 stepBtns.forEach((b) =>
   b.addEventListener("click", () => {
     state.mode = "manual";
     state.playing = false;
+    stopEngine(); // manual mode renders on change, no loop
     seek((+b.dataset.step || 0) * PHASE_MS + 50); // jump to that phase's start
     updatePlayBtn();
   })
@@ -184,6 +190,8 @@ playBtn.addEventListener("click", () => {
   if (state.playing) {
     state.mode = "auto";
     startEngine(); // reduced-motion users opt in to motion by pressing play
+  } else {
+    stopEngine(); // paused = ZERO rAF work; controls repaint on change
   }
   updatePlayBtn();
 });
@@ -242,12 +250,25 @@ function lineFor(e) {
   div.querySelector(".bp-label").textContent = eventLabel(e);
   return div;
 }
+// Live "time-to-first-word": cumulative latency of every stage before TTS
+// starts — the number that actually measures how fast she FEELS. Appears the
+// moment the tts stage is reached (demo: 40+570+120+890+410 = 2030ms).
+const ttfwEl = $("bpTtfw");
+function renderTtfw() {
+  const ttsIdx = state.trace.findIndex((e) => e.stage === "tts");
+  if (ttsIdx < 0) { ttfwEl.hidden = true; return; }
+  const ms = state.trace.slice(0, ttsIdx).reduce((s, e) => s + (e.latencyMs || 0), 0);
+  ttfwEl.textContent = "TTFW " + (ms >= 1000 ? (ms / 1000).toFixed(2) + "s" : ms + "ms");
+  ttfwEl.hidden = false;
+}
+
 function renderTrace(rebuild) {
   const demo = TRACES[state.agent];
   const due = demo.filter((e) => e.t <= state.t);
   if (rebuild || due.length < state.trace.length) {
     state.trace = [];
     logEl.innerHTML = "";
+    ttfwEl.hidden = true;
   }
   for (let i = state.trace.length; i < due.length; i++) {
     state.trace.push(due[i]);
@@ -256,6 +277,7 @@ function renderTrace(rebuild) {
     requestAnimationFrame(() => line.classList.add("shown"));
     followLog();
   }
+  renderTtfw();
   renderTotals();
 }
 // The totals bar is a STATIC stacked breakdown of the FULL end-to-end request
@@ -347,6 +369,7 @@ window.ArtemisBrainTrace = {
     logEl.appendChild(line);
     requestAnimationFrame(() => line.classList.add("shown"));
     followLog();
+    renderTtfw(); // live TTFW too — speed stays visible with real traffic
     renderTotals();
   },
 };
@@ -374,31 +397,36 @@ function renderAll(rebuildTrace) {
   renderTrace(rebuildTrace);
 }
 
-// Under prefers-reduced-motion NO requestAnimationFrame loop runs at all —
-// the page renders a single static frame and every control repaints it
-// directly (seek/renderAll). The engine only starts if the user explicitly
-// presses play (a deliberate opt-in to motion).
-let engineOn = false;
+// Render-on-change engine: the rAF loop exists ONLY while playing — pausing
+// cancels it completely (no hot loop early-returning 60×/s), and every control
+// repaints directly via seek()/renderAll(), keeping the main thread free so UI
+// interactions feel instant. Under prefers-reduced-motion no loop starts at
+// all; pressing play is an explicit opt-in to motion.
+let engineRaf = 0;
 let last = 0;
+function tickEngine(now) {
+  engineRaf = requestAnimationFrame(tickEngine);
+  const dt = Math.min(100, now - (last || now));
+  last = now;
+  if (document.hidden) return;
+  const next = state.t + dt * state.speed;
+  if (next >= LOOP_MS) {
+    state.t = 0;
+    state.trace = [];
+    logEl.innerHTML = "";
+  } else {
+    state.t = next;
+  }
+  renderAll(false);
+}
 function startEngine() {
-  if (engineOn) return;
-  engineOn = true;
+  if (engineRaf) return;
   last = performance.now();
-  requestAnimationFrame(function tick(now) {
-    requestAnimationFrame(tick);
-    const dt = Math.min(100, now - (last || now));
-    last = now;
-    if (!state.playing || document.hidden) return;
-    const next = state.t + dt * state.speed;
-    if (next >= LOOP_MS) {
-      state.t = 0;
-      state.trace = [];
-      logEl.innerHTML = "";
-    } else {
-      state.t = next;
-    }
-    renderAll(false);
-  });
+  engineRaf = requestAnimationFrame(tickEngine);
+}
+function stopEngine() {
+  cancelAnimationFrame(engineRaf);
+  engineRaf = 0;
 }
 if (!reduced) startEngine();
 

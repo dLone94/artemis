@@ -199,6 +199,9 @@ export class VoiceOrb {
     const k = raw > this.cur.amp ? 0.3 : 0.07;
     this.cur.amp += (raw - this.cur.amp) * k;
     const amp = this.cur.amp;
+    // publish the live voice amplitude so OTHER canvases (the BrainOrb's
+    // "listening shimmer") can react to the user's real voice too
+    window.__artemisAmp = amp;
 
     // emit an expanding ripple on a speech peak (with cooldown so it's not spammy)
     if (!this.reduced && amp > 0.16 && amp - this._prevAmp > 0.035 && t - this._lastRipple > 0.16) {

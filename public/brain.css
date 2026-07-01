@@ -244,6 +244,17 @@
   color: var(--text-bright);
 }
 .bp-source { color: var(--gray); letter-spacing: 0.06em; }
+/* live time-to-first-word chip — the speed metric that matters */
+.bp-ttfw {
+  margin-left: 10px;
+  padding: 3px 10px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--amber, #ffb24d);
+  border: 1px solid rgba(255, 178, 77, 0.4);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 178, 77, 0.08);
+}
 .bp-trace-tools { display: flex; gap: 8px; }
 .bp-tool-btn {
   font-family: var(--font-mono);
@@ -341,6 +352,16 @@
   min-height: 13px;
 }
 
+/* thinking backchannel dots in the caption (tool-call gap) */
+.bp-thinking i {
+  display: inline-block;
+  font-style: normal;
+  color: var(--amber, #ffb24d);
+  animation: bp-dotpulse 1s ease-in-out infinite;
+}
+.bp-thinking i:nth-child(2) { animation-delay: 0.2s; }
+.bp-thinking i:nth-child(3) { animation-delay: 0.4s; }
+
 /* pulsing "in progress" dots for run-status trace lines */
 .bp-run-dots { display: inline-flex; gap: 3px; align-items: center; }
 .bp-run-dots i {
@@ -361,4 +382,5 @@
   .bp-line { transition: none; transform: none; }
   .bp-totals-bar .bp-seg { transition: none; }
   .bp-run-dots i { animation: none; opacity: 0.7; } /* static "···" still reads active */
+  .bp-thinking i { animation: none; opacity: 0.7; }
 }
