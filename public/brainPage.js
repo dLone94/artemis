@@ -238,21 +238,62 @@ function renderTrace(rebuild) {
   }
   renderTotals();
 }
+// The totals bar is a STATIC stacked breakdown of the FULL end-to-end request
+// (not playback progress — that's the transport scrubber's job). For gated
+// agents it honestly stops at the gate: segments cover only the time actually
+// spent, drawn against the full-request width, with a red gate marker.
+const FULL_STAGES = [
+  { name: "wake", ms: 40 }, { name: "asr", ms: 570 }, { name: "route", ms: 120 },
+  { name: "tool", ms: 890 }, { name: "llm", ms: 410 }, { name: "tts", ms: 180 },
+];
+const FULL_TOTAL = FULL_STAGES.reduce((s, x) => s + x.ms, 0); // 2210ms
+const GATED_STAGES = FULL_STAGES.slice(0, 3);                 // blocked before tool
+
+const totalsLabel = $("bpTotalsLabel");
+const totalsDefaultCaption = () =>
+  (isGated() ? GATED_STAGES : FULL_STAGES).map((x) => x.name + " " + x.ms).join(" · ");
+
+let totalsKey = ""; // rebuild only when the agent (breakdown) changes
 function renderTotals() {
-  const lat = state.trace.filter((e) => e.latencyMs).map((e) => ({ stage: e.stage, ms: e.latencyMs }));
-  const total = lat.reduce((s, x) => s + x.ms, 0);
+  if (totalsKey === state.agent) return;
+  totalsKey = state.agent;
+  const gated = isGated();
+  const stages = gated ? GATED_STAGES : FULL_STAGES;
+  const spent = stages.reduce((s, x) => s + x.ms, 0);
   totalsBar.innerHTML = "";
-  lat.forEach((x, i) => {
+  stages.forEach((x, i) => {
     const seg = document.createElement("span");
     seg.className = "bp-seg";
-    seg.style.width = (total ? (x.ms / total) * 100 : 0) + "%";
+    // width is proportional to the FULL end-to-end request, so a gated bar
+    // visibly stops short instead of stretching to fill (no fabricated time)
+    seg.style.width = (x.ms / FULL_TOTAL) * 100 + "%";
     seg.style.background = SEG_COLORS[i % SEG_COLORS.length];
-    seg.title = x.stage + " " + x.ms + "ms";
+    seg.tabIndex = 0;
+    const pct = Math.round((x.ms / (gated ? spent : FULL_TOTAL)) * 100);
+    const detail = x.name.toUpperCase() + " · " + x.ms + "ms (" + pct + "%)";
+    seg.title = detail;
+    seg.setAttribute("aria-label", detail);
+    // hover/focus surfaces the segment's stage + ms in the caption line
+    const show = () => { totalsCaption.textContent = detail; };
+    const hide = () => { totalsCaption.textContent = totalsDefaultCaption(); };
+    seg.addEventListener("mouseenter", show);
+    seg.addEventListener("mouseleave", hide);
+    seg.addEventListener("focus", show);
+    seg.addEventListener("blur", hide);
     totalsBar.appendChild(seg);
   });
-  totalsCaption.textContent = total
-    ? "totals · " + total + "ms  " + lat.map((x) => x.stage + " " + x.ms).join(" · ")
-    : "totals · —";
+  if (gated) {
+    const gate = document.createElement("span");
+    gate.className = "bp-seg bp-seg-gate";
+    gate.title = "blocked here — awaiting API key";
+    gate.setAttribute("aria-label", "blocked here — awaiting API key");
+    gate.tabIndex = 0;
+    totalsBar.appendChild(gate);
+    totalsLabel.textContent = "BLOCKED AT TOOL · " + spent + "ms BEFORE GATE";
+  } else {
+    totalsLabel.textContent = "END-TO-END " + FULL_TOTAL + "ms";
+  }
+  totalsCaption.textContent = totalsDefaultCaption();
 }
 
 $("bpRedact").addEventListener("click", (e) => {

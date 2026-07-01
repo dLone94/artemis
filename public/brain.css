@@ -297,21 +297,47 @@
   font-size: 11px;
 }
 
-.bp-totals { padding: 12px 18px 16px; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+/* the stacked END-TO-END breakdown — deliberately styled unlike the transport
+   scrubber: labeled, multi-color segments, hatched "unspent" track for gated */
+.bp-totals { padding: 10px 18px 14px; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.bp-totals-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--text-bright);
+  margin-bottom: 6px;
+}
 .bp-totals-bar {
   display: flex;
-  height: 10px;
-  border-radius: 5px;
+  gap: 1px; /* hairline separators make the segments read as a breakdown */
+  height: 14px;
+  border-radius: 4px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.05);
+  /* faint hatching = the full request span; gated bars visibly stop short */
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.04) 0 4px,
+    rgba(255, 255, 255, 0.015) 4px 8px
+  );
 }
-.bp-totals-bar .bp-seg { height: 100%; transition: width 0.4s ease; }
+.bp-totals-bar .bp-seg { height: 100%; }
+.bp-totals-bar .bp-seg:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+}
+.bp-totals-bar .bp-seg-gate {
+  width: 4px;
+  flex: 0 0 auto;
+  background: #ff6b5e;
+  box-shadow: 0 0 8px rgba(255, 107, 94, 0.8);
+}
 .bp-totals-caption {
-  margin-top: 8px;
+  margin-top: 7px;
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.04em;
   color: var(--gray);
+  min-height: 13px;
 }
 
 /* ---- reduced motion: no spinner, no packet glide, instant reveals ---- */

@@ -86,9 +86,10 @@
         </div>
       </div>
       <div class="bp-log" id="bpLog" aria-live="polite" aria-label="Trace log"></div>
-      <div class="bp-totals" id="bpTotals" aria-label="Stage latency totals">
-        <div class="bp-totals-bar" id="bpTotalsBar" role="img" aria-label="Stacked latency by stage"></div>
-        <div class="bp-totals-caption" id="bpTotalsCaption"></div>
+      <div class="bp-totals" id="bpTotals" role="group" aria-label="End-to-end latency breakdown">
+        <div class="bp-totals-label" id="bpTotalsLabel">END-TO-END —</div>
+        <div class="bp-totals-bar" id="bpTotalsBar"></div>
+        <div class="bp-totals-caption" id="bpTotalsCaption" aria-live="polite"></div>
       </div>
     </section>
   </main>
