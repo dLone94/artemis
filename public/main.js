@@ -7,6 +7,7 @@ import { resolveOpenIntent } from "./siteRegistry.js";
 import { matchWake } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
+import { prefersReducedMotion } from "./orbShared.js";
 
 const $ = (id) => document.getElementById(id);
 const conversation = [];
@@ -1002,12 +1003,48 @@ initMiniOrbs();
   }
 })();
 
+// ---- demo transcript: reveal lines in sequence, like a live exchange ----
+(function initDemo() {
+  const chat = $("demoChat");
+  if (!chat) return;
+  const lines = Array.from(chat.querySelectorAll(".demo-line"));
+  const replay = $("demoReplay");
+  const reduced = prefersReducedMotion();
+  let timers = [];
+
+  function showAll() {
+    lines.forEach((l) => l.classList.add("shown"));
+  }
+  function play() {
+    timers.forEach(clearTimeout);
+    timers = [];
+    if (reduced) { showAll(); return; } // no sequential motion under reduced-motion
+    lines.forEach((l) => l.classList.remove("shown"));
+    lines.forEach((l) => {
+      timers.push(setTimeout(() => l.classList.add("shown"), +l.dataset.delay || 0));
+    });
+  }
+  if (replay) replay.addEventListener("click", play);
+
+  // play once when the section first scrolls into view
+  if (reduced) {
+    showAll();
+  } else if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => { if (e.isIntersecting) { play(); io.disconnect(); } });
+    }, { threshold: 0.3 });
+    io.observe(chat);
+  } else {
+    play();
+  }
+})();
+
 // pause a section's CSS ambient loops once it scrolls fully offscreen
 const pauseIo = new IntersectionObserver(
   (entries) => entries.forEach((e) => e.target.classList.toggle("anim-paused", !e.isIntersecting)),
   { threshold: 0 }
 );
-document.querySelectorAll(".features, .team").forEach((el) => pauseIo.observe(el));
+document.querySelectorAll(".features, .team, .demo").forEach((el) => pauseIo.observe(el));
 
 // freeze every CSS animation while the tab is hidden (the orb's rAF already pauses)
 document.addEventListener("visibilitychange", () => {

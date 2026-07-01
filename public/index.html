@@ -150,6 +150,48 @@
         </article>
       </div>
     </section>
+
+    <section class="demo" id="demo">
+      <div class="demo-head reveal">
+        <div class="eyebrow">◦ PROOF · SEE IT TALK</div>
+        <h2 class="demo-title">A real exchange.<br /><span class="grad">Spoken out loud.</span></h2>
+        <p class="demo-sub">No screenshots-as-promises. This is the shape of an actual voice turn — you ask, she searches, she answers aloud with sources, then she acts.</p>
+      </div>
+      <div class="demo-stage reveal">
+        <div class="demo-chat" id="demoChat" aria-label="Example conversation with Artemis">
+          <div class="demo-line user" data-delay="0">
+            <span class="demo-who">You</span>
+            <p class="demo-bubble">“Artemis — what's trending on Hacker News right now?”</p>
+          </div>
+          <div class="demo-line bot" data-delay="900">
+            <span class="demo-who">Artemis
+              <span class="demo-spoken"><span class="demo-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span> spoken aloud</span>
+            </span>
+            <p class="demo-bubble">Top of Hacker News right now: a Show HN for a local-first sync engine, and a deep dive on WebGPU compute. Want me to open either?
+              <span class="demo-src">source · news.ycombinator.com</span>
+            </p>
+          </div>
+          <div class="demo-line user" data-delay="2600">
+            <span class="demo-who">You</span>
+            <p class="demo-bubble">“Open the WebGPU one.”</p>
+          </div>
+          <div class="demo-line bot" data-delay="3400">
+            <span class="demo-who">Artemis
+              <span class="demo-spoken"><span class="demo-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span> spoken aloud</span>
+            </span>
+            <p class="demo-bubble">Opening it now. <span class="demo-action">↗ opened a new tab</span></p>
+          </div>
+        </div>
+        <button class="demo-replay" id="demoReplay" type="button">↻ Replay</button>
+      </div>
+      <div class="demo-os reveal">
+        <span class="demo-os-label">Free &amp; open source</span>
+        <!-- TODO: replace "#" with the real URLs once the repo/docs are published -->
+        <a class="demo-os-link" href="#" rel="noopener">GitHub repo ↗</a>
+        <a class="demo-os-link" href="#" rel="noopener">Docs ↗</a>
+        <a class="demo-os-link" href="#" rel="noopener">Getting started ↗</a>
+      </div>
+    </section>
   </main>
 
   <div class="dock" id="dock" aria-label="Artemis controls">

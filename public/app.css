@@ -805,6 +805,150 @@ main, .foot { position: relative; z-index: 1; }
 }
 .brain.is-manual .brain-hint { opacity: 0; }
 
+/* ---- demo / proof (scripted spoken exchange + open-source links) ---- */
+.demo { position: relative; padding: 60px 28px 70px; }
+.demo-head { text-align: center; max-width: 640px; margin: 0 auto 34px; }
+.demo-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(28px, 4.4vw, 46px);
+  letter-spacing: -0.02em;
+  line-height: 1.26;
+  padding-bottom: 0.14em;
+  margin: 12px 0 0;
+  color: var(--text-bright);
+}
+.demo-sub { color: var(--text-muted); margin: 16px auto 0; line-height: 1.6; max-width: 540px; }
+
+.demo-stage { max-width: 640px; margin: 0 auto; }
+.demo-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  border-radius: 20px;
+  background: rgba(12, 15, 19, 0.72);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.demo-line {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 86%;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+.demo-line.shown { opacity: 1; transform: none; }
+.demo-line.user { align-self: flex-end; align-items: flex-end; }
+.demo-line.bot { align-self: flex-start; align-items: flex-start; }
+.demo-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.demo-bubble {
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 14px;
+  line-height: 1.55;
+  font-size: 15px;
+  color: var(--text-bright);
+}
+.demo-line.user .demo-bubble {
+  background: rgba(255, 158, 72, 0.12);
+  border: 1px solid rgba(255, 158, 72, 0.28);
+  border-bottom-right-radius: 4px;
+}
+.demo-line.bot .demo-bubble {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom-left-radius: 4px;
+}
+.demo-spoken {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--teal);
+  letter-spacing: 0.08em;
+}
+/* little live "voice" meter to signal the line was spoken aloud */
+.demo-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.demo-bars i {
+  width: 2px;
+  height: 40%;
+  background: var(--teal);
+  border-radius: 1px;
+  animation: demo-eq 0.9s ease-in-out infinite;
+}
+.demo-bars i:nth-child(2) { animation-delay: 0.15s; }
+.demo-bars i:nth-child(3) { animation-delay: 0.3s; }
+.demo-bars i:nth-child(4) { animation-delay: 0.45s; }
+@keyframes demo-eq { 0%, 100% { height: 30%; } 50% { height: 100%; } }
+.demo-src,
+.demo-action {
+  display: inline-block;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--gray);
+}
+.demo-action { color: var(--teal); }
+.demo-src::before { content: ""; }
+
+.demo-replay {
+  display: block;
+  margin: 16px auto 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--gray);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-pill);
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+.demo-replay:hover { color: var(--teal); border-color: rgba(255, 158, 72, 0.4); }
+
+.demo-os {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  max-width: 640px;
+  margin: 30px auto 0;
+}
+.demo-os-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.demo-os-link {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--teal);
+  text-decoration: none;
+  border: 1px solid rgba(255, 158, 72, 0.28);
+  border-radius: var(--radius-pill);
+  padding: 8px 16px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.demo-os-link:hover { border-color: var(--teal); box-shadow: 0 0 16px rgba(255, 158, 72, 0.22); }
+
 .team {
   position: relative;
   padding: 60px 28px 90px;
