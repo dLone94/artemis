@@ -793,10 +793,11 @@ function startTalkGesture() {
   orb._ensureAudio();
   if (!recording && !busy && !speaking) startTalk();
 }
+// The dock's mic is now the single primary "Talk to Artemis" CTA. Any legacy
+// in-page talk buttons still start a turn if present, but the nav no longer
+// duplicates the CTA (it links to the open-source repo instead).
 const talkBtn = $("talkBtn");
 if (talkBtn) talkBtn.addEventListener("click", startTalkGesture);
-const navCta = $("navCta");
-if (navCta) navCta.addEventListener("click", (e) => { e.preventDefault(); startTalkGesture(); });
 
 // "What can you do?" — Artemis explains herself out loud.
 const EXPLAINER =
