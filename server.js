@@ -3,7 +3,7 @@
 // Run with:  node server.js   (Stripe key optional; the app + Test button work without it.)
 
 import { createServer } from "http";
-import { promises as fs, readFileSync, existsSync } from "fs";
+import { promises as fs, readFileSync, writeFileSync, existsSync } from "fs";
 import { extname, join, normalize } from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
@@ -25,6 +25,20 @@ const PUBLIC_DIR = join(__dirname, "public");
 const ASSETS_DIR = join(__dirname, "assets");
 const DATA_DIR = join(__dirname, ".data");
 const revenueLogPath = join(DATA_DIR, "revenue-events.json");
+
+// Persist one key into .env (update in place or append) AND apply it to the
+// running process — used by the Gmail callback so authorization needs no
+// manual copy-paste and no restart. .env is git-ignored; value never logged.
+function saveEnvVar(key, value) {
+  const envPath = join(__dirname, ".env");
+  let text = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
+  const line = `${key}=${value}`;
+  const re = new RegExp(`^${key}=.*$`, "m");
+  if (re.test(text)) text = text.replace(re, line);
+  else text += (text.endsWith("\n") || !text ? "" : "\n") + line + "\n";
+  writeFileSync(envPath, text, { mode: 0o600 });
+  process.env[key] = value;
+}
 
 // --- tiny .env loader (no dotenv dependency) ---------------------------------
 function loadEnv() {
@@ -1036,13 +1050,15 @@ async function handleRequest(req, res) {
     }
     try {
       const rt = await gmailExchangeCode(code, PORT);
+      // save + apply immediately: no copy-paste, no restart needed
+      saveEnvVar("GOOGLE_REFRESH_TOKEN", rt);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
         '<body style="font-family:monospace;background:#0a0805;color:#f6efe7;padding:40px;line-height:1.6">' +
-        "<h2 style=\"color:#ffb24d\">Gmail authorized ✓</h2>" +
-        "<p>Add this line to <code>.env</code>, then restart Artemis:</p>" +
-        '<pre style="background:#1a140c;padding:14px;border-radius:8px;overflow:auto">GOOGLE_REFRESH_TOKEN=' + rt + "</pre>" +
-        "<p>The token was shown only here — it was not saved or logged anywhere.</p></body>"
+        "<h2 style=\"color:#ffb24d\">Gmail connected ✓</h2>" +
+        "<p>The token was saved to <code>.env</code> on this machine (never logged).</p>" +
+        "<p>You're all set — go back to <a style=\"color:#ffb24d\" href=\"/\">Artemis</a> and say " +
+        "<strong>“Artemis, check my email.”</strong></p></body>"
       );
     } catch (e) {
       res.writeHead(500, { "Content-Type": "text/plain" });
