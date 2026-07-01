@@ -28,6 +28,8 @@ export class BrainOrb {
     this.step = 0;      // 0 wake · 1 route · 2 tool · 3 respond
     this.agent = 0;     // which sub-agent is handling the request
     this._stepStart = 0;
+    this._stepF = 0;   // continuous (morphing) step position, eased toward .step
+    this._lastT = 0;   // for delta-time easing
     this._elapsed = 0;
     this._raf = 0;
     this._vis = true;
@@ -147,10 +149,23 @@ export class BrainOrb {
     const base = Math.min(W, H) * 0.42;
     const tt = this.reduced ? 0.6 : t; // frozen phase under reduced motion
     const step = this.step;
+
+    // --- "4D" state morphing: _stepF eases toward the discrete step with
+    // DELTA-TIME, and every state feature fades by its proximity weight, so
+    // Wake→Route→Tool→Respond interpolate continuously instead of snapping.
+    // Reduced motion: pinned to the exact step (one static frame, no tween).
+    if (this.reduced) {
+      this._stepF = step;
+    } else {
+      const dt = Math.min(0.1, Math.max(0, t - (this._lastT || t)));
+      this._lastT = t;
+      this._stepF += (step - this._stepF) * Math.min(1, dt * 6);
+      if (Math.abs(step - this._stepF) < 0.001) this._stepF = step;
+    }
+    const wgt = (i) => Math.max(0, 1 - Math.abs(this._stepF - i)); // 0..1 per-step weight
+    const routedF = Math.max(0, Math.min(1, this._stepF));         // 0→1 across wake→route
     const listening = step === 0, routed = step >= 1, tooling = step === 2, responding = step === 3;
-    // eased progress since the last step change → glows ramp instead of snapping
-    const since = this.reduced ? 1 : Math.min(1, (t - this._stepStart) / 0.45);
-    const ease = since * since * (3 - 2 * since);
+    const ease = routedF; // continuous "routedness" drives link/node glow ramps
 
     ctx.save();
     ctx.translate(cx, cy);
@@ -158,8 +173,8 @@ export class BrainOrb {
     ctx.globalCompositeOperation = "lighter";
 
     // --- core (brightens while routing / working / responding) ---
-    const flare = responding ? ease : 0;
-    const corePulse = 0.5 + 0.14 * Math.sin(tt * 1.6) + flare * 0.5 + (tooling ? 0.15 : 0);
+    const flare = wgt(3); // fades in/out with proximity to "respond"
+    const corePulse = 0.5 + 0.14 * Math.sin(tt * 1.6) + flare * 0.5 + wgt(2) * 0.15;
     const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, base * 0.4);
     cg.addColorStop(0, "rgba(255,232,200," + (0.42 * corePulse) + ")");
     cg.addColorStop(0.4, "rgba(255,150,70," + (0.24 * corePulse) + ")");
@@ -185,18 +200,26 @@ export class BrainOrb {
     arcs(ctx, base * 0.94, SEGS, 2, spin * 0.1, PAL.O, 0.26, 8);        // soft main pass
     ticks(ctx, base * 0.86 + dof * 0.6, 42, base * 0.03, -spin * 0.05, PAL.D, 0.16);
     ticks(ctx, base * 0.86, 42, base * 0.03, -spin * 0.05, PAL.D, 0.3);
-    poly(ctx, base * 0.34, 6, spin * 0.15, 1.2, PAL.B, 0.5);          // inner: sharp
+    // hex core as a tilted 3D plate: squash + slight shear, with a dim
+    // "underside" echo a few px lower — reads as perspective, not a flat outline
+    ctx.save();
+    ctx.transform(1, 0.05, 0.16, 0.86, 0, 0);
+    poly(ctx, base * 0.34, 6, spin * 0.15, 1.2, PAL.B, 0.5);  // top face (sharp)
+    ctx.translate(0, base * 0.022);
+    poly(ctx, base * 0.34, 6, spin * 0.15, 1, PAL.O, 0.18);   // underside edge
+    ctx.restore();
 
-    // --- wake: an expanding "listening" pulse ---
-    if (listening) {
-      if (this.reduced) {
+    // --- wake: an expanding "listening" pulse (cross-fades with the wake weight) ---
+    const wl = wgt(0);
+    if (this.reduced) {
+      if (listening) {
         ctx.strokeStyle = PAL.B + "0.4)"; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(0, 0, base * 0.44, 0, Math.PI * 2); ctx.stroke();
-      } else {
-        const lp = (tt % 1.4) / 1.4;
-        ctx.strokeStyle = "rgba(255,190,120," + (0.55 * (1 - lp)) + ")"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(0, 0, base * (0.16 + lp * 0.52), 0, Math.PI * 2); ctx.stroke();
       }
+    } else if (wl > 0.02) {
+      const lp = (tt % 1.4) / 1.4;
+      ctx.strokeStyle = "rgba(255,190,120," + (0.55 * (1 - lp) * wl) + ")"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, base * (0.16 + lp * 0.52), 0, Math.PI * 2); ctx.stroke();
     }
 
     // --- three agent orbits + nodes; the active one lights up when routed ---
@@ -216,9 +239,11 @@ export class BrainOrb {
       ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + (active ? 1 : 0.5) + ")";
       ctx.beginPath(); ctx.arc(px, py, nodeR, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
 
-      // tool call: a little spinner sweeps around the working node
-      if (tooling && active && !this.reduced) {
-        ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + ",0.9)"; ctx.lineWidth = 2; ctx.lineCap = "round";
+      // tool call: a little spinner sweeps around the working node (fades with
+      // the tool weight so it eases in/out instead of popping)
+      const wt = wgt(2);
+      if (wt > 0.05 && active && !this.reduced) {
+        ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + (0.9 * wt) + ")"; ctx.lineWidth = 2; ctx.lineCap = "round";
         ctx.beginPath(); ctx.arc(px, py, nodeR + 4, tt * 6, tt * 6 + 1.6); ctx.stroke(); ctx.lineCap = "butt";
       }
 
@@ -232,7 +257,7 @@ export class BrainOrb {
       const np = nodePos[this.agent], [r, g, b] = AGENTS[this.agent].rgb;
       const shimmer = this.reduced ? 1 : 0.5 + 0.5 * Math.sin(tt * 3);
       ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + ((0.3 + 0.35 * shimmer) * ease) + ")";
-      ctx.lineWidth = 1.5 + (tooling ? 1 : 0);
+      ctx.lineWidth = 1.5 + wgt(2); // thickens smoothly while the tool works
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(np.x, np.y); ctx.stroke();
 
       // glowing data packet: core → agent (request out), then back (answer home),
@@ -249,11 +274,12 @@ export class BrainOrb {
       }
     }
 
-    // --- respond: a speaking wave ripples outward ---
-    if (responding && !this.reduced) {
+    // --- respond: a speaking wave ripples outward (fades with the respond weight) ---
+    const wr = wgt(3);
+    if (wr > 0.02 && !this.reduced) {
       for (let k = 0; k < 2; k++) {
         const rp = (tt + k * 0.5) % 1.0;
-        ctx.strokeStyle = "rgba(255,178,98," + (0.4 * (1 - rp)) + ")"; ctx.lineWidth = 2 * (1 - rp) + 0.3;
+        ctx.strokeStyle = "rgba(255,178,98," + (0.4 * (1 - rp) * wr) + ")"; ctx.lineWidth = 2 * (1 - rp) + 0.3;
         ctx.beginPath(); ctx.arc(0, 0, base * (0.16 + rp * 0.6), 0, Math.PI * 2); ctx.stroke();
       }
     }
