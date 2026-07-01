@@ -674,6 +674,7 @@ function armWake() {
 function setWakeUi(on) {
   wakeOn = on;
   window.__artemisWakeOn = on;
+  if (window.__dockOnWake) window.__dockOnWake(on); // wake ON keeps the dock expanded
   wakeToggle.classList.toggle("on", on);
   wakeToggle.textContent = on ? "👂 WAKE WORD: ON" : "👂 WAKE WORD: OFF";
 }
@@ -1095,30 +1096,73 @@ document.addEventListener("visibilitychange", () => {
   document.body.classList.toggle("tab-hidden", document.hidden);
 });
 
-// ---- dock: keep page bottom-padding in sync with the dock, + collapse toggle ----
-// The dock is position:fixed, so it would otherwise cover the footer/last cards.
-// We measure its real height (which changes with collapse and mobile wrapping) and
-// expose it as --dock-h; .page reserves exactly that much padding-bottom.
+// ---- dock: intent-driven state machine (idle mic bubble ⇄ expanded panel) ----
+// data-state="idle" shows only the mic bottom-right; "expanded" is the full panel.
+// Expands on mic click / any focus or pointer inside / wake word ON. Collapses on
+// outside click, Escape, the ▾ toggle, or ~4s with no interaction — but never
+// while a conversation is live (recording / thinking / speaking) or wake is ON.
+// --dock-height stays synced so page padding + scroll-padding clear the real dock.
 (function initDock() {
   const dock = $("dock");
   const toggle = $("dockToggle");
   if (!dock) return;
+
   const syncHeight = () => {
-    // set on :root so both .page padding-bottom and html scroll-padding-bottom
-    // (and any section clearance) read the dock's real, current height
     document.documentElement.style.setProperty("--dock-height", dock.offsetHeight + 30 + "px");
   };
   syncHeight();
   if ("ResizeObserver" in window) new ResizeObserver(syncHeight).observe(dock);
   window.addEventListener("resize", syncHeight);
+
+  let idleTimer = 0;
+  // keep the panel open while it's genuinely in use
+  const inUse = () =>
+    wakeOn || recording || busy || speaking || dock.contains(document.activeElement);
+
+  const setState = (s) => {
+    if (dock.dataset.state === s) return;
+    dock.dataset.state = s;
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", String(s === "expanded"));
+      toggle.title = s === "expanded" ? "Collapse controls" : "Expand controls";
+    }
+    syncHeight();
+  };
+  const collapseSoon = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (inUse()) collapseSoon(); // re-check later instead of closing mid-use
+      else setState("idle");
+    }, 4000);
+  };
+  const expand = () => { setState("expanded"); collapseSoon(); };
+
+  // expand triggers: any pointer/focus inside the dock (covers the mic click),
+  // plus the wake word turning ON (hooked from setWakeUi below)
+  dock.addEventListener("pointerdown", expand);
+  dock.addEventListener("focusin", expand);
+  dock.addEventListener("input", collapseSoon); // selects count as interaction
+  window.__dockOnWake = (on) => { if (on) expand(); else collapseSoon(); };
+
+  // collapse triggers — explicit user intent bypasses the in-use guard
+  document.addEventListener("pointerdown", (e) => {
+    if (!dock.contains(e.target) && !inUse()) setState("idle");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && dock.dataset.state === "expanded") {
+      if (dock.contains(document.activeElement)) document.activeElement.blur();
+      setState("idle");
+    }
+  });
   if (toggle) {
-    toggle.addEventListener("click", () => {
-      const collapsed = dock.classList.toggle("collapsed");
-      toggle.setAttribute("aria-expanded", String(!collapsed));
-      toggle.title = collapsed ? "Expand controls" : "Collapse controls";
-      syncHeight();
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setState("idle");
+      toggle.blur(); // don't let lingering focus instantly re-expand
     });
   }
+
+  collapseSoon();
 })();
 
 // ---- settings (voice + tone) + restore prior conversation ----

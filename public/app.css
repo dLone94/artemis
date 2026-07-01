@@ -701,7 +701,8 @@ main, .foot { position: relative; z-index: 1; }
 /* ---- the brain (explanatory orb) ---- */
 .brain {
   position: relative;
-  padding: 70px 28px 80px;
+  /* base 80px + 64px dock clearance + notch inset: controls never sit under the dock */
+  padding: 70px 28px calc(80px + 64px + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(180deg, rgba(8, 11, 14, 0) 0%, rgba(8, 11, 14, 0.72) 22%, rgba(8, 11, 14, 0.72) 100%);
 }
 .brain-head { text-align: center; max-width: 660px; margin: 0 auto 34px; }
@@ -810,7 +811,11 @@ main, .foot { position: relative; z-index: 1; }
 .brain.is-manual .brain-hint { opacity: 0; }
 
 /* ---- demo / proof (scripted spoken exchange + open-source links) ---- */
-.demo { position: relative; padding: 60px 28px 70px; }
+.demo {
+  position: relative;
+  /* base 70px + 64px dock clearance + notch inset (same rationale as .brain) */
+  padding: 60px 28px calc(70px + 64px + env(safe-area-inset-bottom, 0px));
+}
 .demo-head { text-align: center; max-width: 640px; margin: 0 auto 34px; }
 .demo-title {
   font-family: var(--font-display);
@@ -1085,25 +1090,28 @@ main, .foot { position: relative; z-index: 1; }
 .fc-inner { display: inline-flex; align-items: center; gap: 9px; }
 .fc-orb { width: 24px; height: 24px; display: block; flex: 0 0 auto; }
 
-/* ---- control dock (replaces the chat window) — the home for mic, wake word, voice & tone ---- */
+/* ---- control dock — intent-driven: idle mic bubble ⇄ expanded full panel.
+   data-state="idle|expanded" is set by main.js. Anchored bottom-right so idle
+   never sits over centered content. Animation is transform/opacity only
+   (compositor-friendly); size changes snap instantly, no animated reflow. ---- */
 .dock {
   position: fixed;
-  left: 50%;
+  right: 18px;
   bottom: 18px;
-  transform: translateX(-50%);
   z-index: 60;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 9px;
   padding: 12px 20px;
-  max-width: calc(100vw - 24px);
+  max-width: min(600px, calc(100vw - 24px)); /* keep the expanded panel compact */
   background: rgba(14, 11, 8, 0.74);
   border: 1px solid rgba(255, 158, 72, 0.2);
   border-radius: 18px;
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
   box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9), 0 0 34px -14px rgba(255, 158, 72, 0.35);
+  transform-origin: 100% 100%;
 }
 .dock-status {
   font-family: var(--font-mono);
@@ -1118,7 +1126,7 @@ main, .foot { position: relative; z-index: 1; }
 .dock-sep { width: 1px; height: 28px; background: rgba(255, 255, 255, 0.12); }
 .dock .mic-orb { width: 52px; height: 52px; font-size: 20px; }
 
-/* collapse toggle — tuck the dock away so it never blocks content underneath */
+/* manual collapse toggle (▾) — Escape / outside click / 4s idle also collapse */
 .dock-toggle {
   position: absolute;
   top: 6px;
@@ -1135,18 +1143,44 @@ main, .foot { position: relative; z-index: 1; }
   border: 1px solid rgba(255, 158, 72, 0.28);
   border-radius: 8px;
   cursor: pointer;
-  transition: transform 0.25s ease, border-color 0.2s, background 0.2s;
+  transition: border-color 0.2s, background 0.2s;
 }
 .dock-toggle:hover { border-color: var(--teal); background: rgba(255, 158, 72, 0.1); }
 .dock-status { padding: 0 22px; } /* keep status text clear of the toggle */
 
-/* collapsed: keep only the mic + meter; hide status text, settings, extra buttons */
-.dock.collapsed { padding: 10px 14px; }
-.dock.collapsed .dock-status,
-.dock.collapsed .wake-toggle,
-.dock.collapsed .set-field,
-.dock.collapsed .dock-sep { display: none; }
-.dock.collapsed .dock-toggle { transform: rotate(180deg); }
+/* panel content fades/slides in on expand (transform + opacity only) */
+.dock-status,
+.dock-toggle,
+.dock-row > * {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+/* idle: a ~64px mic bubble (52px mic + 6px padding ring). Everything else is
+   hidden via opacity/pointer-events + zero-size out of flow — no layout jump
+   inside the bubble, and hidden controls can't be clicked. Focusing them via
+   keyboard still works and re-expands the dock (focuswithin). */
+.dock[data-state="idle"] {
+  padding: 6px;
+  gap: 0;
+  border-radius: 50%;
+}
+.dock[data-state="idle"] .dock-row { gap: 0; }
+.dock[data-state="idle"] .dock-status,
+.dock[data-state="idle"] .dock-toggle,
+.dock[data-state="idle"] .dock-row > :not(.mic-orb) {
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 0;
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  overflow: hidden;
+}
+.dock[data-state="idle"] .mic-orb { width: 52px; height: 52px; font-size: 20px; }
+.dock[data-state="idle"]:hover { border-color: var(--teal); }
 
 /* one-tap "Open" button shown when the browser blocks a voice-triggered tab open */
 .open-link {
@@ -1174,13 +1208,29 @@ main, .foot { position: relative; z-index: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .open-link { animation: none; } }
 @media (max-width: 700px) {
-  .dock { bottom: 10px; padding: 10px 12px; gap: 7px; }
   .dock-sep { display: none; }
   .dock-row { gap: 10px; }
   .dock .mic-orb { width: 46px; height: 46px; font-size: 18px; }
 }
+/* ≤640px: the dock is a bottom BAR in every state — full-width, anchored to the
+   bottom edge, never floating over content. Idle keeps just the centered mic. */
+@media (max-width: 640px) {
+  .dock,
+  .dock[data-state="idle"] {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-width: none;
+    border-radius: 16px 16px 0 0;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .dock[data-state="idle"] { padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .dock { transition: none; }
+  .dock,
+  .dock-status,
+  .dock-toggle,
+  .dock-row > * { transition: none; }
 }
 .float-cta.show .fc-inner { animation: cta-bob 4s var(--ease-in-out) infinite; }
 @keyframes cta-bob {
