@@ -109,6 +109,11 @@ export class VoiceOrb {
   connectMic(stream) {
     if (!this._ensureAudio()) return;
     this._disconnectSource();
+    // release the previous stream's tracks — replacing without stopping leaks
+    // a live mic (the browser's "mic in use" dot never clears)
+    if (this._micStream && this._micStream !== stream) {
+      try { this._micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    }
     this._synthSpeak = false;
     this.srcNode = this.audioCtx.createMediaStreamSource(stream);
     this.srcNode.connect(this.analyser); // analyse only, never route mic to output

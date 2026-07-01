@@ -277,6 +277,7 @@
     var o = webglOrb();
     if (!o || !analyser) return;
     var data = new Uint8Array(analyser.frequencyBinCount);
+    var prev = o.status || "idle"; // restore what the orb was doing, don't force idle
     o.setStatus("speaking");
     var idleFrames = 0;
     function frame() {
@@ -288,7 +289,7 @@
       if (avg < 0.01) idleFrames++;
       else idleFrames = 0;
       if (idleFrames < 30) requestAnimationFrame(frame);
-      else o.setStatus("idle");
+      else if (!voiceActive()) o.setStatus(prev);
     }
     requestAnimationFrame(frame);
   }
@@ -296,10 +297,17 @@
   function pulseOrbCosmetic(tier, durationMs) {
     var o = webglOrb();
     if (!o) return;
+    // mid-conversation (mic hot / Artemis talking): just add an amplitude
+    // pulse — never steal the orb's live state
+    if (voiceActive()) {
+      o.feed(Math.min(1, 0.4 + tier.orbPulse * 0.4));
+      return;
+    }
+    var prev = o.status || "idle";
     o.setStatus("speaking");
     o.feed(Math.min(1, 0.4 + tier.orbPulse * 0.4));
     window.setTimeout(function () {
-      o.setStatus("idle");
+      if (!voiceActive()) o.setStatus(prev);
     }, Math.min(durationMs, 1400));
   }
 

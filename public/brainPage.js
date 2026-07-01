@@ -321,15 +321,16 @@ $("bpRedact").addEventListener("click", (e) => {
   });
 });
 $("bpCopy").addEventListener("click", async (e) => {
+  const btn = e.currentTarget; // currentTarget is null after an await — capture first
   const json = JSON.stringify(
     state.trace.map((ev) => ({ ...ev, label: maskKeys(ev.label) })), null, 2);
   try {
     await navigator.clipboard.writeText(json);
-    e.currentTarget.textContent = "copied ✓";
+    btn.textContent = "copied ✓";
   } catch {
-    e.currentTarget.textContent = "copy failed";
+    btn.textContent = "copy failed";
   }
-  setTimeout(() => { $("bpCopy").textContent = "copy trace"; }, 1400);
+  setTimeout(() => { btn.textContent = "copy trace"; }, 1400);
 });
 
 // live integration hook: real voice pushes TraceEvents into the SAME panel

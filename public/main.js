@@ -38,6 +38,10 @@ const conversation = [];
 let busy = false;
 let recording = false;
 
+// celebration.js checks this before playing its jingle / hijacking the orb —
+// a payment landing mid-conversation must not talk over Artemis or the user
+window.celebrationVoiceActive = () => speaking || recording || busy;
+
 const orb = new VoiceOrb($("sceneStage"));
 window.__orb = orb;
 
@@ -207,14 +211,17 @@ async function speak(text) {
 function afterSpeak() {
   stopBargeIn();
   speaking = false;
+  if (recording) return; // user already barged in — don't clobber the live mic UI
   orb.stopAudio();
+  micStream = null; // stopAudio killed the tracks; resumeWake must reacquire
   if (wakeOn) {
     orb.setStatus("listening");
-    setLiveStatus("Listening for “Artemis…”");
+    // keep a pending yes/no question visible — it's the most important status
+    setLiveStatus(pendingConfirm ? "Say “yes” to confirm, or “no” to cancel." : "Listening for “Artemis…”");
     resumeWake();
   } else {
     orb.setStatus("idle");
-    setLiveStatus("Click the mic to speak");
+    setLiveStatus(pendingConfirm ? "Say “yes” to confirm, or “no” to cancel." : "Click the mic to speak");
   }
 }
 
@@ -414,6 +421,20 @@ async function pumpTts() {
   if (ttsPlaying || !ttsQueue.length) return;
   ttsPlaying = true;
   const item = ttsQueue.shift();
+  // Exactly-once advance for this clip. A decode error can fire BOTH the
+  // play() rejection and the element's async error event — without the guard
+  // that spawned two interleaved pump loops fighting over ttsEl. And every
+  // exit path must end the turn when the queue is dry, or `speaking` sticks
+  // true forever and the wake word never restarts.
+  const settle = () => {
+    if (settle.done) return;
+    settle.done = true;
+    ttsPlaying = false;
+    if (ttsQueue.length) { pumpTts(); return; }
+    if (busy) return; // stream still generating — more sentences are coming
+    speaking = false;
+    afterSpeak();
+  };
   try {
     pauseWakeForSpeech();
     orb.connectMediaElement(ttsEl);
@@ -421,23 +442,15 @@ async function pumpTts() {
     speaking = true;
     startBargeIn(); // listen for you to interrupt
     const blob = await item.blobP; // usually already resolved → no gap before this clip
-    if (!blob) { ttsPlaying = false; pumpTts(); return; }
+    if (!blob) { settle(); return; } // fetch failed → skip clip, still end the turn
     if (ttsObjUrl) { try { URL.revokeObjectURL(ttsObjUrl); } catch (e) {} }
     ttsObjUrl = URL.createObjectURL(blob);
-    ttsEl.onended = ttsEl.onerror = () => {
-      ttsPlaying = false;
-      if (ttsQueue.length) pumpTts();
-      else {
-        speaking = false;
-        afterSpeak();
-      }
-    };
+    ttsEl.onended = ttsEl.onerror = settle;
     ttsEl.src = ttsObjUrl;
     ttsEl.currentTime = 0;
     await ttsEl.play();
   } catch (e) {
-    ttsPlaying = false;
-    pumpTts();
+    settle();
   }
 }
 
@@ -525,7 +538,7 @@ async function ask(text) {
         if (a && a.url) openUrl(a.url);
       }
     }
-    if (!ttsPlaying && !ttsQueue.length) afterSpeak();
+    if (!ttsPlaying && !ttsQueue.length) { speaking = false; afterSpeak(); } // pump may have deferred to us while busy
   } catch (e) {
     stopThinking();
     resetTtsPipe();
@@ -550,6 +563,9 @@ async function startTalk() {
   stopBargeIn(); // we're recording now — no need for the barge-in listener
   orb._ensureAudio(); // unlock audio in this gesture
   try {
+    // stop the wake-mode viz stream first — overwriting it leaks a live mic
+    // (browser "mic in use" indicator never clears)
+    if (micStream) { try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {} micStream = null; }
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
     setLiveStatus("Microphone permission denied.");
@@ -615,6 +631,10 @@ micToggle.addEventListener("click", () => {
     speaking = false;
     orb.stopAudio();
     if (currentAbort) { try { currentAbort.abort(); } catch (e) {} }
+    // the abort clears `busy` only on a later microtask — clear it NOW or
+    // startTalk()'s busy-guard silently eats this click
+    busy = false;
+    stopThinking();
     startTalk();
     return;
   }
@@ -703,17 +723,22 @@ function setWakeUi(on) {
   wakeToggle.textContent = on ? "👂 WAKE WORD: ON" : "👂 WAKE WORD: OFF";
 }
 
+let wakeStarting = false; // re-entrancy guard: the permission prompt takes a while
 async function startWake() {
   if (!SpeechRec) {
     setLiveStatus("Wake word needs Chrome or Edge.");
     return;
   }
+  if (wakeOn || wakeStarting) return; // double-click during the mic prompt → one recognizer, not two
+  wakeStarting = true;
   orb._ensureAudio();
   // a viz mic so the orb reacts to your voice while waiting
   try {
+    if (micStream) { try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {} } // never leak the old one
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     orb.connectMic(micStream);
   } catch (e) {}
+  wakeStarting = false;
   wakeRec = new SpeechRec();
   wakeRec.continuous = true;
   wakeRec.interimResults = false;
@@ -724,10 +749,16 @@ async function startWake() {
     }
   };
   wakeRec.onerror = (e) => {
-    if (e.error === "not-allowed" || e.error === "service-not-allowed")
-      setLiveStatus("Microphone blocked — allow mic access to use the wake word.");
-    else if (e.error === "audio-capture") setLiveStatus("No microphone found for the wake word.");
-    else if (e.error === "network") setLiveStatus("Speech recognition needs a network connection.");
+    if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
+      // fatal: without stopping, onend would restart instantly → error → onend,
+      // an infinite tight loop while the toggle claims the wake word is ON
+      setLiveStatus(e.error === "audio-capture"
+        ? "No microphone found for the wake word."
+        : "Microphone blocked — allow mic access to use the wake word.");
+      stopWake();
+      return;
+    }
+    if (e.error === "network") setLiveStatus("Speech recognition needs a network connection.");
     // 'no-speech' / 'aborted' are normal between phrases — ignore
   };
   wakeRec.onend = () => {
@@ -758,6 +789,7 @@ function runWakeCommand(cmd) {
   disarmWake();
   pauseWakeForSpeech();
   orb.stopAudio(); // release viz mic before thinking/speaking
+  micStream = null; // tracks are dead now — resumeWake must reacquire, not reuse
   if (handleConfirmIfPending(cmd)) return;
   if (handleOpenIntent(cmd)) return;
   ask(cmd);
@@ -797,7 +829,10 @@ function pauseWakeForSpeech() {
 }
 function resumeWake() {
   if (wakeOn) {
-    if (!micStream) {
+    // a stream whose tracks were stopped (orb.stopAudio) is useless — check
+    // liveness, not just presence, or the orb never reacts after the 1st turn
+    const live = micStream && micStream.getTracks().some((t) => t.readyState === "live");
+    if (!live) {
       navigator.mediaDevices
         .getUserMedia({ audio: true })
         .then((s) => {
@@ -1212,10 +1247,17 @@ restoreConversation();
 fetch("/api/status")
   .then((r) => r.json())
   .then((s) => {
-    if (!s.chatEnabled) setLiveStatus("Set ANTHROPIC_API_KEY in .env to enable conversation.");
+    if (!s.chatEnabled) setLiveStatus("Set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in .env to enable conversation.");
     if (!SpeechRec) {
       wakeToggle.disabled = true;
       wakeToggle.title = "Wake word needs Chrome or Edge";
+    }
+    // Email triage card flips to Live once Gmail is authorized (see .env.example)
+    const emailStatus = $("emailStatus");
+    if (emailStatus && s.gmailEnabled) {
+      emailStatus.classList.remove("standby");
+      emailStatus.classList.add("live");
+      emailStatus.innerHTML = '<span class="s-dot"></span> Live';
     }
     // Voice is fixed to Amelia (ElevenLabs); if its key is missing the server
     // transparently falls back to Deepgram, so nothing to toggle here.
