@@ -1,0 +1,47 @@
+/* Artemis design tokens — single source of truth. Retune the whole look here. */
+:root {
+  /* palette — warm "orbital HUD" amber/orange (soft, easy on the eyes) */
+  --bg: #0a0805;
+  --text-bright: #f6efe7;
+  --text-muted: #b39e8a;
+  --accent-grad: linear-gradient(100deg, #ffd2a0, #ff9e48, #ff7a3c);
+  --bg-navy-1: rgba(78, 44, 18, 0.32);
+  --bg-navy-2: rgba(82, 40, 16, 0.20);
+  /* --teal/--teal-deep kept as the names existing CSS references, now amber */
+  --teal: #ff9e48;
+  --teal-deep: #e0782a;
+  --lavender: #ffc98a;
+  --amber: #ffb24d;
+  --pink: #ff8a5c;
+  --red: #fb7185;
+  --white: #ffffff;
+  --gray: #9a8b7a;
+
+  /* surfaces */
+  --card: rgba(14, 16, 20, 0.6);
+  --card-border: #1a1d23;
+  --hairline: rgba(138, 143, 152, 0.16);
+
+  /* type */
+  --font-display: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
+  --font-body: "Hanken Grotesk", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* shape + rhythm */
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+  --space: 24px;
+  --maxw: 1200px;
+
+  /* orb accents (read by the WebGL component) */
+  --orb-core: #c2632a;
+  --orb-hi: #ffb86b;
+  --orb-speak: #ffe6c2;
+  --orb-think: #ffcf8a;
+
+  /* easing curves — a small set instead of one generic ease */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);      /* entrances, reveals */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);   /* loops, drifts */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* hover lift / pop */
+}

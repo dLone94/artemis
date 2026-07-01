@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "artemis",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/todortopalov/Documents/Artemis' && exec '/Users/todortopalov/Library/Caches/ms-playwright-go/1.57.0/node' server.js"
+      ],
+      "port": 4100
+    }
+  ]
+}

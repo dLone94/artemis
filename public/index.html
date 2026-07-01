@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Artemis · Voice-First AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="app.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body class="page">
+  <div id="sceneStage" class="scene-stage" aria-hidden="true"></div>
+
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a class="brand" href="#top"><span class="brand-dot"></span> Artemis</a>
+      <a class="nav-cta" id="navCta" href="#top">TALK TO ARTEMIS →</a>
+    </div>
+  </nav>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="eyebrow hero-anim"><span class="badge-dot"></span> ALWAYS WATCHING · WAKE-WORD READY</div>
+        <h1 class="hero-title hero-anim">Your <span class="grad">voice-first AI.</span><br />Watches <span class="grad">everything.</span><br />Says it to your face.</h1>
+        <p class="hero-sub hero-anim">Artemis listens, thinks, and talks back in real time — revenue, the news, whatever you throw at it. Brief, sharp, occasionally brutal. The co-pilot that never sleeps.</p>
+        <div class="hero-meta hero-anim">FREE · OPEN SOURCE · VOICE-POWERED</div>
+        <div class="chips hero-anim">
+          <span class="chip"><span class="dot dot-teal"></span> VOICE</span>
+          <span class="chip"><span class="dot dot-lav"></span> SMART</span>
+          <span class="chip"><span class="dot dot-amber"></span> FAST</span>
+          <span class="chip"><span class="dot dot-pink"></span> ALWAYS ON</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="features" id="features">
+      <div class="features-head reveal">
+        <div class="eyebrow">◦ LIVE INTELLIGENCE</div>
+        <h2 class="features-title">Always watching.<br /><span class="grad">Always answering.</span></h2>
+        <p class="features-sub">Six streams, one voice. Artemis keeps an eye on what moves the needle — and tells you the moment it matters.</p>
+      </div>
+      <div class="cards">
+        <article class="card reveal" style="--accent: #ffb86b">
+          <span class="card-orb"></span>
+          <h3 class="card-title"><span class="card-dot"></span> Revenue</h3>
+          <p class="card-desc">Live MRR, churn, and a cha-ching the moment a real payment lands.</p>
+          <div class="card-tag">STRIPE · BILLING · GROWTH</div>
+        </article>
+        <article class="card reveal" style="--accent: #ff9e48">
+          <span class="card-orb"></span>
+          <h3 class="card-title"><span class="card-dot"></span> Code</h3>
+          <p class="card-desc">Reads repos and pages on command, summarizes what changed and why.</p>
+          <div class="card-tag">FETCH · REVIEW · SHIP</div>
+        </article>
+        <article class="card reveal" style="--accent: #ffcf6a">
+          <span class="card-orb"></span>
+          <h3 class="card-title"><span class="card-dot"></span> Customers</h3>
+          <p class="card-desc">Who's happy, who's leaving, and what they keep asking for.</p>
+          <div class="card-tag">SUPPORT · NPS · RETENTION</div>
+        </article>
+        <article class="card reveal" style="--accent: #ff7a4d">
+          <span class="card-orb"></span>
+          <h3 class="card-title"><span class="card-dot"></span> Data</h3>
+          <p class="card-desc">Ask a question out loud, get the number back — sourced and spoken.</p>
+          <div class="card-tag">SEARCH · ANALYZE · ANSWER</div>
+        </article>
+        <article class="card reveal" style="--accent: #ffaf5c">
+          <span class="card-orb"></span>
+          <h3 class="card-title"><span class="card-dot"></span> Comms</h3>
+          <p class="card-desc">Open any site by voice, pull up the news, brief you on what's loud.</p>
+          <div class="card-tag">WEB · NEWS · OPEN</div>
+        </article>
+        <article class="card reveal" style="--accent: #ff8a5c">
+          <span class="card-orb"></span>
+          <h3 class="card-title"><span class="card-dot"></span> Intel</h3>
+          <p class="card-desc">Watches the competition and the world so you don't have to refresh.</p>
+          <div class="card-tag">MONITOR · ALERT · BRIEF</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="team" id="team">
+      <div class="team-head reveal">
+        <div class="eyebrow">◦ THE TEAM · SUB-AGENTS</div>
+        <h2 class="team-title">One voice.<br /><span class="grad">A team behind it.</span></h2>
+        <p class="team-sub">Artemis routes your request to the right skill. Each one has its own job — and acts only with your say-so.</p>
+      </div>
+      <div class="team-grid">
+        <article class="agent reveal" style="--accent: #ffb86b">
+          <span class="agent-orb"></span>
+          <div class="agent-name">Research</div>
+          <p class="agent-desc">Searches the web, Hacker News and GitHub, reads the pages, and answers with real sources.</p>
+          <span class="agent-status live"><span class="s-dot"></span> Live</span>
+        </article>
+        <article class="agent reveal" style="--accent: #ffc98a">
+          <span class="agent-orb"></span>
+          <div class="agent-name">Email triage</div>
+          <p class="agent-desc">Reads and drafts Gmail, surfaces what matters, and never sends without your yes.</p>
+          <span class="agent-status standby"><span class="s-dot"></span> Awaiting key</span>
+        </article>
+        <article class="agent reveal" style="--accent: #ffa64d">
+          <span class="agent-orb"></span>
+          <div class="agent-name">Messaging</div>
+          <p class="agent-desc">Drafts texts to your contacts over SMS or WhatsApp — gated behind a spoken confirm.</p>
+          <span class="agent-status standby"><span class="s-dot"></span> Awaiting key</span>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <div class="dock" id="dock" aria-label="Artemis controls">
+    <div class="dock-status" id="liveStatus">Say “Artemis”, or tap the mic to talk</div>
+    <div class="dock-row">
+      <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis"><span>🎤</span></button>
+      <div class="voice-bars" id="voiceBars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <button class="wake-toggle" id="wakeToggle">👂 WAKE WORD: OFF</button>
+      <button class="wake-toggle" id="explainBtn" type="button">✨ WHAT CAN I DO?</button>
+      <span class="dock-sep"></span>
+      <label class="set-field">Voice
+        <select id="voiceSelect">
+          <option value="aura-2-thalia-en">Thalia</option>
+          <option value="aura-2-andromeda-en">Andromeda</option>
+          <option value="aura-2-vesta-en">Vesta</option>
+          <option value="aura-2-helena-en">Helena</option>
+          <option value="aura-2-apollo-en">Apollo</option>
+          <option value="aura-luna-en">Luna (older)</option>
+        </select>
+      </label>
+      <label class="set-field">Tone
+        <select id="toneSelect">
+          <option value="professional">Professional (JARVIS)</option>
+          <option value="friendly">Friendly</option>
+          <option value="casual">Casual</option>
+          <option value="funny">Funny</option>
+          <option value="balanced">Balanced</option>
+          <option value="blunt">Blunt</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Artemis · voice-first AI</span>
+    <span class="foot-mono">THREE.JS · WEB AUDIO · CLAUDE · DEEPGRAM</span>
+  </footer>
+
+  <script src="celebration.js"></script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

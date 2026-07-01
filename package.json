@@ -1,0 +1,11 @@
+{
+  "name": "artemis",
+  "version": "1.0.0",
+  "description": "A zero-dependency assistant that celebrates real Stripe revenue.",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Artemis · Voice Orb</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Hanken+Grotesk:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="orb.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body class="orb-page">
+  <div class="dev-tag">Artemis · VoiceOrb · Part 1 proving ground</div>
+  <div id="orbStage" class="orb-stage"></div>
+  <div class="orb-hud">
+    <div id="statusLabel" class="status-label">◦ ARTEMIS · STANDBY</div>
+    <div class="dev-controls">
+      <button data-state="idle" class="active">idle</button>
+      <button data-state="listening">listening</button>
+      <button data-state="thinking">thinking</button>
+      <button data-state="speaking">speaking</button>
+      <button id="micBtn">🎤 mic</button>
+      <button id="ttsBtn">🔊 test speak</button>
+    </div>
+  </div>
+  <script type="module" src="orb-app.js"></script>
+</body>
+</html>
