@@ -176,7 +176,10 @@ function updatePlayBtn() {
 }
 playBtn.addEventListener("click", () => {
   state.playing = !state.playing;
-  if (state.playing) state.mode = "auto";
+  if (state.playing) {
+    state.mode = "auto";
+    startEngine(); // reduced-motion users opt in to motion by pressing play
+  }
   updatePlayBtn();
 });
 scrub.addEventListener("input", () => seek(+scrub.value));
@@ -355,22 +358,33 @@ function renderAll(rebuildTrace) {
   renderTrace(rebuildTrace);
 }
 
-let last = performance.now();
-(function tick(now) {
-  requestAnimationFrame(tick);
-  const dt = Math.min(100, now - (last || now));
-  last = now;
-  if (!state.playing || document.hidden) return;
-  const next = state.t + dt * state.speed;
-  if (next >= LOOP_MS) {
-    state.t = 0;
-    state.trace = [];
-    logEl.innerHTML = "";
-  } else {
-    state.t = next;
-  }
-  renderAll(false);
-})(performance.now());
+// Under prefers-reduced-motion NO requestAnimationFrame loop runs at all —
+// the page renders a single static frame and every control repaints it
+// directly (seek/renderAll). The engine only starts if the user explicitly
+// presses play (a deliberate opt-in to motion).
+let engineOn = false;
+let last = 0;
+function startEngine() {
+  if (engineOn) return;
+  engineOn = true;
+  last = performance.now();
+  requestAnimationFrame(function tick(now) {
+    requestAnimationFrame(tick);
+    const dt = Math.min(100, now - (last || now));
+    last = now;
+    if (!state.playing || document.hidden) return;
+    const next = state.t + dt * state.speed;
+    if (next >= LOOP_MS) {
+      state.t = 0;
+      state.trace = [];
+      logEl.innerHTML = "";
+    } else {
+      state.t = next;
+    }
+    renderAll(false);
+  });
+}
+if (!reduced) startEngine();
 
 // initial paint (also the reduced-motion static state: playing=false, t=0)
 orb.setAgent(AGENTS.indexOf(state.agent));

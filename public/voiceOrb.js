@@ -36,7 +36,10 @@ export class VoiceOrb {
     this._mx = 0;
     this._my = 0;
 
-    this._onResize = () => this.resize();
+    this._onResize = () => {
+      this.resize();
+      if (this.reduced) this._loop(); // repaint the single static frame
+    };
     window.addEventListener("resize", this._onResize);
     this._onMouse = (e) => {
       this._mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
@@ -79,6 +82,7 @@ export class VoiceOrb {
 
   setStatus(s) {
     if (s === "idle" || s === "listening" || s === "thinking" || s === "speaking") this.status = s;
+    if (this.reduced) this._loop(); // reduced motion: repaint one frame for the new state
   }
 
   feed(a) {
@@ -150,7 +154,9 @@ export class VoiceOrb {
 
   // ---- loop ----
   _loop() {
-    this._raf = requestAnimationFrame(() => this._loop());
+    // reduced motion: no rAF loop — each call renders exactly one static frame
+    // (t is pinned to 0 below); resize/status changes re-invoke it once.
+    if (!this.reduced) this._raf = requestAnimationFrame(() => this._loop());
     const now = performance.now();
     this._elapsed = (now - this._t0) / 1000;
     const t = this.reduced ? 0 : this._elapsed;
