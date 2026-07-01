@@ -8,6 +8,10 @@ body { scroll-behavior: smooth; }
   color: var(--white);
   font-family: var(--font-body);
   overflow-x: hidden;
+  /* reserve room for the fixed dock so it never covers content; --dock-h is kept
+     in sync with the dock's real height (incl. collapse + mobile wrap) by main.js */
+  --dock-h: 150px;
+  padding-bottom: var(--dock-h);
   background:
     radial-gradient(1200px 820px at 78% 12%, var(--bg-navy-1), transparent 58%),
     radial-gradient(900px 720px at 12% 88%, var(--bg-navy-2), transparent 58%),
@@ -954,7 +958,36 @@ main, .foot { position: relative; z-index: 1; }
 .dock-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center; }
 .dock-sep { width: 1px; height: 28px; background: rgba(255, 255, 255, 0.12); }
 .dock .mic-orb { width: 52px; height: 52px; font-size: 20px; }
-.foot { margin-bottom: 120px; } /* clear the fixed dock */
+
+/* collapse toggle — tuck the dock away so it never blocks content underneath */
+.dock-toggle {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--teal);
+  background: transparent;
+  border: 1px solid rgba(255, 158, 72, 0.28);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.25s ease, border-color 0.2s, background 0.2s;
+}
+.dock-toggle:hover { border-color: var(--teal); background: rgba(255, 158, 72, 0.1); }
+.dock-status { padding: 0 22px; } /* keep status text clear of the toggle */
+
+/* collapsed: keep only the mic + meter; hide status text, settings, extra buttons */
+.dock.collapsed { padding: 10px 14px; }
+.dock.collapsed .dock-status,
+.dock.collapsed .wake-toggle,
+.dock.collapsed .set-field,
+.dock.collapsed .dock-sep { display: none; }
+.dock.collapsed .dock-toggle { transform: rotate(180deg); }
 
 /* one-tap "Open" button shown when the browser blocks a voice-triggered tab open */
 .open-link {

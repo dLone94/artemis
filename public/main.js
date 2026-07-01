@@ -1013,6 +1013,31 @@ document.addEventListener("visibilitychange", () => {
   document.body.classList.toggle("tab-hidden", document.hidden);
 });
 
+// ---- dock: keep page bottom-padding in sync with the dock, + collapse toggle ----
+// The dock is position:fixed, so it would otherwise cover the footer/last cards.
+// We measure its real height (which changes with collapse and mobile wrapping) and
+// expose it as --dock-h; .page reserves exactly that much padding-bottom.
+(function initDock() {
+  const dock = $("dock");
+  const toggle = $("dockToggle");
+  if (!dock) return;
+  const syncHeight = () => {
+    // set on .page (body) itself — that's where padding-bottom reads --dock-h
+    document.body.style.setProperty("--dock-h", dock.offsetHeight + 30 + "px");
+  };
+  syncHeight();
+  if ("ResizeObserver" in window) new ResizeObserver(syncHeight).observe(dock);
+  window.addEventListener("resize", syncHeight);
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      const collapsed = dock.classList.toggle("collapsed");
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      toggle.title = collapsed ? "Expand controls" : "Collapse controls";
+      syncHeight();
+    });
+  }
+})();
+
 // ---- settings (voice + tone) + restore prior conversation ----
 const voiceSelect = $("voiceSelect");
 const toneSelect = $("toneSelect");

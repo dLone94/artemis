@@ -152,8 +152,9 @@
   </main>
 
   <div class="dock" id="dock" aria-label="Artemis controls">
+    <button class="dock-toggle" id="dockToggle" type="button" aria-expanded="true" aria-controls="dockBody" title="Collapse controls" aria-label="Collapse controls">▾</button>
     <div class="dock-status" id="liveStatus">Say “Artemis”, or tap the mic to talk</div>
-    <div class="dock-row">
+    <div class="dock-row" id="dockBody">
       <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis"><span>🎤</span></button>
       <div class="voice-bars" id="voiceBars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
       <button class="wake-toggle" id="wakeToggle">👂 WAKE WORD: OFF</button>
