@@ -10,6 +10,30 @@ import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
 
 const $ = (id) => document.getElementById(id);
+
+// ---- open-source links ----------------------------------------------------
+// TODO: fill these in ONCE and every "Open source" / repo / docs / getting-
+// started link on the page lights up. While a value is empty, its links render
+// disabled (aria-disabled, no href) instead of pointing at a broken URL.
+const LINKS = {
+  repo: "",  // e.g. "https://github.com/you/artemis"
+  docs: "",  // e.g. "https://github.com/you/artemis#readme"
+  start: "", // e.g. "https://github.com/you/artemis#getting-started"
+};
+document.querySelectorAll("[data-link]").forEach((a) => {
+  const url = LINKS[a.dataset.link] || "";
+  if (url) {
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.removeAttribute("aria-disabled");
+  } else {
+    a.removeAttribute("href"); // an <a> without href isn't a broken link
+    a.setAttribute("aria-disabled", "true");
+    a.title = "Link coming soon";
+  }
+});
+
 const conversation = [];
 let busy = false;
 let recording = false;

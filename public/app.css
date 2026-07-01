@@ -969,6 +969,15 @@ main, .foot { position: relative; z-index: 1; }
 }
 .demo-os-link:hover { border-color: var(--teal); box-shadow: 0 0 16px rgba(255, 158, 72, 0.22); }
 
+/* links whose URL isn't configured yet (see LINKS in main.js) render inert */
+.nav-cta[aria-disabled="true"],
+.demo-os-link[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.nav-cta[aria-disabled="true"]:hover,
+.demo-os-link[aria-disabled="true"]:hover { border-color: var(--card-border); box-shadow: none; }
+
 .team {
   position: relative;
   padding: 60px 28px 90px;
