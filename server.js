@@ -20,6 +20,7 @@ import {
 } from "./skills.js";
 import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode } from "./gmail.js";
 import { wsConnect } from "./wsClient.js";
+import { edgeTtsSynthesize } from "./edgeTts.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -1541,6 +1542,31 @@ async function handleRequest(req, res) {
     }
     const provider = (url.searchParams.get("provider") || "").toLowerCase() || (elevenEnabled ? "elevenlabs" : "deepgram");
     try {
+      // Edge neural voices (free, human-sounding): synthesized server-side via
+      // the zero-dep WS client. Non-streaming (whole clip at once) — sentence
+      // pipelining in the client overlaps the latency.
+      if (provider === "edge") {
+        const v = url.searchParams.get("voice") || "";
+        const edgeVoice = /^[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural$/.test(v) ? v : "en-GB-SoniaNeural";
+        try {
+          const buf = await edgeTtsSynthesize(text, edgeVoice);
+          res.writeHead(200, { "Content-Type": "audio/mpeg", "X-TTS-Provider": "edge", "Cache-Control": "no-store" });
+          res.end(buf);
+          return;
+        } catch (e) {
+          console.error("edge tts failed (falling back to Deepgram Pandora):", e.message);
+          const fb = await deepgramTTSResponse(text, "aura-2-pandora-en"); // keep the accent
+          if (fb && fb.ok) {
+            res.writeHead(200, { "Content-Type": "audio/mpeg", "X-TTS-Provider": "deepgram-fallback", "Cache-Control": "no-store" });
+            const buf = Buffer.from(await fb.arrayBuffer());
+            res.end(buf);
+            return;
+          }
+          res.writeHead(502).end();
+          return;
+        }
+      }
+
       let upstream = null;
       let used = "deepgram";
       let wantedEleven = false;
