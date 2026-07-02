@@ -19,6 +19,7 @@ import {
   dropPending
 } from "./skills.js";
 import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode } from "./gmail.js";
+import { wsConnect } from "./wsClient.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -1074,6 +1075,75 @@ function rateLimited(ip) {
   return arr.length > max;
 }
 
+// --- live streaming STT relay ---------------------------------------------------
+// The browser can't hold the Deepgram key and this key can't mint browser
+// tokens (minimal scope — by design). So the server relays: browser POSTs
+// 250ms audio chunks → our zero-dep WebSocket client streams them to
+// Deepgram live → transcripts flow back to the browser over SSE. Words appear
+// AS YOU SPEAK.
+const liveSessions = new Map(); // sid → { ws, sse, pending[], lastSeen, done }
+const MAX_LIVE_SESSIONS = 4;
+
+function liveCleanup() {
+  const now = Date.now();
+  for (const [sid, s] of liveSessions) {
+    if (now - s.lastSeen > 90000 || s.done) {
+      try { s.ws && s.ws.close(); } catch (e) {}
+      try { s.sse && s.sse.end(); } catch (e) {}
+      liveSessions.delete(sid);
+    }
+  }
+}
+setInterval(liveCleanup, 30000);
+
+function liveEmit(s, obj) {
+  const line = "data: " + JSON.stringify(obj) + "\n\n";
+  if (s.sse) {
+    try { s.sse.write(line); } catch (e) {}
+  } else {
+    s.pending.push(line);
+    if (s.pending.length > 200) s.pending.shift();
+  }
+}
+
+function startLiveSession() {
+  if (!deepgramApiKey) return null;
+  if (liveSessions.size >= MAX_LIVE_SESSIONS) liveCleanup();
+  if (liveSessions.size >= MAX_LIVE_SESSIONS) return null;
+  const sid = "live_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  const s = { ws: null, sse: null, pending: [], lastSeen: Date.now(), done: false };
+  const q = new URLSearchParams({
+    model: STT_MODEL,
+    interim_results: "true",
+    smart_format: "true",
+    punctuate: "true"
+  });
+  s.ws = wsConnect(
+    { host: "api.deepgram.com", path: "/v1/listen?" + q, headers: { Authorization: `Token ${deepgramApiKey}` } },
+    {
+      onMessage(msg) {
+        if (typeof msg !== "string") return;
+        let m;
+        try { m = JSON.parse(msg); } catch (e) { return; }
+        if (m.type !== "Results") return;
+        const alt = m.channel && m.channel.alternatives && m.channel.alternatives[0];
+        if (!alt) return;
+        liveEmit(s, { t: alt.transcript || "", final: !!m.is_final, speechFinal: !!m.speech_final });
+      },
+      onClose() {
+        liveEmit(s, { done: true });
+        s.done = true;
+        if (s.sse) { try { s.sse.end(); } catch (e) {} }
+      },
+      onError(err) {
+        console.error("live STT ws error:", err.message);
+      }
+    }
+  );
+  liveSessions.set(sid, s);
+  return sid;
+}
+
 // --- welcome briefing ----------------------------------------------------------
 // "Welcome back, sir. Around the world this hour…" — a short spoken news brief
 // for cockpit startup. ONE web search + ONE small LLM call, cached 30 minutes
@@ -1180,6 +1250,52 @@ async function handleRequest(req, res) {
       res.writeHead(500, { "Content-Type": "text/plain" });
       res.end("Authorization failed: " + e.message);
     }
+    return;
+  }
+
+  // --- live STT relay: start / chunk / events(SSE) / stop ---
+  if (url.pathname === "/api/stt/live/start" && req.method === "POST") {
+    const sid = startLiveSession();
+    if (!sid) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "live STT unavailable" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ sid }));
+    return;
+  }
+  if (url.pathname === "/api/stt/live/chunk" && req.method === "POST") {
+    const s = liveSessions.get(url.searchParams.get("sid") || "");
+    if (!s || s.done) { res.writeHead(410).end(); return; }
+    s.lastSeen = Date.now();
+    const audio = await readRequestBody(req);
+    if (audio.length && s.ws) s.ws.send(audio);
+    res.writeHead(204).end();
+    return;
+  }
+  if (url.pathname === "/api/stt/live/events") {
+    const s = liveSessions.get(url.searchParams.get("sid") || "");
+    if (!s) { res.writeHead(404).end(); return; }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+    s.sse = res;
+    for (const line of s.pending) { try { res.write(line); } catch (e) {} }
+    s.pending = [];
+    res.on("close", () => { if (s.sse === res) s.sse = null; });
+    return;
+  }
+  if (url.pathname === "/api/stt/live/stop" && req.method === "POST") {
+    const s = liveSessions.get(url.searchParams.get("sid") || "");
+    if (s && s.ws) {
+      s.lastSeen = Date.now();
+      try { s.ws.send(JSON.stringify({ type: "CloseStream" })); } catch (e) {}
+    }
+    res.writeHead(204).end();
     return;
   }
 

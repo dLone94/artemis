@@ -495,6 +495,27 @@ async function pumpTts() {
 // ---- conversation (streaming) ----
 let currentAbort = null;
 window.__ask = (t) => ask(t); // debug/test handle (used by preview verification)
+
+// ---- typed command line (cockpit) — same pipeline as voice ----
+const cmdForm = $("cmdForm");
+const cmdInput = $("cmdInput");
+if (cmdForm && cmdInput) {
+  cmdForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const t = cmdInput.value.trim();
+    if (!t) return;
+    cmdInput.value = "";
+    orb._ensureAudio(); // Enter is a gesture — unlocks audio for the spoken reply
+    ask(t);
+  });
+  // "/" focuses the command line from anywhere (unless already typing somewhere)
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "/" && document.activeElement !== cmdInput && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || "")) {
+      e.preventDefault();
+      cmdInput.focus();
+    }
+  });
+}
 async function ask(text) {
   text = (text || "").trim();
   if (!text || busy) return;
@@ -671,14 +692,81 @@ async function startTalk() {
   const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
   mediaRecorder = mime ? new MediaRecorder(micStream, { mimeType: mime }) : new MediaRecorder(micStream);
   chunks = [];
+  openLiveStt(); // words appear AS you speak (falls back to batch if unavailable)
   mediaRecorder.ondataavailable = (e) => {
-    if (e.data && e.data.size) chunks.push(e.data);
+    if (e.data && e.data.size) {
+      chunks.push(e.data); // always kept — batch STT is the safety net
+      liveSendChunk(e.data);
+    }
   };
   mediaRecorder.onstop = onTalkStop;
-  mediaRecorder.start();
+  mediaRecorder.start(250); // 250ms slices feed the live stream
   recording = true;
   micToggle.classList.add("recording");
   setLiveStatus("Listening… click to send");
+}
+
+// ---- live streaming transcript (server relay → Deepgram live) ----
+// The transcript builds word-by-word in the HUD while you're still talking.
+// If the relay can't start (offline, no key) everything silently degrades to
+// the batch /api/stt path that has always worked.
+let liveSid = null;
+let liveEs = null;
+let liveFinal = "";
+let liveDoneResolve = null;
+
+async function openLiveStt() {
+  liveFinal = "";
+  liveSid = null;
+  try {
+    const r = await fetch("/api/stt/live/start", { method: "POST" });
+    if (!r.ok) return;
+    const { sid } = await r.json();
+    if (!recording && !mediaRecorder) return; // user already stopped — don't open a dead session
+    liveSid = sid;
+    liveEs = new EventSource("/api/stt/live/events?sid=" + sid);
+    let interim = "";
+    liveEs.onmessage = (ev) => {
+      let m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.done) {
+        if (liveDoneResolve) { liveDoneResolve(liveFinal.trim()); liveDoneResolve = null; }
+        return;
+      }
+      if (m.final) {
+        if (m.t) liveFinal += (liveFinal ? " " : "") + m.t;
+        interim = "";
+      } else {
+        interim = m.t || "";
+      }
+      const shown = (liveFinal + " " + interim).trim();
+      if (shown) {
+        hud("live", shown);
+        setLiveStatus("“" + (shown.length > 90 ? "…" + shown.slice(-87) : shown) + "”");
+      }
+    };
+    liveEs.onerror = () => {}; // relay hiccup → batch fallback still runs
+  } catch (e) { /* no live transcript this turn — batch handles it */ }
+}
+function liveSendChunk(blob) {
+  if (!liveSid) return;
+  fetch("/api/stt/live/chunk?sid=" + liveSid, { method: "POST", body: blob, keepalive: true }).catch(() => {});
+}
+function closeLiveStt() {
+  const sid = liveSid;
+  liveSid = null;
+  if (!sid) return Promise.resolve("");
+  return new Promise((resolve) => {
+    liveDoneResolve = resolve;
+    fetch("/api/stt/live/stop?sid=" + sid, { method: "POST" }).catch(() => {});
+    // don't hold the turn hostage: Deepgram flushes finals fast or not at all
+    setTimeout(() => {
+      if (liveDoneResolve) { liveDoneResolve(liveFinal.trim()); liveDoneResolve = null; }
+    }, 1200);
+  }).finally(() => {
+    if (liveEs) { try { liveEs.close(); } catch (e) {} liveEs = null; }
+    hud("liveDone");
+  });
 }
 
 async function onTalkStop() {
@@ -694,7 +782,17 @@ async function onTalkStop() {
     micStream = null;
   }
   if (!blob.size) {
+    closeLiveStt();
     afterSpeak();
+    return;
+  }
+  // prefer the STREAMED transcript (already on screen, zero extra latency);
+  // fall back to the batch POST only when streaming produced nothing
+  const streamed = await closeLiveStt();
+  if (streamed) {
+    setLiveStatus("");
+    if (handleConfirmIfPending(streamed)) return;
+    if (!handleOpenIntent(streamed)) ask(streamed);
     return;
   }
   setLiveStatus("Transcribing…");

@@ -211,8 +211,30 @@ function pulseDot(sys) {
   d.classList.add("pulse");
 }
 
+// live transcript line — ONE line that updates in place while the user speaks,
+// with a blinking cursor; removed when the utterance finalizes (ask() then
+// logs the final "YOU" line)
+let liveLine = null;
+function liveUpsert(text) {
+  if (!liveLine || !liveLine.parentNode) {
+    liveLine = document.createElement("div");
+    liveLine.className = "hud-line shown hud-live";
+    liveLine.dataset.kind = "you";
+    liveLine.innerHTML = '<span class="t"></span><span class="k">YOU</span><span class="m"></span>';
+    liveLine.querySelector(".t").textContent = stamp();
+    logEl.appendChild(liveLine);
+  }
+  liveLine.querySelector(".m").textContent = text;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function liveClear() {
+  if (liveLine) { liveLine.remove(); liveLine = null; }
+}
+
 let lastState = "idle";
 window.ArtemisHUD = {
+  live: liveUpsert,
+  liveDone: liveClear,
   log(kind, text) {
     addLine(kind, text);
     if (kind === "tool") {

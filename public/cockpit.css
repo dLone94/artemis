@@ -154,6 +154,14 @@ body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
 .hud-line[data-kind="status"] .k, .hud-line[data-kind="status"] .m { color: var(--gray); }
 .hud-line[data-kind="error"] .k, .hud-line[data-kind="error"] .m { color: #ff6b5e; }
 .hud-line[data-kind="confirm"] .k { color: #ffd27a; }
+/* live transcript line: amber text + blinking cursor while the user speaks */
+.hud-line.hud-live .m { color: var(--amber, #ffb24d); }
+.hud-line.hud-live .m::after {
+  content: "▍";
+  animation: hud-caret 0.9s steps(1) infinite;
+}
+@keyframes hud-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .hud-line.hud-live .m::after { animation: none; } }
 
 /* context cards slide in when there's something to show */
 .hud-cards { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
@@ -230,6 +238,25 @@ body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
 
 /* live waveform strip inside the dock */
 .hud-wave { display: block; width: min(720px, 86vw); height: 36px; margin: 2px 0; }
+
+/* typed command line */
+.hud-cmd { display: flex; align-items: center; gap: 10px; width: min(720px, 86vw); }
+.hud-cmd-prompt { color: var(--amber, #ffb24d); font-family: var(--font-mono); font-size: 14px; }
+.hud-cmd-input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 178, 77, 0.22);
+  color: var(--text-bright);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 6px 2px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.hud-cmd-input:focus { border-bottom-color: var(--teal); }
+.hud-cmd-input::placeholder { color: var(--hud-dim, #8a93a3); opacity: 0.55; }
 
 /* ---- state choreography: the WHOLE hud reacts, not just the orb ---- */
 .cockpit[data-ai-state="listening"] .hud-panel { border-color: rgba(255, 178, 77, 0.38); }
