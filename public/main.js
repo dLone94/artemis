@@ -42,8 +42,14 @@ let recording = false;
 // a payment landing mid-conversation must not talk over Artemis or the user
 window.celebrationVoiceActive = () => speaking || recording || busy;
 
-const orb = new VoiceOrb($("sceneStage"));
+// On the cockpit page the orb sits dead-center; on the landing it offsets
+// right to make room for the hero copy (VoiceOrb's default).
+const orb = new VoiceOrb($("sceneStage"), { center: document.body.classList.contains("cockpit") });
 window.__orb = orb;
+
+// The cockpit HUD (cockpit.js) listens on window.ArtemisHUD; on pages without
+// it every emit is a guarded no-op.
+const hud = (fn, ...a) => { try { window.ArtemisHUD && window.ArtemisHUD[fn] && window.ArtemisHUD[fn](...a); } catch (e) {} };
 
 // Mirror the orb's voice state onto the equalizer in the control dock so the
 // voice bars animate during LISTENING/SPEAKING. Wrapping setStatus catches
@@ -72,6 +78,7 @@ orb.setStatus = (s) => {
   if (voiceBars) voiceBars.classList.toggle("voice-active", active);
   if (active) startAmpBars();
   else stopAmpBars();
+  hud("state", s); // the whole cockpit HUD choreographs with the voice state
 };
 
 const liveStatus = $("liveStatus");
@@ -483,12 +490,14 @@ async function pumpTts() {
 
 // ---- conversation (streaming) ----
 let currentAbort = null;
+window.__ask = (t) => ask(t); // debug/test handle (used by preview verification)
 async function ask(text) {
   text = (text || "").trim();
   if (!text || busy) return;
   busy = true;
   if (wakeOn) pauseWakeForSpeech();
   addMsg("user", text);
+  hud("log", "you", text);
   conversation.push({ role: "user", content: text });
   if (conversation.length > 20) conversation.splice(0, conversation.length - 20);
   saveConversation();
@@ -500,6 +509,12 @@ async function ask(text) {
   let finalSources = null;
   let pendingAction = null;
   let clientActions = null;
+  let toolsUsed = null;
+  const t0 = performance.now(); // real time-to-first-word for the HUD
+  // no token after 1.2s almost always means a tool round is running server-side
+  const execTimer = setTimeout(() => {
+    if (busy && !gotToken) { hud("state", "executing"); hud("log", "status", "running tools…"); }
+  }, 1200);
   currentAbort = new AbortController();
   const timer = setTimeout(() => {
     try { currentAbort.abort(); } catch (e) {}
@@ -531,7 +546,13 @@ async function ask(text) {
         let data = {};
         try { data = JSON.parse(dataLine.slice(5).trim()); } catch (e) {}
         if (event === "token") {
-          if (!gotToken) { gotToken = true; stopThinking(); setLiveStatus(""); }
+          if (!gotToken) {
+            gotToken = true;
+            stopThinking();
+            setLiveStatus("");
+            clearTimeout(execTimer);
+            hud("ttfw", performance.now() - t0); // real, measured, this turn
+          }
           out.append(data.t);
           feedTts(data.t);
         } else if (event === "reset") {
@@ -542,27 +563,43 @@ async function ask(text) {
           finalSources = data.sources;
           pendingAction = data.pendingAction || null;
           clientActions = data.clientActions || null;
+          toolsUsed = data.toolsUsed || null;
         } else if (event === "error") {
           setLiveStatus(data.error || "Chat failed.");
+          hud("state", "error");
+          hud("log", "error", data.error || "chat failed");
         }
       }
     }
     stopThinking();
+    if (toolsUsed && toolsUsed.length) {
+      toolsUsed.forEach((t) => hud("log", "tool", t + " ✓"));
+    }
     const replyText = out.text();
     if (replyText) {
       out.setSources(finalSources);
       conversation.push({ role: "assistant", content: replyText, sources: finalSources });
       saveConversation();
       flushTts();
+      hud("log", "artemis", replyText.length > 120 ? replyText.slice(0, 117) + "…" : replyText);
+    }
+    if (finalSources && finalSources.length) {
+      hud("context", { title: "SOURCES", links: finalSources.slice(0, 5) });
     }
     if (pendingAction) {
       pendingConfirm = pendingAction;
       setLiveStatus("Say “yes” to confirm, or “no” to cancel.");
+      hud("log", "confirm", "awaiting your yes / no");
+      hud("context", { title: "CONFIRM REQUIRED", lines: [replyText || pendingAction.name] });
     }
     // execute anything Artemis chose to open (maps location, a site, etc.)
     if (clientActions && clientActions.length) {
       for (const a of clientActions) {
-        if (a && a.url) openUrl(a.url, a.label);
+        if (a && a.url) {
+          openUrl(a.url, a.label);
+          hud("log", "action", "open " + (a.label || a.url));
+          hud("context", { title: "OPENED", links: [{ title: a.label || a.url, url: a.url }] });
+        }
       }
     }
     if (!ttsPlaying && !ttsQueue.length) { speaking = false; afterSpeak(); } // pump may have deferred to us while busy
@@ -572,9 +609,12 @@ async function ask(text) {
     setLiveStatus(
       currentAbort && currentAbort.signal.aborted ? "Stopped." : "Couldn't reach the server — try again."
     );
+    hud("state", "error");
+    hud("log", "error", currentAbort && currentAbort.signal.aborted ? "stopped by user" : "couldn't reach the server");
     afterSpeak();
   } finally {
     clearTimeout(timer);
+    clearTimeout(execTimer);
     currentAbort = null;
     busy = false;
   }
@@ -973,7 +1013,7 @@ const floatCta = $("floatCta");
 const sceneStage = $("sceneStage");
 function onScroll() {
   const y = window.scrollY;
-  nav.classList.toggle("scrolled", y > 8);
+  if (nav) nav.classList.toggle("scrolled", y > 8); // cockpit has no #nav
   // reveal the floating CTA once the hero is mostly scrolled past
   if (floatCta) floatCta.classList.toggle("show", y > window.innerHeight * 0.6);
   // Fade the fixed hero-orb layer as you leave the hero so its rings + "ARTEMIS"
@@ -1250,6 +1290,12 @@ document.addEventListener("visibilitychange", () => {
   syncHeight();
   if ("ResizeObserver" in window) new ResizeObserver(syncHeight).observe(dock);
   window.addEventListener("resize", syncHeight);
+
+  // the cockpit dock is a permanent HUD bar — no idle bubble, no collapse
+  if (document.body.classList.contains("cockpit")) {
+    dock.dataset.state = "expanded";
+    return;
+  }
 
   let idleTimer = 0;
   // keep the panel open while it's genuinely in use

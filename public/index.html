@@ -3,208 +3,68 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Artemis · Voice-First AI</title>
+  <title>ARTEMIS · Command Center</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="app.css" />
+  <link rel="stylesheet" href="cockpit.css" />
+  <!-- TODO(webgl-hero): optional future upgrade — see about.html for details -->
 </head>
-<body class="page">
-  <!-- TODO(webgl-hero): optional Phase-4 upgrade — ONE interactive WebGL hero orb
-       (drag-to-rotate, clickable pipeline nodes). Deliberately deferred: hand-rolled
-       WebGL in a zero-dependency app is meaningful weight/risk, and the Canvas-2D orb
-       now carries the depth pass (parallax, DoF, packet, perspective, morphing).
-       If built: capability-check WebGL, lazy-load the module on idle, fall back to
-       this 2D orb, render static under prefers-reduced-motion. Hero ONLY — the 2D
-       orbs elsewhere stay. -->
+<body class="page cockpit" data-ai-state="idle">
+  <!-- the audio-reactive orb fills the stage behind the HUD -->
   <div id="sceneStage" class="scene-stage" aria-hidden="true"></div>
 
-  <nav class="nav" id="nav">
-    <div class="nav-inner">
-      <a class="brand" href="#top"><span class="brand-dot"></span> Artemis</a>
-      <nav class="nav-links" aria-label="Sections">
-        <a href="brain.html">The Brain</a>
-        <a href="#features">Features</a>
-        <a href="#team">Agents</a>
-      </nav>
-      <!-- href/target/disabled state are driven by the LINKS config at the top of main.js -->
-      <a class="nav-cta" id="navRepo" data-link="repo" aria-label="View the Artemis source code on GitHub (opens in a new tab)">OPEN SOURCE ↗</a>
+  <!-- boot sequence overlay (removed after init; skipped under reduced motion) -->
+  <div class="boot" id="boot" aria-hidden="true">
+    <pre class="boot-lines" id="bootLines"></pre>
+  </div>
+
+  <!-- HUD frame dressing: corner brackets + radar sweep + scanlines -->
+  <div class="hud-frame" aria-hidden="true">
+    <i class="hud-corner tl"></i><i class="hud-corner tr"></i>
+    <i class="hud-corner bl"></i><i class="hud-corner br"></i>
+    <div class="hud-sweep"></div>
+  </div>
+
+  <!-- top status bar: real telemetry, no fake numbers -->
+  <header class="hud-top" aria-label="System status">
+    <div class="hud-brand">
+      <span class="brand-dot"></span> ARTEMIS <span class="hud-os">OS</span>
     </div>
-  </nav>
+    <div class="hud-dots" id="hudDots" aria-label="Subsystem status">
+      <span class="hud-dot" data-sys="brain" title="LLM">⬤ BRAIN</span>
+      <span class="hud-dot" data-sys="voice" title="STT/TTS">⬤ VOICE</span>
+      <span class="hud-dot" data-sys="web" title="Web search">⬤ WEB</span>
+      <span class="hud-dot" data-sys="gmail" title="Gmail">⬤ MAIL</span>
+    </div>
+    <div class="hud-meta">
+      <span class="hud-ttfw" id="hudTtfw" title="Time to first word, last turn">TTFW —</span>
+      <span class="hud-clock" id="hudClock">--:--:--</span>
+      <nav class="hud-links" aria-label="Pages">
+        <a href="brain.html">BRAIN</a>
+        <a href="about.html">ABOUT</a>
+      </nav>
+    </div>
+  </header>
 
-  <main id="top">
-    <section class="hero">
-      <div class="hero-inner">
-        <div class="eyebrow hero-anim"><span class="badge-dot"></span> ALWAYS ON · WAKE-WORD READY</div>
-        <h1 class="hero-title hero-anim">The voice-first AI that <span class="grad">watches your whole business</span> — and says it to your face.</h1>
-        <p class="hero-sub hero-anim">Artemis listens, thinks, and talks back in real time — revenue, the news, whatever you throw at it. Brief, sharp, occasionally brutal. The co-pilot that never sleeps.</p>
-        <div class="hero-meta hero-anim">FREE · OPEN SOURCE · VOICE-POWERED</div>
-        <div class="chips hero-anim">
-          <span class="chip"><span class="dot dot-teal"></span> VOICE</span>
-          <span class="chip"><span class="dot dot-lav"></span> SMART</span>
-          <span class="chip"><span class="dot dot-amber"></span> FAST</span>
-          <span class="chip"><span class="dot dot-pink"></span> ALWAYS ON</span>
-        </div>
-      </div>
-    </section>
+  <!-- left: live command console -->
+  <aside class="hud-panel hud-left" aria-label="Command log">
+    <div class="hud-panel-title">COMMAND LOG</div>
+    <div class="hud-log" id="cmdLog" aria-live="polite"></div>
+  </aside>
 
-    <section class="features" id="features">
-      <div class="features-head reveal">
-        <div class="eyebrow">◦ LIVE INTELLIGENCE</div>
-        <h2 class="features-title">Always watching.<br /><span class="grad">Always answering.</span></h2>
-        <p class="features-sub">Six streams, one voice. Artemis keeps an eye on what moves the needle — and tells you the moment it matters.</p>
-      </div>
-      <div class="cards">
-        <article class="card reveal" style="--accent: #ffb86b">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Revenue</h3>
-          <p class="card-desc">Live MRR, churn, and a cha-ching the moment a real payment lands.</p>
-          <div class="card-tag">STRIPE · BILLING · GROWTH</div>
-        </article>
-        <article class="card reveal" style="--accent: #ff9e48">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Code</h3>
-          <p class="card-desc">Reads repos and pages on command, summarizes what changed and why.</p>
-          <div class="card-tag">FETCH · REVIEW · SHIP</div>
-        </article>
-        <article class="card reveal" style="--accent: #ffcf6a">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Customers</h3>
-          <p class="card-desc">Who's happy, who's leaving, and what they keep asking for.</p>
-          <div class="card-tag">SUPPORT · NPS · RETENTION</div>
-        </article>
-        <article class="card reveal" style="--accent: #ff7a4d">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Data</h3>
-          <p class="card-desc">Ask a question out loud, get the number back — sourced and spoken.</p>
-          <div class="card-tag">SEARCH · ANALYZE · ANSWER</div>
-        </article>
-        <article class="card reveal" style="--accent: #ffaf5c">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Comms</h3>
-          <p class="card-desc">Open any site by voice, pull up the news, brief you on what's loud.</p>
-          <div class="card-tag">WEB · NEWS · OPEN</div>
-        </article>
-        <article class="card reveal" style="--accent: #ff8a5c">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Intel</h3>
-          <p class="card-desc">Watches the competition and the world so you don't have to refresh.</p>
-          <div class="card-tag">MONITOR · ALERT · BRIEF</div>
-        </article>
-      </div>
-    </section>
+  <!-- right: context (sources, actions, confirmations) -->
+  <aside class="hud-panel hud-right" aria-label="Context">
+    <div class="hud-panel-title">CONTEXT</div>
+    <div class="hud-cards" id="ctxCards"></div>
+  </aside>
 
-    <section class="brain" id="brain">
-      <div class="brain-head reveal">
-        <div class="eyebrow">◦ THE BRAIN · HOW SHE THINKS</div>
-        <h2 class="brain-title">Not a widget.<br /><span class="grad">A router you can watch.</span></h2>
-        <p class="brain-sub">The orb isn't decoration — it's a live picture of her pipeline. Every request runs the same four steps. Step through them, or pick who handles it, and watch the sub-agent light up.</p>
-      </div>
-      <div class="brain-stage reveal">
-        <div class="brain-orb" id="brainOrb" role="img" aria-label="Diagram of Artemis routing a request through wake, route, tool call, and respond to a sub-agent"></div>
-        <div class="brain-panel">
-          <div class="brain-steps" role="group" aria-label="Pipeline steps">
-            <button class="brain-step is-active" type="button" data-step="0">1 · Wake</button>
-            <button class="brain-step" type="button" data-step="1">2 · Route</button>
-            <button class="brain-step" type="button" data-step="2">3 · Tool call</button>
-            <button class="brain-step" type="button" data-step="3">4 · Respond</button>
-          </div>
-          <p class="brain-caption" id="brainCaption" aria-live="polite">You say “Artemis.” The outer ring pulses as she wakes and starts listening.</p>
-          <div class="brain-agents-row" role="group" aria-label="Route to sub-agent">
-            <span class="brain-agents-label">Route to</span>
-            <button class="brain-agent is-active" type="button" data-agent="0">Research</button>
-            <button class="brain-agent" type="button" data-agent="1">Email triage</button>
-            <button class="brain-agent" type="button" data-agent="2">Messaging</button>
-          </div>
-          <p class="brain-hint">Auto-playing the pipeline — tap any step to take the wheel.</p>
-          <a class="brain-more" href="brain.html">Explore the full Brain — engineer view &amp; live trace →</a>
-        </div>
-      </div>
-    </section>
-
-    <section class="team" id="team">
-      <div class="team-head reveal">
-        <div class="eyebrow">◦ THE TEAM · SUB-AGENTS</div>
-        <h2 class="team-title">One voice.<br /><span class="grad">A team behind it.</span></h2>
-        <p class="team-sub">Artemis routes your request to the right skill. Each one has its own job — and acts only with your say-so.</p>
-      </div>
-      <div class="team-grid">
-        <article class="agent reveal" style="--accent: #ffb86b">
-          <span class="agent-orb"></span>
-          <div class="agent-name">Research</div>
-          <p class="agent-desc">Searches the web, Hacker News and GitHub, reads the pages, and answers with real sources.</p>
-          <span class="agent-status live"><span class="s-dot"></span> Live</span>
-        </article>
-        <article class="agent reveal" style="--accent: #ffc98a">
-          <span class="agent-orb"></span>
-          <div class="agent-name">Email triage</div>
-          <p class="agent-desc">Reads and drafts Gmail, surfaces what matters, and never sends without your yes.</p>
-          <span class="agent-status standby" id="emailStatus"><span class="s-dot"></span> Awaiting key</span>
-        </article>
-        <article class="agent reveal" style="--accent: #ffa64d">
-          <span class="agent-orb"></span>
-          <div class="agent-name">Messaging</div>
-          <p class="agent-desc">Drafts texts to your contacts over SMS or WhatsApp — gated behind a spoken confirm.</p>
-          <span class="agent-status standby"><span class="s-dot"></span> Awaiting key</span>
-        </article>
-      </div>
-    </section>
-
-    <section class="demo" id="demo">
-      <div class="demo-head reveal">
-        <div class="eyebrow">◦ PROOF · SEE IT TALK</div>
-        <h2 class="demo-title">A real exchange.<br /><span class="grad">Spoken out loud.</span></h2>
-        <p class="demo-sub">No screenshots-as-promises. This is the shape of an actual voice turn — you ask, she searches, she answers aloud with sources, then she acts.</p>
-      </div>
-      <div class="demo-stage reveal">
-        <div class="demo-chat" id="demoChat" aria-label="Example conversation with Artemis">
-          <div class="demo-line user" data-delay="0">
-            <span class="demo-who">You</span>
-            <p class="demo-bubble">“Artemis — what's trending on Hacker News right now?”</p>
-          </div>
-          <div class="demo-line bot" data-delay="900">
-            <span class="demo-who">Artemis
-              <span class="demo-spoken"><span class="demo-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span> spoken aloud</span>
-            </span>
-            <p class="demo-bubble">Top of Hacker News right now: a Show HN for a local-first sync engine, and a deep dive on WebGPU compute. Want me to open either?
-              <span class="demo-src">source · news.ycombinator.com</span>
-            </p>
-          </div>
-          <div class="demo-line user" data-delay="2600">
-            <span class="demo-who">You</span>
-            <p class="demo-bubble">“Open the WebGPU one.”</p>
-          </div>
-          <div class="demo-line bot" data-delay="3400">
-            <span class="demo-who">Artemis
-              <span class="demo-spoken"><span class="demo-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span> spoken aloud</span>
-            </span>
-            <p class="demo-bubble">Opening it now. <span class="demo-action">↗ opened a new tab</span></p>
-          </div>
-        </div>
-        <div class="demo-actions">
-          <button class="demo-replay" id="demoReplay" type="button">↻ Replay</button>
-          <button class="demo-replay demo-hear" id="demoHear" type="button" aria-pressed="false">🔊 Hear it spoken</button>
-        </div>
-        <!-- Short clip of Artemis's first answer so "spoken out loud" is literal.
-             Off by default; plays only when the user taps "Hear it spoken".
-             Generated with Deepgram TTS (aura-2-thalia-en) — see assets/README.md.
-             TODO: optionally re-record assets/demo-artemis.mp3 with your own voice/answer. -->
-        <audio id="demoAudio" preload="none" src="assets/demo-artemis.mp3"></audio>
-      </div>
-      <div class="demo-os reveal">
-        <span class="demo-os-label">Free &amp; open source</span>
-        <!-- href/target/disabled state are driven by the LINKS config at the top of main.js -->
-        <a class="demo-os-link" data-link="repo" aria-label="Artemis GitHub repo (opens in a new tab)">GitHub repo ↗</a>
-        <a class="demo-os-link" data-link="docs" aria-label="Artemis documentation (opens in a new tab)">Docs ↗</a>
-        <a class="demo-os-link" data-link="start" aria-label="Artemis getting started guide (opens in a new tab)">Getting started ↗</a>
-      </div>
-    </section>
-  </main>
-
-  <div class="dock" id="dock" data-state="idle" aria-label="Artemis controls">
-    <button class="dock-toggle" id="dockToggle" type="button" aria-expanded="true" aria-controls="dockBody" title="Collapse controls" aria-label="Collapse controls">▾</button>
+  <!-- bottom: controls + live waveform. Same ids the voice pipeline expects. -->
+  <div class="dock" id="dock" data-state="expanded" aria-label="Artemis controls">
     <div class="dock-status" id="liveStatus">Say “Artemis”, or tap the mic to talk</div>
+    <canvas class="hud-wave" id="hudWave" height="36" aria-hidden="true"></canvas>
     <div class="dock-row" id="dockBody">
       <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis"><span>🎤</span></button>
       <div class="voice-bars" id="voiceBars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
@@ -218,8 +78,6 @@
           <option value="aura-2-vesta-en">Vesta</option>
           <option value="aura-2-helena-en">Helena</option>
           <option value="aura-2-apollo-en">Apollo</option>
-          <!-- human British voices via ElevenLabs (verified live on this account);
-               falls back to Deepgram automatically if the monthly quota runs out -->
           <option value="eleven:pFZP5JQG7iQjIQuC4Bku">Lily (British)</option>
           <option value="eleven:Xb7hH8MSUJpSbSDYk0k2">Alice (British)</option>
           <option value="aura-luna-en">Luna (older)</option>
@@ -238,13 +96,8 @@
     </div>
   </div>
 
-  <footer class="foot">
-    <span>Artemis · voice-first AI</span>
-    <!-- accurate stack: the orb is Canvas 2D (not Three.js); brain is provider-switchable -->
-    <span class="foot-mono">CANVAS 2D · WEB AUDIO · NVIDIA NIM · DEEPGRAM</span>
-  </footer>
-
   <script src="celebration.js"></script>
   <script type="module" src="main.js"></script>
+  <script type="module" src="cockpit.js"></script>
 </body>
 </html>

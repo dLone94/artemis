@@ -753,6 +753,7 @@ function nvidiaTools() {
 
 // Execute one NVIDIA tool call → returns the tool_result content string.
 async function runNvidiaTool(name, args, sources, clientActions, state) {
+  if (state && Array.isArray(state.tools)) state.tools.push(name); // HUD: show what ran
   if (name === "web_search") {
     const sr = await webSearch(args.query, 5);
     if (sr.error) return sr.error;
@@ -847,7 +848,7 @@ async function streamNvidia(messages, tone, onText) {
   const convo = [{ role: "system", content: system }, ...messages.map((m) => ({ role: m.role, content: m.content }))];
   const sources = [];
   const clientActions = [];
-  const state = { fetches: 0 };
+  const state = { fetches: 0, tools: [] };
 
   // If it's clearly an "open/show me…" request, FORCE a tool call on the first round
   // so the model can't just narrate "opening now" without actually calling open_url.
@@ -944,9 +945,9 @@ async function streamNvidia(messages, tone, onText) {
     if (!live && contentBuf) onText(contentBuf);
     // if she SAID she's opening/playing something, make sure it actually happened
     await enforcePromisedAction(contentBuf, convo, sources, clientActions, state);
-    return { sources: dedupeSources(sources), clientActions, streamed: true };
+    return { sources: dedupeSources(sources), clientActions, toolsUsed: state.tools, streamed: true };
   }
-  return { sources: dedupeSources(sources), clientActions, streamed: true };
+  return { sources: dedupeSources(sources), clientActions, toolsUsed: state.tools, streamed: true };
 }
 
 // Artemis brain on NVIDIA NIM (OpenAI-compatible), with the same agentic loop,
@@ -957,6 +958,7 @@ async function callNvidia(messages, tone) {
   const convo = [{ role: "system", content: system }, ...messages.map((m) => ({ role: m.role, content: m.content }))];
   const sources = [];
   const clientActions = [];
+  const toolsUsed = [];
   let fetches = 0;
 
   // same forcing as streamNvidia: on an explicit "open …" request the model MUST
@@ -1002,6 +1004,7 @@ async function callNvidia(messages, tone) {
       convo.push(msg); // assistant turn carrying the tool_calls
       for (const tc of msg.tool_calls) {
         const name = tc.function && tc.function.name;
+        toolsUsed.push(name); // HUD: show what ran
         let args = {};
         try { args = JSON.parse((tc.function && tc.function.arguments) || "{}"); } catch (e) {}
         let content = "";
@@ -1045,10 +1048,10 @@ async function callNvidia(messages, tone) {
 
     const replyText = (msg.content || "").trim();
     // same net as the streaming path: a spoken "playing it now" must ACT
-    await enforcePromisedAction(replyText, convo, sources, clientActions, { fetches });
-    return { reply: replyText || "(no response)", sources: dedupeSources(sources), clientActions };
+    await enforcePromisedAction(replyText, convo, sources, clientActions, { fetches, tools: toolsUsed });
+    return { reply: replyText || "(no response)", sources: dedupeSources(sources), clientActions, toolsUsed };
   }
-  return { reply: "That took too many steps — try rephrasing?", sources: dedupeSources(sources), clientActions };
+  return { reply: "That took too many steps — try rephrasing?", sources: dedupeSources(sources), clientActions, toolsUsed };
 }
 
 // the active brain
@@ -1253,7 +1256,7 @@ async function handleRequest(req, res) {
           if (gotText) send("reset", {});
           send("token", { t: meta.reply });
         }
-        send("done", { sources: meta.sources, model: NVIDIA_MODEL, pendingAction: meta.pendingAction, clientActions: meta.clientActions });
+        send("done", { sources: meta.sources, model: NVIDIA_MODEL, pendingAction: meta.pendingAction, clientActions: meta.clientActions, toolsUsed: meta.toolsUsed });
         try { res.end(); } catch (e) {}
         return;
       }

@@ -11,6 +11,7 @@ import { prefersReducedMotion } from "./orbShared.js";
 export class VoiceOrb {
   constructor(container, opts = {}) {
     this.container = container;
+    this.center = !!opts.center; // cockpit: orb dead-center (landing offsets right for hero copy)
     this.reduced = prefersReducedMotion();
     this.status = "idle";
     this.cur = { amp: 0 };
@@ -222,7 +223,7 @@ export class VoiceOrb {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
 
-    const cx = this.narrow ? W * 0.5 : W * 0.64;
+    const cx = this.center || this.narrow ? W * 0.5 : W * 0.64;
     const cy0 = this.narrow ? H * 0.46 : H * 0.5;
     const sp = this.reduced ? 0 : (this._scrollProg || 0);
     const cy = cy0 - sp * H * 0.32;     // orb rises + recedes as you scroll into the content

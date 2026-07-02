@@ -1,0 +1,251 @@
+/* ARTEMIS cockpit — full-screen JARVIS-style command center (index.html).
+   Layers (back → front): #sceneStage orb · .hud-frame dressing · panels · dock.
+   Pure CSS + the existing Canvas orb; amber-on-black; red reserved for errors.
+   Every animation is disabled under prefers-reduced-motion. */
+
+.cockpit {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  padding-bottom: 0 !important; /* no scrolling page — the dock is part of the frame */
+}
+
+/* ---- HUD frame dressing ---- */
+.hud-frame { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+.hud-corner {
+  position: absolute;
+  width: 26px; height: 26px;
+  border: 1px solid rgba(255, 178, 77, 0.55);
+}
+.hud-corner.tl { top: 10px; left: 10px; border-right: 0; border-bottom: 0; }
+.hud-corner.tr { top: 10px; right: 10px; border-left: 0; border-bottom: 0; }
+.hud-corner.bl { bottom: 10px; left: 10px; border-right: 0; border-top: 0; }
+.hud-corner.br { bottom: 10px; right: 10px; border-left: 0; border-top: 0; }
+/* slow radar sweep across the whole frame */
+.hud-sweep {
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 46%, rgba(255, 178, 77, 0.045) 50%, transparent 54%);
+  background-size: 300% 100%;
+  animation: hud-sweep 9s linear infinite;
+}
+@keyframes hud-sweep { 0% { background-position: 120% 0; } 100% { background-position: -60% 0; } }
+/* faint scanlines over the panels only (kept off the orb for clarity) */
+.hud-panel::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.015) 0 1px, transparent 1px 3px);
+  border-radius: inherit;
+}
+
+/* ---- top status bar ---- */
+.hud-top {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 46px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--gray);
+  background: linear-gradient(180deg, rgba(10, 8, 5, 0.85), transparent);
+}
+.hud-brand {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-family: var(--font-display);
+  font-size: 16px; font-weight: 700; letter-spacing: 0.3em;
+  color: var(--text-bright);
+}
+.hud-os { color: var(--amber, #ffb24d); font-size: 10px; letter-spacing: 0.2em; align-self: flex-start; }
+.hud-dots { display: flex; gap: 16px; }
+.hud-dot { color: rgba(154, 139, 122, 0.6); transition: color 0.3s; font-size: 10px; }
+.hud-dot.on { color: var(--teal); text-shadow: 0 0 8px rgba(255, 158, 72, 0.6); }
+.hud-dot.off { color: rgba(255, 107, 94, 0.7); }
+.hud-meta { display: flex; align-items: center; gap: 18px; }
+.hud-ttfw {
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 178, 77, 0.35);
+  border-radius: var(--radius-pill);
+  color: var(--amber, #ffb24d);
+  font-size: 10px;
+}
+.hud-clock { color: var(--text-bright); font-size: 12px; letter-spacing: 0.18em; }
+.hud-links a { color: var(--gray); text-decoration: none; margin-left: 14px; font-size: 10px; }
+.hud-links a:hover { color: var(--teal); }
+
+/* ---- side panels ---- */
+.hud-panel {
+  position: fixed;
+  top: 64px;
+  bottom: 148px;
+  z-index: 15;
+  width: min(300px, 26vw);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 178, 77, 0.16);
+  border-radius: 14px;
+  background: rgba(12, 9, 6, 0.55);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  transition: border-color 0.4s, box-shadow 0.4s, opacity 0.4s;
+}
+.hud-left { left: 18px; }
+.hud-right { right: 18px; }
+.hud-panel-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--amber, #ffb24d);
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 178, 77, 0.14);
+  margin-bottom: 10px;
+}
+
+/* command log lines */
+.hud-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.hud-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  opacity: 0;
+  transform: translateX(-6px);
+  transition: opacity 0.3s, transform 0.3s;
+  overflow-wrap: anywhere;
+}
+.hud-line.shown { opacity: 1; transform: none; }
+.hud-line .t { color: rgba(154, 139, 122, 0.55); font-size: 9px; flex: 0 0 auto; }
+.hud-line .k { flex: 0 0 52px; font-size: 9px; letter-spacing: 0.08em; }
+.hud-line .m { color: var(--text-bright); flex: 1; }
+.hud-line[data-kind="you"] .k { color: var(--amber, #ffb24d); }
+.hud-line[data-kind="artemis"] .k { color: var(--teal); }
+.hud-line[data-kind="tool"] .k { color: #7ed98a; }
+.hud-line[data-kind="action"] .k { color: #7ed98a; }
+.hud-line[data-kind="status"] .k, .hud-line[data-kind="status"] .m { color: var(--gray); }
+.hud-line[data-kind="error"] .k, .hud-line[data-kind="error"] .m { color: #ff6b5e; }
+.hud-line[data-kind="confirm"] .k { color: #ffd27a; }
+
+/* context cards slide in when there's something to show */
+.hud-cards { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.hud-card {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 178, 77, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 178, 77, 0.05);
+  opacity: 0;
+  transform: translateX(10px);
+  transition: opacity 0.35s, transform 0.35s;
+}
+.hud-card.shown { opacity: 1; transform: none; }
+.hud-card .hud-card-title {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--amber, #ffb24d);
+  margin-bottom: 6px;
+}
+.hud-card a, .hud-card p {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-bright);
+  text-decoration: none;
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+.hud-card a:hover { color: var(--teal); }
+.hud-empty { font-family: var(--font-mono); font-size: 10px; color: rgba(154, 139, 122, 0.5); letter-spacing: 0.06em; }
+
+/* ---- bottom dock: full-width HUD bar (overrides the floating-bubble styles) ---- */
+.cockpit .dock,
+.cockpit .dock[data-state="idle"] {
+  left: 18px;
+  right: 18px;
+  bottom: 14px;
+  max-width: none;
+  padding: 10px 22px 12px;
+  border-radius: 14px;
+  border-color: rgba(255, 178, 77, 0.2);
+  background: rgba(12, 9, 6, 0.6);
+}
+/* the cockpit dock never collapses — undo every idle-state hide */
+.cockpit .dock .dock-status,
+.cockpit .dock .dock-row > * {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+.cockpit .dock .dock-row > .mic-orb { width: 52px !important; height: 52px !important; }
+.cockpit .dock .dock-sep { width: 1px !important; height: 28px !important; }
+.cockpit .dock .voice-bars { height: auto !important; }
+.cockpit .dock-status { font-size: 10px; }
+
+/* live waveform strip inside the dock */
+.hud-wave { display: block; width: min(720px, 86vw); height: 36px; margin: 2px 0; }
+
+/* ---- state choreography: the WHOLE hud reacts, not just the orb ---- */
+.cockpit[data-ai-state="listening"] .hud-panel { border-color: rgba(255, 178, 77, 0.38); }
+.cockpit[data-ai-state="thinking"] .hud-sweep { animation-duration: 3.5s; }
+.cockpit[data-ai-state="thinking"] .hud-right { opacity: 0.65; }
+.cockpit[data-ai-state="executing"] .hud-left {
+  border-color: rgba(126, 217, 138, 0.45);
+  box-shadow: 0 0 24px -8px rgba(126, 217, 138, 0.35);
+}
+.cockpit[data-ai-state="speaking"] .hud-wave { filter: drop-shadow(0 0 6px rgba(255, 178, 77, 0.6)); }
+.cockpit[data-ai-state="error"] .hud-frame .hud-corner { border-color: rgba(255, 107, 94, 0.9); }
+.cockpit[data-ai-state="error"] .hud-panel { border-color: rgba(255, 107, 94, 0.5); }
+
+/* ---- boot sequence ---- */
+.boot {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center;
+  background: #0a0805;
+  transition: opacity 0.5s;
+}
+.boot.done { opacity: 0; pointer-events: none; }
+.boot-lines {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.9;
+  letter-spacing: 0.1em;
+  color: var(--amber, #ffb24d);
+  min-width: 320px;
+  min-height: 160px;
+  margin: 0;
+}
+
+/* ---- responsive: stack panels under the orb on narrow screens ---- */
+@media (max-width: 980px) {
+  .hud-right { display: none; } /* context folds away; log stays */
+  .hud-panel { width: min(260px, 40vw); }
+  .hud-top { padding: 10px 14px; }
+  .hud-dots { display: none; }
+}
+@media (max-width: 640px) {
+  /* --dock-height is kept in sync with the real (wrapped) dock by main.js */
+  .hud-left { top: auto; bottom: calc(var(--dock-height, 150px) - 16px); left: 10px; right: 10px; width: auto; max-height: 28vh; }
+  .cockpit .dock, .cockpit .dock[data-state="idle"] { left: 0; right: 0; bottom: 0; border-radius: 14px 14px 0 0; }
+}
+
+/* ---- reduced motion: static frame, no sweep, instant lines ---- */
+@media (prefers-reduced-motion: reduce) {
+  .hud-sweep { animation: none; display: none; }
+  .hud-line, .hud-card { transition: none; transform: none; }
+  .boot { display: none; }
+}
