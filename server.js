@@ -1427,16 +1427,21 @@ async function handleRequest(req, res) {
     try {
       let upstream = null;
       let used = "deepgram";
+      let wantedEleven = false;
       if (provider === "elevenlabs" && elevenEnabled) {
         // allow a specific ElevenLabs voice id from the picker (strictly validated)
         const reqVoice = url.searchParams.get("voice") || "";
         const vid = /^[A-Za-z0-9]{16,40}$/.test(reqVoice) ? reqVoice : elevenVoiceId;
+        wantedEleven = true;
         upstream = await elevenTTSResponse(text, vid);
         if (upstream && upstream.ok) used = "elevenlabs";
         else upstream = null;
       }
       if (!upstream) {
-        upstream = await deepgramTTSResponse(text, url.searchParams.get("voice"));
+        // ElevenLabs quota exhausted (or errored) on a BRITISH voice → keep the
+        // accent and fall back to Deepgram's British Pandora, not the US default
+        const fallbackVoice = wantedEleven ? "aura-2-pandora-en" : url.searchParams.get("voice");
+        upstream = await deepgramTTSResponse(text, fallbackVoice);
         used = "deepgram";
       }
       if (!upstream || !upstream.ok || !upstream.body) {
