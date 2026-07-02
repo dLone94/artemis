@@ -16,12 +16,26 @@ const $ = (id) => document.getElementById(id);
 // motion: no boot, briefing lands silently in the log + context panel.
 const briefingP = fetch("/api/briefing").then((r) => r.json()).catch(() => null);
 
+// She greets you and ASKS first — the news only plays on your "yes" (spoken
+// into the mic / wake word, handled in main.js via window.__pendingBriefing)
+// or a ▶ tap on the card. No unprompted monologue.
 function deliverBriefing(spoken) {
   briefingP.then((b) => {
-    if (!b || !b.text) return;
-    addLine("artemis", b.text);
-    addCard({ title: "BRIEFING", lines: [b.text] });
-    if (spoken && window.ArtemisSpeak) window.ArtemisSpeak(b.text);
+    if (!b) return;
+    if (spoken && b.news && window.ArtemisSpeak) {
+      const ask = b.greeting + " " + b.offer;
+      window.__pendingBriefing = b.news; // a bare "yes" within the next turn plays it
+      addLine("artemis", ask);
+      addCard({ title: "BRIEFING READY", lines: ["say “yes” — or tap play"], playText: b.news });
+      window.ArtemisSpeak(ask);
+    } else if (b.news) {
+      // silent entry (no gesture) — text only, still one tap away from audio
+      addLine("artemis", b.news);
+      addCard({ title: "BRIEFING", lines: [b.news], playText: b.news });
+    } else if (spoken && window.ArtemisSpeak) {
+      addLine("artemis", b.greeting);
+      window.ArtemisSpeak(b.greeting + " All systems are online.");
+    }
   });
 }
 
@@ -63,8 +77,8 @@ function deliverBriefing(spoken) {
     deliverBriefing(spoken);
   };
   el.addEventListener("click", () => dismiss(true)); // gesture → she speaks
-  // safety: if the user never taps, enter silently after 12s (no gesture, no audio)
-  setTimeout(() => dismiss(false), 12000);
+  // safety: if the user never taps, enter silently after 30s (no gesture, no audio)
+  setTimeout(() => dismiss(false), 30000);
   setTimeout(step, 120);
 })();
 
@@ -136,6 +150,20 @@ function addCard(card) {
     p.textContent = t;
     div.appendChild(p);
   });
+  if (card.playText) {
+    // ▶ plays the held text aloud (the click IS the audio-unlock gesture)
+    const b = document.createElement("button");
+    b.className = "hud-card-play";
+    b.type = "button";
+    b.textContent = "▶ PLAY";
+    b.addEventListener("click", () => {
+      window.__pendingBriefing = null; // answered by tap instead of voice
+      addLine("artemis", card.playText.length > 120 ? card.playText.slice(0, 117) + "…" : card.playText);
+      if (window.ArtemisSpeak) window.ArtemisSpeak(card.playText);
+      b.remove();
+    });
+    div.appendChild(b);
+  }
   cardsEl.prepend(div);
   requestAnimationFrame(() => div.classList.add("shown"));
   while (cardsEl.children.length > 12) cardsEl.removeChild(cardsEl.lastChild);

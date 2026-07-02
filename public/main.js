@@ -498,6 +498,30 @@ window.__ask = (t) => ask(t); // debug/test handle (used by preview verification
 async function ask(text) {
   text = (text || "").trim();
   if (!text || busy) return;
+
+  // A pending spoken OFFER (the welcome briefing: "would you like the news?")
+  // is answered locally — a bare yes plays the held text, a no dismisses it,
+  // anything else supersedes the offer and proceeds as a normal command.
+  if (window.__pendingBriefing) {
+    const held = window.__pendingBriefing;
+    if (/^(yes|yeah|yep|sure|ok(ay)?|please( do)?|go ahead|do it|absolutely|why not|let'?s hear( it)?|tell me)\b/i.test(text)) {
+      window.__pendingBriefing = null;
+      hud("log", "you", text);
+      hud("log", "artemis", held.length > 120 ? held.slice(0, 117) + "…" : held);
+      orb._ensureAudio();
+      speak(held);
+      return;
+    }
+    if (/^(no( thanks| thank you)?|nope|nah|not now|later|skip|maybe later)\b/i.test(text)) {
+      window.__pendingBriefing = null;
+      hud("log", "you", text);
+      orb._ensureAudio();
+      speak("Very well, sir.");
+      return;
+    }
+    window.__pendingBriefing = null; // a real command outranks the offer
+  }
+
   busy = true;
   if (wakeOn) pauseWakeForSpeech();
   addMsg("user", text);

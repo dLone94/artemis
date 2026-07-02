@@ -185,6 +185,20 @@ body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
   overflow-wrap: anywhere;
 }
 .hud-card a:hover { color: var(--teal); }
+.hud-card-play {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--amber, #ffb24d);
+  background: rgba(255, 178, 77, 0.08);
+  border: 1px solid rgba(255, 178, 77, 0.4);
+  border-radius: var(--radius-pill);
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.hud-card-play:hover { border-color: var(--teal); box-shadow: 0 0 12px rgba(255, 158, 72, 0.3); }
 .hud-empty { font-family: var(--font-mono); font-size: 10px; color: rgba(154, 139, 122, 0.5); letter-spacing: 0.06em; }
 
 /* ---- bottom dock: full-width HUD bar (overrides the floating-bubble styles) ---- */

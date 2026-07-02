@@ -1085,15 +1085,13 @@ function timeGreeting() {
   const h = new Date().getHours();
   return h < 5 ? "evening" : h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
 }
+// Compose only the NEWS BODY — the greeting + "would you like the news?"
+// offer are separate, so she can ASK before reading (and only spend the
+// listener's time on a yes).
 async function composeBriefing() {
-  const greet = `Good ${timeGreeting()}, sir. Welcome back.`;
-  if (!(LLM_PROVIDER === "nvidia" && nvidiaApiKey) || !webSearchEnabled) {
-    return greet + " All systems are online and standing by.";
-  }
+  if (!(LLM_PROVIDER === "nvidia" && nvidiaApiKey) || !webSearchEnabled) return "";
   const sr = await webSearch("top world news headlines today", 6);
-  if (sr.error || !sr.results || !sr.results.length) {
-    return greet + " I couldn't reach the news wire just now, but all systems are online.";
-  }
+  if (sr.error || !sr.results || !sr.results.length) return "";
   const headlines = sr.results.map((r, i) => `${i + 1}. ${r.title} — ${(r.content || "").slice(0, 160)}`).join("\n");
   const res = await fetchWithTimeout(
     NVIDIA_BASE + "/chat/completions",
@@ -1106,15 +1104,14 @@ async function composeBriefing() {
           {
             role: "system",
             content:
-              "You are Artemis, a JARVIS-style voice assistant. Compose a SPOKEN welcome-back briefing " +
-              'for the user ("sir"). Start with exactly: "' + greet + '" Then, in 2-3 flowing spoken ' +
-              "sentences (max 75 words total), summarize the most important world news from the headlines " +
-              "provided. Plain speech only — no markdown, no lists, no emoji, no source names. End with a " +
-              "short offer like 'Shall I dig into any of these?'"
+              "You are Artemis, a JARVIS-style voice assistant. Summarize the most important world news " +
+              "from the provided headlines as a SPOKEN brief: 2-3 flowing sentences, max 70 words, starting " +
+              "directly with the news (no greeting, no preamble). Plain speech only — no markdown, no " +
+              "lists, no emoji, no source names. End with a short offer like 'Shall I dig into any of these?'"
           },
           { role: "user", content: "Today's headlines:\n" + headlines }
         ],
-        max_tokens: 220,
+        max_tokens: 200,
         temperature: 0.4
       })
     },
@@ -1122,8 +1119,7 @@ async function composeBriefing() {
   );
   if (!res.ok) throw new Error("briefing LLM HTTP " + res.status);
   const data = await res.json();
-  const text = (data.choices?.[0]?.message?.content || "").trim();
-  return text || greet + " All systems are online.";
+  return (data.choices?.[0]?.message?.content || "").trim();
 }
 
 // --- request router ----------------------------------------------------------
@@ -1187,8 +1183,10 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // startup news briefing (cached 30 min; concurrent requests share one compose)
+  // startup news briefing (cached 30 min; concurrent requests share one compose).
+  // greeting/offer are computed fresh (time of day drifts); only the news is cached.
   if (url.pathname === "/api/briefing") {
+    const greeting = `Good ${timeGreeting()}, sir. Welcome back.`;
     try {
       if (!briefingCache.text || Date.now() - briefingCache.at > BRIEFING_TTL_MS) {
         if (!briefingInflight) {
@@ -1199,11 +1197,16 @@ async function handleRequest(req, res) {
         await briefingInflight;
       }
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ text: briefingCache.text, cachedAt: briefingCache.at }));
+      res.end(JSON.stringify({
+        greeting,
+        offer: briefingCache.text ? "Would you like a quick brief on the news around the world?" : "",
+        news: briefingCache.text,
+        cachedAt: briefingCache.at
+      }));
     } catch (e) {
       console.error("/api/briefing error:", e.message);
       res.writeHead(200, { "Content-Type": "application/json" }); // never block the boot
-      res.end(JSON.stringify({ text: `Good ${timeGreeting()}, sir. Welcome back. All systems are online.` }));
+      res.end(JSON.stringify({ greeting, offer: "", news: "" }));
     }
     return;
   }
