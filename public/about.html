@@ -206,10 +206,15 @@
     <button class="dock-toggle" id="dockToggle" type="button" aria-expanded="true" aria-controls="dockBody" title="Collapse controls" aria-label="Collapse controls">▾</button>
     <div class="dock-status" id="liveStatus">Say “Artemis”, or tap the mic to talk</div>
     <div class="dock-row" id="dockBody">
-      <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis"><span>🎤</span></button>
+      <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+        </svg>
+      </button>
       <div class="voice-bars" id="voiceBars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-      <button class="wake-toggle" id="wakeToggle">👂 WAKE WORD: OFF</button>
-      <button class="wake-toggle" id="explainBtn" type="button">✨ WHAT CAN I DO?</button>
+      <button class="wake-toggle" id="wakeToggle">WAKE WORD: OFF</button>
+      <button class="wake-toggle" id="explainBtn" type="button">CAPABILITIES ?</button>
       <span class="dock-sep"></span>
       <label class="set-field">Voice
         <select id="voiceSelect">

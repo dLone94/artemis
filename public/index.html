@@ -15,6 +15,12 @@
 <body class="page cockpit" data-ai-state="idle">
   <!-- the audio-reactive orb fills the stage behind the HUD -->
   <div id="sceneStage" class="scene-stage" aria-hidden="true"></div>
+  <!-- sparse drifting particle field (between orb and panels) -->
+  <canvas class="hud-particles" id="hudParticles" aria-hidden="true"></canvas>
+  <!-- annotation/instrument ring around the orb: ticks, degrees, rotation -->
+  <canvas class="hud-ring" id="hudRing" width="620" height="620" aria-hidden="true"></canvas>
+  <!-- live state caption under the orb -->
+  <div class="hud-state" id="hudState" aria-live="polite"><i></i> STANDBY</div>
 
   <!-- boot sequence overlay (removed after init; skipped under reduced motion) -->
   <div class="boot" id="boot" aria-hidden="true">
@@ -40,6 +46,7 @@
       <span class="hud-dot" data-sys="gmail" title="Gmail">⬤ MAIL</span>
     </div>
     <div class="hud-meta">
+      <span class="hud-model" id="hudModel" title="Active model"></span>
       <span class="hud-ttfw" id="hudTtfw" title="Time to first word, last turn">TTFW —</span>
       <span class="hud-clock" id="hudClock">--:--:--</span>
       <nav class="hud-links" aria-label="Pages">
@@ -49,10 +56,15 @@
     </div>
   </header>
 
-  <!-- left: live command console -->
+  <!-- left: live command console + telemetry footer -->
   <aside class="hud-panel hud-left" aria-label="Command log">
     <div class="hud-panel-title">COMMAND LOG</div>
     <div class="hud-log" id="cmdLog" aria-live="polite"></div>
+    <div class="hud-telemetry" id="hudTelemetry" aria-label="Live telemetry">
+      <span id="telMic">MIC −∞ dB</span>
+      <span id="telWake">WAKE OFF</span>
+      <span id="telUptime">UP 00:00</span>
+    </div>
   </aside>
 
   <!-- right: context (sources, actions, confirmations) -->
@@ -66,10 +78,15 @@
     <div class="dock-status" id="liveStatus">Say “Artemis”, or tap the mic to talk</div>
     <canvas class="hud-wave" id="hudWave" height="36" aria-hidden="true"></canvas>
     <div class="dock-row" id="dockBody">
-      <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis"><span>🎤</span></button>
+      <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+        </svg>
+      </button>
       <div class="voice-bars" id="voiceBars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-      <button class="wake-toggle" id="wakeToggle">👂 WAKE WORD: OFF</button>
-      <button class="wake-toggle" id="explainBtn" type="button">✨ WHAT CAN I DO?</button>
+      <button class="wake-toggle" id="wakeToggle">WAKE WORD: OFF</button>
+      <button class="wake-toggle" id="explainBtn" type="button">CAPABILITIES ?</button>
       <span class="dock-sep"></span>
       <label class="set-field">Voice
         <select id="voiceSelect">

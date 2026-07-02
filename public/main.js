@@ -225,6 +225,10 @@ function bargeIn() {
   startTalk(); // immediately capture what you're now saying
 }
 
+// Public hook for the cockpit (welcome briefing etc.) — must be invoked from
+// a user-gesture call chain the first time so audio is unlocked.
+window.ArtemisSpeak = (t) => { try { orb._ensureAudio(); speak(String(t || "")); } catch (e) {} };
+
 async function speak(text) {
   pauseWakeForSpeech();
   orb.connectMediaElement(ttsEl); // route Artemis's voice into the orb's analyser
@@ -809,7 +813,8 @@ function setWakeUi(on) {
   window.__artemisWakeOn = on;
   if (window.__dockOnWake) window.__dockOnWake(on); // wake ON keeps the dock expanded
   wakeToggle.classList.toggle("on", on);
-  wakeToggle.textContent = on ? "👂 WAKE WORD: ON" : "👂 WAKE WORD: OFF";
+  wakeToggle.textContent = on ? "WAKE WORD: ON" : "WAKE WORD: OFF"; // mono austerity, no emoji
+  window.__artemisWakeUi = on; // cockpit telemetry footer reads this
 }
 
 let wakeStarting = false; // re-entrancy guard: the permission prompt takes a while

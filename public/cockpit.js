@@ -9,13 +9,32 @@ import { prefersReducedMotion } from "./orbShared.js";
 const reduced = prefersReducedMotion();
 const $ = (id) => document.getElementById(id);
 
-/* ---------------- boot sequence ---------------- */
-// 1.6s of "ARTEMIS OS initializing" — pure theater, skipped under reduced
-// motion (CSS hides .boot entirely) and dismissible with a click.
+/* ---------------- boot sequence + welcome briefing ---------------- */
+// "ARTEMIS OS initializing…" then TAP TO ENTER — that tap is the user gesture
+// that unlocks audio, so she can greet you ALOUD with the morning briefing
+// (fetched in parallel during the boot; cached 30 min server-side). Reduced
+// motion: no boot, briefing lands silently in the log + context panel.
+const briefingP = fetch("/api/briefing").then((r) => r.json()).catch(() => null);
+
+function deliverBriefing(spoken) {
+  briefingP.then((b) => {
+    if (!b || !b.text) return;
+    addLine("artemis", b.text);
+    addCard({ title: "BRIEFING", lines: [b.text] });
+    if (spoken && window.ArtemisSpeak) window.ArtemisSpeak(b.text);
+  });
+}
+
 (function boot() {
   const el = $("boot");
   const lines = $("bootLines");
-  if (!el || !lines || reduced) { el && el.remove(); return; }
+  const enterHud = () => document.body.classList.add("hud-in"); // panels assemble
+  if (!el || !lines || reduced) {
+    el && el.remove();
+    enterHud();
+    deliverBriefing(false); // no gesture → text only, never blocked audio
+    return;
+  }
   const SCRIPT = [
     "ARTEMIS OS v2.1",
     "› voice pipeline ........ ✓",
@@ -23,23 +42,29 @@ const $ = (id) => document.getElementById(id);
     "› tools registry ........ ✓",
     "› memory ................ ✓",
     "",
-    "Good evening, sir.",
+    "▸ TAP TO ENTER",
   ];
   let i = 0;
   const step = () => {
     if (i < SCRIPT.length) {
       lines.textContent += SCRIPT[i] + "\n";
       i += 1;
-      setTimeout(step, i === 1 ? 340 : 190);
-    } else {
-      setTimeout(dismiss, 420);
+      setTimeout(step, i === 1 ? 340 : 170);
     }
+    // then wait for the tap — it doubles as the audio-unlock gesture
   };
-  const dismiss = () => {
+  let entered = false;
+  const dismiss = (spoken) => {
+    if (entered) return; // exactly one entry (tap vs 12s fallback race)
+    entered = true;
     el.classList.add("done");
     setTimeout(() => el.remove(), 550);
+    enterHud();
+    deliverBriefing(spoken);
   };
-  el.addEventListener("click", dismiss); // impatient? tap through
+  el.addEventListener("click", () => dismiss(true)); // gesture → she speaks
+  // safety: if the user never taps, enter silently after 12s (no gesture, no audio)
+  setTimeout(() => dismiss(false), 12000);
   setTimeout(step, 120);
 })();
 
@@ -137,11 +162,39 @@ function uiTick(freq) {
 const STATE_TONES = { listening: 920, thinking: 640, executing: 760, speaking: 540, error: 240 };
 
 /* ---------------- the HUD bus (main.js talks to us through this) ---------------- */
+const STATE_LABEL = { idle: "STANDBY", listening: "LISTENING", thinking: "PROCESSING", executing: "EXECUTING", speaking: "SPEAKING", error: "FAULT" };
+// TTFW counts UP live while she works, then freezes at the real measured value
+let ttfwTimer = 0;
+function ttfwCounting(on) {
+  const el = $("hudTtfw");
+  if (!el || reduced) return;
+  clearInterval(ttfwTimer);
+  if (!on) { ttfwTimer = 0; return; }
+  const t0 = performance.now();
+  ttfwTimer = setInterval(() => { el.textContent = "TTFW " + ((performance.now() - t0) / 1000).toFixed(2) + "s"; }, 90);
+}
+// pulse the matching subsystem dot when its tool runs
+const TOOL_SYS = { web_search: "web", fetch_page: "web", web_research: "web", check_email: "gmail", read_email: "gmail", play_media: "web" };
+function pulseDot(sys) {
+  const d = document.querySelector(`.hud-dot[data-sys="${sys}"]`);
+  if (!d) return;
+  d.classList.remove("pulse");
+  void d.offsetWidth; // restart the animation
+  d.classList.add("pulse");
+}
+
 let lastState = "idle";
 window.ArtemisHUD = {
-  log: addLine,
+  log(kind, text) {
+    addLine(kind, text);
+    if (kind === "tool") {
+      const sys = TOOL_SYS[String(text).replace(/\s*✓\s*$/, "")];
+      if (sys) pulseDot(sys);
+    }
+  },
   context: addCard,
   ttfw(ms) {
+    ttfwCounting(false);
     const el = $("hudTtfw");
     if (el && ms > 0) el.textContent = "TTFW " + (ms >= 1000 ? (ms / 1000).toFixed(2) + "s" : Math.round(ms) + "ms");
   },
@@ -149,6 +202,10 @@ window.ArtemisHUD = {
     if (s === lastState) return;
     lastState = s;
     document.body.dataset.aiState = s;
+    const st = $("hudState");
+    if (st) st.innerHTML = "<i></i> " + (STATE_LABEL[s] || s.toUpperCase());
+    if (s === "thinking") ttfwCounting(true);
+    if (s === "speaking" || s === "idle" || s === "error") ttfwCounting(false);
     if (STATE_TONES[s]) uiTick(STATE_TONES[s]);
   },
 };
@@ -195,6 +252,154 @@ window.ArtemisHUD = {
     head = (head + 1) % N;
     draw();
   })();
+})();
+
+/* ---------------- annotation / instrument ring around the orb ---------------- */
+// The Iron-Man signature: a thin rotating ring of ticks + degree numbers that
+// annotates the orb. Rotation speed follows the AI state; static under reduce.
+(function instrumentRing() {
+  const cv = $("hudRing");
+  if (!cv) return;
+  const ctx = cv.getContext("2d");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const fit = () => {
+    const size = cv.clientWidth || 620;
+    cv.width = Math.round(size * dpr);
+    cv.height = Math.round(size * dpr);
+  };
+  fit();
+  window.addEventListener("resize", fit);
+  let rot = 0;
+  let last = performance.now();
+  function draw(now) {
+    const W = cv.width, c = W / 2;
+    const R = c - 10 * dpr;
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    const s = document.body.dataset.aiState;
+    const speed = s === "thinking" || s === "executing" ? 0.5 : s === "listening" ? 0.22 : 0.08;
+    rot += dt * speed;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, W);
+    ctx.translate(c, c);
+    // outer thin ring
+    ctx.strokeStyle = "rgba(255,178,77,0.22)";
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.stroke();
+    // rotating tick ring
+    ctx.save(); ctx.rotate(rot);
+    for (let i = 0; i < 72; i++) {
+      const maj = i % 6 === 0;
+      const a = (i / 72) * Math.PI * 2;
+      ctx.strokeStyle = maj ? "rgba(255,178,77,0.5)" : "rgba(255,178,77,0.2)";
+      ctx.lineWidth = (maj ? 1.4 : 1) * dpr;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * R, Math.sin(a) * R);
+      ctx.lineTo(Math.cos(a) * (R - (maj ? 10 : 5) * dpr), Math.sin(a) * (R - (maj ? 10 : 5) * dpr));
+      ctx.stroke();
+    }
+    ctx.restore();
+    // counter-rotating degree numbers every 30°
+    ctx.save(); ctx.rotate(-rot * 0.5);
+    ctx.font = 8 * dpr + 'px "JetBrains Mono", monospace';
+    ctx.fillStyle = "rgba(138,147,163,0.55)"; // cool dim tone
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (let d = 0; d < 360; d += 30) {
+      const a = (d / 180) * Math.PI;
+      ctx.fillText(String(d).padStart(3, "0"), Math.cos(a) * (R - 22 * dpr), Math.sin(a) * (R - 22 * dpr));
+    }
+    ctx.restore();
+    // dashed inner arc segment sweeping with state
+    ctx.strokeStyle = "rgba(255,178,77,0.35)";
+    ctx.lineWidth = 2 * dpr;
+    ctx.setLineDash([3 * dpr, 6 * dpr]);
+    ctx.beginPath(); ctx.arc(0, 0, R - 32 * dpr, rot * 2, rot * 2 + 1.1); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (reduced) { draw(performance.now()); return; } // one static frame
+  (function loop(now) {
+    requestAnimationFrame(loop);
+    if (document.hidden) return;
+    draw(now || performance.now());
+  })(performance.now());
+})();
+
+/* ---------------- sparse drifting particle field ---------------- */
+(function particles() {
+  const cv = $("hudParticles");
+  if (!cv || reduced) { cv && cv.remove(); return; }
+  const ctx = cv.getContext("2d");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let W, H;
+  const fit = () => { W = cv.width = Math.round(innerWidth * dpr); H = cv.height = Math.round(innerHeight * dpr); };
+  fit();
+  window.addEventListener("resize", fit);
+  const N = 36;
+  const ps = Array.from({ length: N }, (_, i) => ({
+    x: ((i * 379) % 1000) / 1000, y: ((i * 611) % 1000) / 1000,          // deterministic spread
+    vx: (((i * 131) % 7) - 3) * 0.00001, vy: -0.00002 - ((i * 17) % 5) * 0.000006,
+    r: 0.6 + ((i * 37) % 10) / 12, a: 0.06 + ((i * 53) % 10) / 60
+  }));
+  (function loop() {
+    requestAnimationFrame(loop);
+    if (document.hidden) return;
+    ctx.clearRect(0, 0, W, H);
+    for (const p of ps) {
+      p.x = (p.x + p.vx + 1) % 1;
+      p.y = (p.y + p.vy + 1) % 1;
+      ctx.fillStyle = "rgba(255,190,120," + p.a + ")";
+      ctx.beginPath(); ctx.arc(p.x * W, p.y * H, p.r * dpr, 0, Math.PI * 2); ctx.fill();
+    }
+  })();
+})();
+
+/* ---------------- ambient telemetry (never an empty instrument) ---------------- */
+(function telemetry() {
+  const mic = $("telMic"), wake = $("telWake"), up = $("telUptime"), model = $("hudModel");
+  const t0 = Date.now();
+  fetch("/api/status").then((r) => r.json()).then((s) => {
+    if (model && s.llmModel) model.textContent = String(s.llmModel).split("/").pop().toUpperCase();
+    // resting context card: real system facts, so the panel is never empty
+    addCard({
+      title: "SYSTEMS",
+      lines: [
+        "brain  " + (s.llmModel || "—"),
+        "voice  " + (s.ttsProvider || "—") + " · stt " + (s.sttEnabled ? "deepgram" : "—"),
+        "mail   " + (s.gmailEnabled ? "connected" : "awaiting key"),
+        "memory " + (s.notesCount || 0) + " note" + (s.notesCount === 1 ? "" : "s"),
+      ],
+    });
+  }).catch(() => {});
+  setInterval(() => {
+    if (up) {
+      const secs = Math.floor((Date.now() - t0) / 1000);
+      up.textContent = "UP " + String(Math.floor(secs / 60)).padStart(2, "0") + ":" + String(secs % 60).padStart(2, "0");
+    }
+    if (wake) wake.textContent = "WAKE " + (window.__artemisWakeUi ? "ON" : "OFF");
+    if (mic) {
+      const amp = typeof window.__artemisAmp === "number" ? window.__artemisAmp : 0;
+      mic.textContent = amp > 0.001 ? "MIC " + Math.round(20 * Math.log10(amp)) + " dB" : "MIC −∞ dB";
+    }
+  }, 500);
+})();
+
+/* ---------------- panel counter-parallax (opposite the orb's tilt) ---------------- */
+(function panelParallax() {
+  if (reduced) return;
+  const els = [document.querySelector(".hud-left"), document.querySelector(".hud-right"), document.querySelector(".hud-top")].filter(Boolean);
+  let tx = 0, ty = 0, cx = 0, cy = 0, raf = 0;
+  window.addEventListener("pointermove", (e) => {
+    tx = (e.clientX / innerWidth - 0.5) * -6;  // panels drift OPPOSITE the cursor
+    ty = (e.clientY / innerHeight - 0.5) * -4;
+    if (!raf) raf = requestAnimationFrame(apply);
+  }, { passive: true });
+  function apply() {
+    raf = 0;
+    cx += (tx - cx) * 0.12;
+    cy += (ty - cy) * 0.12;
+    for (const el of els) el.style.translate = cx.toFixed(2) + "px " + cy.toFixed(2) + "px";
+    if (Math.abs(tx - cx) > 0.05 || Math.abs(ty - cy) > 0.05) raf = requestAnimationFrame(apply);
+  }
 })();
 
 /* ---------------- opening line in the log ---------------- */

@@ -1074,6 +1074,58 @@ function rateLimited(ip) {
   return arr.length > max;
 }
 
+// --- welcome briefing ----------------------------------------------------------
+// "Welcome back, sir. Around the world this hour…" — a short spoken news brief
+// for cockpit startup. ONE web search + ONE small LLM call, cached 30 minutes
+// server-side so page reloads cost nothing.
+const BRIEFING_TTL_MS = 30 * 60 * 1000;
+let briefingCache = { at: 0, text: "" };
+let briefingInflight = null; // collapse concurrent requests into one compose
+function timeGreeting() {
+  const h = new Date().getHours();
+  return h < 5 ? "evening" : h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
+}
+async function composeBriefing() {
+  const greet = `Good ${timeGreeting()}, sir. Welcome back.`;
+  if (!(LLM_PROVIDER === "nvidia" && nvidiaApiKey) || !webSearchEnabled) {
+    return greet + " All systems are online and standing by.";
+  }
+  const sr = await webSearch("top world news headlines today", 6);
+  if (sr.error || !sr.results || !sr.results.length) {
+    return greet + " I couldn't reach the news wire just now, but all systems are online.";
+  }
+  const headlines = sr.results.map((r, i) => `${i + 1}. ${r.title} — ${(r.content || "").slice(0, 160)}`).join("\n");
+  const res = await fetchWithTimeout(
+    NVIDIA_BASE + "/chat/completions",
+    {
+      method: "POST",
+      headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: NVIDIA_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are Artemis, a JARVIS-style voice assistant. Compose a SPOKEN welcome-back briefing " +
+              'for the user ("sir"). Start with exactly: "' + greet + '" Then, in 2-3 flowing spoken ' +
+              "sentences (max 75 words total), summarize the most important world news from the headlines " +
+              "provided. Plain speech only — no markdown, no lists, no emoji, no source names. End with a " +
+              "short offer like 'Shall I dig into any of these?'"
+          },
+          { role: "user", content: "Today's headlines:\n" + headlines }
+        ],
+        max_tokens: 220,
+        temperature: 0.4
+      })
+    },
+    25000
+  );
+  if (!res.ok) throw new Error("briefing LLM HTTP " + res.status);
+  const data = await res.json();
+  const text = (data.choices?.[0]?.message?.content || "").trim();
+  return text || greet + " All systems are online.";
+}
+
 // --- request router ----------------------------------------------------------
 // The async handler is wrapped so ANY throw (malformed URL, fs error, provider
 // crash) answers 500 instead of becoming an unhandled rejection that kills the
@@ -1135,11 +1187,35 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // startup news briefing (cached 30 min; concurrent requests share one compose)
+  if (url.pathname === "/api/briefing") {
+    try {
+      if (!briefingCache.text || Date.now() - briefingCache.at > BRIEFING_TTL_MS) {
+        if (!briefingInflight) {
+          briefingInflight = composeBriefing()
+            .then((text) => { briefingCache = { at: Date.now(), text }; })
+            .finally(() => { briefingInflight = null; });
+        }
+        await briefingInflight;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ text: briefingCache.text, cachedAt: briefingCache.at }));
+    } catch (e) {
+      console.error("/api/briefing error:", e.message);
+      res.writeHead(200, { "Content-Type": "application/json" }); // never block the boot
+      res.end(JSON.stringify({ text: `Good ${timeGreeting()}, sir. Welcome back. All systems are online.` }));
+    }
+    return;
+  }
+
   if (url.pathname === "/api/status") {
+    let notesCount = 0;
+    try { notesCount = (JSON.parse(await fs.readFile(join(DATA_DIR, "notes.json"), "utf8")) || []).length; } catch (e) {}
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
         stripeEnabled: Boolean(stripeSecretKey),
+        notesCount,
         chatEnabled: Boolean(anthropicApiKey) || Boolean(nvidiaApiKey),
         llmProvider: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? "nvidia" : Boolean(anthropicApiKey) ? "anthropic" : "none",
         llmModel: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? NVIDIA_MODEL : ANTHROPIC_MODEL,
