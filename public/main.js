@@ -1091,22 +1091,31 @@ function runWakeCommand(cmd) {
 }
 
 function handleWake(raw) {
-  if (busy || speaking) return;
-  console.debug("[wake] heard:", raw); // open the console to see what was recognized
   const w = matchWake(raw);
+  // If she's mid-sentence when you say her name, that's an interrupt — stop her
+  // and take the command, don't drop it. (Only a fresh wake word interrupts; a
+  // stray armed follow-up while busy is still ignored to avoid double-runs.)
+  if (busy || speaking) {
+    if (w) { window.ArtemisBargeIn.interrupt(); }
+    else return;
+  }
+  console.debug("[wake] heard:", raw); // open the console to see what was recognized
   if (w) {
-    playEarcon(); // instant acknowledgement — no dead air while Claude thinks
+    playEarcon(); // instant acknowledgement — no dead air while she thinks
     orb.setStatus("listening");
     orb.feed(0.6);
     const cmd = (w.rest || "").trim();
     if (cmd) {
       runWakeCommand(cmd); // "Artemis, what's the weather" in one breath
     } else {
-      armWake(); // just "Artemis" → take the NEXT phrase as the command
+      // just "Artemis": DON'T speak a blocking ack — that pauses the mic and the
+      // speaking-guard would then drop your follow-up ("…I need a favor"). The
+      // earcon already acknowledged you; keep the recogniser LIVE so the next
+      // phrase is captured immediately.
+      armWake();
       const ack = WAKE_ACKS[Math.floor(Math.random() * WAKE_ACKS.length)];
-      setLiveStatus(ack);
-      orb._ensureAudio();
-      speak(ack); // Jarvis-style spoken greeting; recogniser resumes after she finishes
+      setLiveStatus(ack + "  (listening…)");
+      orb.setStatus("listening");
     }
     return;
   }
@@ -1143,6 +1152,7 @@ function resumeWake() {
 }
 
 wakeToggle.addEventListener("click", () => (wakeOn ? stopWake() : startWake()));
+window.__handleWake = handleWake; // debug/test handle (preview verification)
 
 // Cockpit continuity: after the boot tap (a real gesture), re-arm the wake
 // word automatically if it was ON last session — she's just listening again.
