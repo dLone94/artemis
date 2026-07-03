@@ -157,6 +157,9 @@ body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
 .hud-line[data-kind="status"] .k, .hud-line[data-kind="status"] .m { color: var(--gray); }
 .hud-line[data-kind="error"] .k, .hud-line[data-kind="error"] .m { color: #ff6b5e; }
 .hud-line[data-kind="confirm"] .k { color: #ffd27a; }
+/* replayed prior-session turns: dimmed so they read as history, not live */
+.hud-line.hud-earlier { opacity: 0.5; }
+.hud-line.hud-earlier-sep .m { color: var(--hud-dim, #8a93a3); opacity: 0.6; letter-spacing: 0.2em; font-size: 9px; }
 /* live transcript line: amber text + blinking cursor while the user speaks */
 .hud-line.hud-live .m { color: var(--amber, #ffb24d); }
 .hud-line.hud-live .m::after {

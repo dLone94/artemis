@@ -128,6 +128,49 @@ const LOGIN_PAGE =
   '<div><button style="margin-top:14px;background:#ffb24d18;border:1px solid #ffb24d66;border-radius:999px;color:#ffb24d;padding:9px 24px;font:inherit;letter-spacing:.12em;cursor:pointer">ENTER</button></div>' +
   "</form></body>";
 
+// --- usage counters (so you can see free-tier headroom) ---------------------
+// A tiny per-day tally of real requests/chars per provider, persisted to
+// .data/usage.json. Purely informational; never blocks anything.
+const usage = { day: "", llm: 0, stt: 0, search: 0, ttsChars: { deepgram: 0, elevenlabs: 0, edge: 0 } };
+function usageToday() { return new Date().toISOString().slice(0, 10); }
+let usageDirty = false;
+(function loadUsage() {
+  try {
+    const u = JSON.parse(readFileSync(join(DATA_DIR, "usage.json"), "utf8"));
+    if (u && u.day === usageToday()) Object.assign(usage, u);
+    else usage.day = usageToday();
+  } catch (e) { usage.day = usageToday(); }
+})();
+function bumpUsage(kind, n = 1) {
+  if (usage.day !== usageToday()) { // new day → reset
+    usage.day = usageToday(); usage.llm = usage.stt = usage.search = 0;
+    usage.ttsChars = { deepgram: 0, elevenlabs: 0, edge: 0 };
+  }
+  if (kind.startsWith("tts:")) usage.ttsChars[kind.slice(4)] = (usage.ttsChars[kind.slice(4)] || 0) + n;
+  else usage[kind] = (usage[kind] || 0) + n;
+  usageDirty = true;
+}
+setInterval(() => {
+  if (!usageDirty) return;
+  usageDirty = false;
+  try { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(join(DATA_DIR, "usage.json"), JSON.stringify(usage)); } catch (e) {}
+}, 10000);
+
+// ElevenLabs remaining characters — the real free-tier wall (10k/mo). Fetched
+// from their API, cached 5 min, so the cockpit can show true headroom.
+let elevenQuota = { at: 0, used: 0, limit: 0 };
+async function elevenUsage() {
+  if (!elevenLabsKey) return null;
+  if (Date.now() - elevenQuota.at < 300000 && elevenQuota.limit) return elevenQuota;
+  try {
+    const r = await fetchWithTimeout("https://api.elevenlabs.io/v1/user/subscription", { headers: { "xi-api-key": elevenLabsKey } }, 8000);
+    if (!r.ok) return elevenQuota.limit ? elevenQuota : null;
+    const d = await r.json();
+    elevenQuota = { at: Date.now(), used: d.character_count || 0, limit: d.character_limit || 0 };
+    return elevenQuota;
+  } catch (e) { return elevenQuota.limit ? elevenQuota : null; }
+}
+
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 
 // --- Conversation (Claude) + voice (Deepgram) config -------------------------
@@ -771,6 +814,7 @@ async function callClaude(messages, tone) {
 async function webSearch(query, n = 5) {
   query = String(query || "").trim();
   if (!query) return { results: [], answer: "" };
+  bumpUsage("search");
   try {
     if (tavilyKey) {
       const res = await fetchWithTimeout(
@@ -1194,6 +1238,7 @@ function startLiveSession() {
   if (!deepgramApiKey) return null;
   if (liveSessions.size >= MAX_LIVE_SESSIONS) liveCleanup();
   if (liveSessions.size >= MAX_LIVE_SESSIONS) return null;
+  bumpUsage("stt"); // live streaming STT session counts as a request too
   const sid = "live_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
   const now = Date.now();
   // audioQ buffers chunks that arrive before the WS handshake completes — the
@@ -1554,11 +1599,14 @@ async function handleRequest(req, res) {
   if (url.pathname === "/api/status") {
     let notesCount = 0;
     try { notesCount = (JSON.parse(await fs.readFile(join(DATA_DIR, "notes.json"), "utf8")) || []).length; } catch (e) {}
+    const eleven = await elevenUsage(); // real ElevenLabs char headroom (cached)
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
         stripeEnabled: Boolean(stripeSecretKey),
         notesCount,
+        usage: { llm: usage.llm, stt: usage.stt, search: usage.search, ttsChars: usage.ttsChars, day: usage.day },
+        elevenUsage: eleven ? { used: eleven.used, limit: eleven.limit } : null,
         chatEnabled: Boolean(anthropicApiKey) || Boolean(nvidiaApiKey),
         llmProvider: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? "nvidia" : Boolean(anthropicApiKey) ? "anthropic" : "none",
         llmModel: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? NVIDIA_MODEL : ANTHROPIC_MODEL,
@@ -1592,6 +1640,7 @@ async function handleRequest(req, res) {
     try {
       const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
       const messages = sanitizeMessages(body.messages); // block role:"system" injection
+      bumpUsage("llm");
       const result = await callLLM(messages, body.tone);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result));
@@ -1662,6 +1711,7 @@ async function handleRequest(req, res) {
     try {
       const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
       const messages = sanitizeMessages(body.messages); // block role:"system" injection
+      bumpUsage("llm");
       const tone = body.tone;
 
       // NVIDIA brain: stream the answer token-by-token so she starts speaking the
@@ -1718,6 +1768,7 @@ async function handleRequest(req, res) {
       res.end(JSON.stringify({ error: "DEEPGRAM_API_KEY not set in .env" }));
       return;
     }
+    bumpUsage("stt");
     try {
       const audio = await readRequestBody(req);
       const contentType = req.headers["content-type"] || "audio/webm";
@@ -1773,6 +1824,7 @@ async function handleRequest(req, res) {
         const edgeVoice = /^[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural$/.test(v) ? v : "en-GB-SoniaNeural";
         try {
           const buf = await edgeTtsSynthesize(text, edgeVoice);
+          bumpUsage("tts:edge", text.length);
           res.writeHead(200, { "Content-Type": "audio/mpeg", "X-TTS-Provider": "edge", "Cache-Control": "no-store" });
           res.end(buf);
           return;
@@ -1780,6 +1832,7 @@ async function handleRequest(req, res) {
           console.error("edge tts failed (falling back to Deepgram Pandora):", e.message);
           const fb = await deepgramTTSResponse(text, "aura-2-pandora-en"); // keep the accent
           if (fb && fb.ok) {
+            bumpUsage("tts:deepgram", text.length);
             res.writeHead(200, { "Content-Type": "audio/mpeg", "X-TTS-Provider": "deepgram-fallback", "Cache-Control": "no-store" });
             const buf = Buffer.from(await fb.arrayBuffer());
             res.end(buf);
@@ -1813,6 +1866,7 @@ async function handleRequest(req, res) {
         res.writeHead(502).end();
         return;
       }
+      bumpUsage("tts:" + used, text.length);
       res.writeHead(200, { "Content-Type": "audio/mpeg", "X-TTS-Provider": used, "Cache-Control": "no-store" });
       const reader = upstream.body.getReader();
       // barge-in aborts playback mid-stream: on client disconnect a pending

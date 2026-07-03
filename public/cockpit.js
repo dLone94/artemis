@@ -638,19 +638,46 @@ window.ArtemisHUD = {
 (function telemetry() {
   const mic = $("telMic"), wake = $("telWake"), up = $("telUptime"), model = $("hudModel");
   const t0 = Date.now();
-  fetch("/api/status").then((r) => r.json()).then((s) => {
-    if (model && s.llmModel) model.textContent = String(s.llmModel).split("/").pop().toUpperCase();
-    // resting context card: real system facts, so the panel is never empty
-    addCard({
-      title: "SYSTEMS",
-      lines: [
-        "brain  " + (s.llmModel || "—"),
-        "voice  " + (s.ttsProvider || "—") + " · stt " + (s.sttEnabled ? "deepgram" : "—"),
-        "mail   " + (s.gmailEnabled ? "connected" : "awaiting key"),
-        "memory " + (s.notesCount || 0) + " note" + (s.notesCount === 1 ? "" : "s"),
-      ],
-    });
-  }).catch(() => {});
+  let systemsShown = false, usageCard = null;
+  const fmt = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
+  function refresh() {
+    fetch("/api/status").then((r) => r.json()).then((s) => {
+      if (model && s.llmModel) model.textContent = String(s.llmModel).split("/").pop().toUpperCase();
+      if (!systemsShown) { // resting facts card — render once so it stays at the bottom
+        systemsShown = true;
+        addCard({
+          title: "SYSTEMS",
+          lines: [
+            "brain  " + (s.llmModel || "—"),
+            "voice  " + (s.ttsProvider || "—") + " · stt " + (s.sttEnabled ? "deepgram" : "—"),
+            "mail   " + (s.gmailEnabled ? "connected" : "awaiting key"),
+            "memory " + (s.notesCount || 0) + " note" + (s.notesCount === 1 ? "" : "s"),
+          ],
+        });
+      }
+      // USAGE card: today's real request tally + the ElevenLabs char wall (the
+      // one free-tier limit that actually bites). Rebuilt in place each refresh.
+      const u = s.usage || { llm: 0, stt: 0, search: 0, ttsChars: {} };
+      const tc = u.ttsChars || {};
+      const lines = [
+        "today  " + fmt(u.llm) + " chats · " + fmt(u.stt) + " STT · " + fmt(u.search) + " search",
+        "tts    dg " + fmt(tc.deepgram || 0) + " · edge " + fmt(tc.edge || 0) + " · 11L " + fmt(tc.elevenlabs || 0) + " chars",
+      ];
+      if (s.elevenUsage && s.elevenUsage.limit) {
+        const e = s.elevenUsage, left = Math.max(0, e.limit - e.used), pct = Math.round((e.used / e.limit) * 100);
+        lines.push("11labs " + fmt(left) + " / " + fmt(e.limit) + " chars left (" + (100 - pct) + "%)");
+      }
+      if (usageCard && usageCard.isConnected) {
+        const ps = usageCard.querySelectorAll("p");
+        lines.forEach((t, i) => { if (ps[i]) ps[i].textContent = t; });
+      } else {
+        addCard({ title: "USAGE · FREE TIER", lines });
+        usageCard = Array.from(cardsEl.querySelectorAll(".hud-card")).find((c) => c.querySelector(".hud-card-title")?.textContent === "USAGE · FREE TIER");
+      }
+    }).catch(() => {});
+  }
+  refresh();
+  setInterval(refresh, 60000); // keep the tally current
   setInterval(() => {
     if (up) {
       const secs = Math.floor((Date.now() - t0) / 1000);
@@ -772,6 +799,29 @@ function announceWhenQuiet(text, tries = 24) {
   window.__reminderPoll = poll; // debug/test handle
   poll();
   setInterval(poll, 30000);
+})();
+
+/* ---------------- session continuity: replay recent turns ---------------- */
+// main.js stashes the last few conversation turns on window.__artemisHistory;
+// render them dimmed above the live log so the cockpit isn't blank on reload.
+(function replayHistory() {
+  const hist = Array.isArray(window.__artemisHistory) ? window.__artemisHistory : [];
+  if (!hist.length) return;
+  const sep = document.createElement("div");
+  sep.className = "hud-line shown hud-earlier-sep";
+  sep.innerHTML = '<span class="t"></span><span class="k"></span><span class="m">— earlier —</span>';
+  logEl.appendChild(sep);
+  for (const m of hist) {
+    const div = document.createElement("div");
+    div.className = "hud-line shown hud-earlier";
+    div.dataset.kind = m.role === "user" ? "you" : "artemis";
+    const label = m.role === "user" ? "YOU" : "ARTEMIS";
+    const text = String(m.content || "");
+    div.innerHTML = '<span class="t"></span><span class="k"></span><span class="m"></span>';
+    div.querySelector(".k").textContent = label;
+    div.querySelector(".m").textContent = text.length > 110 ? text.slice(0, 107) + "…" : text;
+    logEl.appendChild(div);
+  }
 })();
 
 /* ---------------- opening line in the log ---------------- */

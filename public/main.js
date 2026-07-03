@@ -296,6 +296,9 @@ function restoreConversation() {
       conversation.push({ role: m.role, content: m.content });
       addMsg(m.role === "user" ? "user" : "artemis", m.content, m.sources);
     });
+    // hand the last few turns to the cockpit so its command log isn't blank on
+    // reload (cockpit.js loads after this module, so stash it on a global)
+    window.__artemisHistory = arr.slice(-6).map((m) => ({ role: m.role, content: m.content }));
   } catch (e) {}
 }
 
