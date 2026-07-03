@@ -24,6 +24,25 @@ async function writeJson(name, data) {
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(join(DATA_DIR, name), JSON.stringify(data, null, 2));
 }
+// Serialize read-modify-write on a JSON file so overlapping mutations (e.g. the
+// reminders /due poll racing set_reminder/cancel_reminder) can't double-fire,
+// drop, or resurrect entries. One promise chain per filename.
+const fileLocks = new Map();
+async function mutate(name, dflt, fn) {
+  const prev = fileLocks.get(name) || Promise.resolve();
+  let release;
+  fileLocks.set(name, new Promise((r) => (release = r)));
+  await prev;
+  try {
+    const data = await readJson(name, dflt);
+    const out = await fn(data);
+    if (out !== undefined) await writeJson(name, out);
+    return out;
+  } finally {
+    release();
+    if (fileLocks.get(name) && prev === Promise.resolve()) fileLocks.delete(name);
+  }
+}
 async function resolveContact(alias) {
   const c = await readJson("contacts.json", {});
   return c[(alias || "").toLowerCase().trim()] || null;
@@ -36,7 +55,7 @@ async function appendAction(entry) {
   await writeJson("action-log.json", log);
 }
 
-export const skillCtx = { readJson, writeJson, resolveContact, appendAction };
+export const skillCtx = { readJson, writeJson, resolveContact, appendAction, mutate };
 
 // last check_email listing, so "read number 2" can resolve an id (per-process)
 let lastEmailList = [];
@@ -161,9 +180,10 @@ const SKILLS = [
       } else {
         return { ok: false, summary: "When should I remind you — in how many minutes, or at what time?" };
       }
-      const reminders = await ctx.readJson("reminders.json", []);
-      reminders.push({ id: "rem_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, at, fired: false });
-      await ctx.writeJson("reminders.json", reminders);
+      await ctx.mutate("reminders.json", [], (reminders) => {
+        reminders.push({ id: "rem_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, at, fired: false });
+        return reminders;
+      });
       const when = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       return { ok: true, summary: `Reminder set for ${when} — I'll say it out loud.` };
     }
@@ -194,11 +214,15 @@ const SKILLS = [
     async execute(p, ctx) {
       const target = lastReminderList[(p.number || 1) - 1];
       if (!target) return { ok: false, summary: "I don't have that one — ask me to list your reminders first." };
-      const reminders = await ctx.readJson("reminders.json", []);
-      const idx = reminders.findIndex((r) => r.id === target.id);
-      if (idx === -1) return { ok: false, summary: "That reminder is already gone." };
-      reminders.splice(idx, 1);
-      await ctx.writeJson("reminders.json", reminders);
+      let found = false;
+      await ctx.mutate("reminders.json", [], (reminders) => {
+        const idx = reminders.findIndex((r) => r.id === target.id);
+        if (idx === -1) return undefined; // nothing to write
+        reminders.splice(idx, 1);
+        found = true;
+        return reminders;
+      });
+      if (!found) return { ok: false, summary: "That reminder is already gone." };
       return { ok: true, summary: `Cancelled: ${target.text}.` };
     }
   },

@@ -233,6 +233,10 @@ function bargeIn() {
 window.ArtemisSpeak = (t) => { try { orb._ensureAudio(); speak(String(t || "")); } catch (e) {} };
 
 async function speak(text) {
+  // speak() and the streaming pumpTts() share one <audio> element; take sole
+  // ownership first so a still-draining streamed reply (or a poller-triggered
+  // announce) can't leave a stale onended handler that wedges `speaking`.
+  resetTtsPipe();
   pauseWakeForSpeech();
   orb.connectMediaElement(ttsEl); // route Artemis's voice into the orb's analyser
   orb.setStatus("speaking");
@@ -350,6 +354,10 @@ function handleConfirmIfPending(text) {
   }
   addMsg("user", text);
   orb._ensureAudio();
+  // hold the turn: the /api/confirm POST can send an email / take seconds, and
+  // without busy a mic click or a wake command would start an overlapping turn
+  busy = true;
+  if (wakeOn) pauseWakeForSpeech();
   orb.setStatus("thinking");
   setLiveStatus(yes ? "On it…" : "Cancelling…");
   fetch("/api/confirm", {
@@ -369,7 +377,8 @@ function handleConfirmIfPending(text) {
     .catch(() => {
       setLiveStatus("Confirm failed.");
       afterSpeak();
-    });
+    })
+    .finally(() => { busy = false; });
   return true;
 }
 

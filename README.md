@@ -1,11 +1,11 @@
-# Artemis — Revenue Celebrations
+# Artemis — a voice-first, JARVIS-style AI assistant
 
-A tiny, **zero-dependency** assistant that celebrates real Stripe payments: a confetti
-burst scaled to the amount, a sound, and an "orb" presence that reacts to that sound —
-and it never misses a payment, even one that arrived while the screen was closed.
+A local, **zero-dependency** voice assistant with a cinematic command-center UI: a live
+3D orb, a HUD command log, and a real agent behind it that can search the web, open
+sites, play music, read your Gmail, set reminders, and speak back — hands-free.
 
-No framework, no build step, no npm install. Just Node's built-in `http`/`fs`, `fetch`
-for Stripe (no SDK), and vanilla JS + Canvas + Web Audio on the front end.
+No framework, no build step, no `npm install`. Just Node's built-in `http`/`https`/`fs`,
+`fetch` for every API (no SDKs), and vanilla JS + Canvas 2D + Web Audio on the front end.
 
 ## Run
 
@@ -13,34 +13,88 @@ for Stripe (no SDK), and vanilla JS + Canvas + Web Audio on the front end.
 node server.js
 ```
 
-This machine has no `node`/`npm` on PATH; use the standalone Node directly:
+If `node` isn't on your PATH, use a standalone build directly, e.g.:
 
 ```sh
 '/Users/todortopalov/Library/Caches/ms-playwright-go/1.57.0/node' server.js
 ```
 
-Then open **http://localhost:4100** and click **Test 🎉** (cycles small/medium/large).
-Click the page once so the browser allows audio, and you'll hear the sound + see the orb react.
+Open **http://localhost:4100**, tap **TAP TO ENTER** (unlocks audio), and talk to her —
+tap the mic, type in the `›` command line, or turn on the wake word and say “Artemis”.
 
-## Connect Stripe (optional)
+## Pages
 
-Copy `.env.example` to `.env` and set a **test-mode** key:
+- `/` — the **cockpit** (daily driver): orb, command log, context panel, controls.
+- `/about.html` — the marketing/landing page.
+- `/brain.html` — an interactive explainer of the request pipeline.
+
+## Configure (`.env`)
+
+Copy `.env.example` to `.env`. Nothing is required to boot, but each key unlocks a feature:
+
+| Key | Enables |
+| --- | --- |
+| `NVIDIA_API_KEY` | The brain (NVIDIA NIM, free tier). `LLM_PROVIDER=nvidia` by default. |
+| `ANTHROPIC_API_KEY` | Alternative brain (`LLM_PROVIDER=anthropic`). |
+| `TAVILY_API_KEY` | Live web search (needed for news, weather, prices). |
+| `DEEPGRAM_API_KEY` | Speech-to-text + text-to-speech (incl. live streaming transcript). |
+| `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` | Optional premium voices (free 10k chars/mo). |
+| `GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN` | Gmail read + draft (see below). |
+| `ASSISTANT_USER_NAME` | How she addresses you (default: “sir”). |
+| `STRIPE_SECRET_KEY` | Optional revenue-celebration confetti on real payments. |
+
+**Voices** are chosen in the dock. British options include free Deepgram (Pandora/Athena/
+Draco), free Microsoft Edge neural (Sonia/Libby/Ryan — most human), and ElevenLabs
+(Lily/Alice). If a premium voice's quota runs out she falls back automatically.
+
+## Gmail (optional)
+
+Read + draft only — **she can never send email**. One-time setup:
+
+1. Google Cloud Console → **Google Auth Platform**: create an OAuth client, type
+   **Desktop app**; set **Publishing status → In production** (so the token never expires).
+2. Put `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env`, restart.
+3. Open **http://localhost:4100/auth/google** once, approve (Advanced → “go to … (unsafe)”
+   if warned). The refresh token is saved to `.env` automatically. Then: “Artemis, check my email.”
+
+## Access from your phone / another computer (optional)
+
+Loopback-only by default (safest). To reach her on your LAN, set in `.env`:
 
 ```
-STRIPE_SECRET_KEY=sk_test_...
+ARTEMIS_HOST=0.0.0.0          # your local network (not the public internet)
+ARTEMIS_ACCESS_TOKEN=secret   # required password (auto-generated + printed if blank)
+ARTEMIS_HTTPS=1               # self-signed cert so a phone's microphone works
 ```
 
-The server then polls Stripe every 5s (looking back 5 min), filters to real captured
-payments, de-dupes by charge id, and writes them to `.data/revenue-events.json`. The
-front end polls `/api/payments/recent`, so:
+Startup prints `https://<lan-ip>:4100/?key=<token>` — open that on the device, accept the
+self-signed-cert warning once. The token gates every request; loopback stays ungated.
 
-- payments seen while the page is open celebrate within ~5s (live), and
-- payments that arrived while the page was closed celebrate on the next open (catch-up),
-- never twice (a per-client record in `localStorage` keeps live + catch-up in agreement).
+## Example commands
 
-## Tuning
+- “Open YouTube” · “Open Google Maps and search for the nearest pharmacy”
+- “What's trending on Hacker News? Then open the top one.”
+- “Play some relaxing music” · “Cheer me up”
+- “Check my email” · “Read the second one”
+- “Remind me in 20 minutes to check the oven” · “List my reminders”
+- “Remember that I prefer short answers”
 
-- **Tier thresholds / intensity:** `TIERS` at the top of `public/celebration.js`.
-- **Sound:** replace `assets/celebration.mp3` (see `assets/README.md`).
-- **Poll interval / lookback / retention:** constants at the top of `server.js`.
-- **Burst replay cap:** `MAX_REPLAY` in `public/app.js`.
+## Tests
+
+```sh
+node test/confirm-gate.test.mjs   # proves consequential actions can't fire without a spoken "yes"
+```
+
+## Known limitations
+
+- **Wake word** needs Chrome/Edge (`SpeechRecognition`); on Safari/WebKit the toggle is
+  disabled — use the mic button instead.
+- **Edge neural voices** use an unofficial Microsoft endpoint; if it breaks, she falls back
+  to Deepgram automatically.
+- LAN mode is **local network only** — don't port-forward it to the public internet.
+
+## Structure
+
+- `server.js` — HTTP/HTTPS server, auth gate, LLM + tool loop, STT/TTS proxy, Gmail, reminders.
+- `skills.js` — the tool registry (open_url, play_media, email, reminders, notes…) + confirm gate.
+- `public/` — cockpit (`cockpit.js/css`), voice pipeline (`main.js`), the 3D orb (`voiceOrb.js`).

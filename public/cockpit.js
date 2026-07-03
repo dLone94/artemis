@@ -76,11 +76,10 @@ function deliverBriefing(spoken) {
     enterHud();
     deliverBriefing(spoken);
     if (spoken) {
-      // the tap is a real gesture: start background music if you'd left it on;
-      // otherwise light the lab hum (if wanted). Re-arm the wake word if it was
-      // ON last session — she's just LISTENING again.
-      music.startIfWanted();
-      if (!music.playing && ambient.wanted()) { ambient.start(); window.__ambientLabel && window.__ambientLabel(); }
+      // the tap is a real gesture: start background music if you'd left it on,
+      // else the lab hum (music.startIfWanted owns that decision after its file
+      // probe resolves — no race). Re-arm the wake word if it was ON last session.
+      music.startIfWanted(true);
       if (localStorage.getItem("artemisWakeOn") === "1" && window.ArtemisArmWake) {
         setTimeout(() => window.ArtemisArmWake(), 500);
       }
@@ -363,15 +362,17 @@ const music = (() => {
     if (!el || el.paused) return;
     el.volume = s === "speaking" || s === "listening" ? FULL * 0.28 : FULL;
   }
-  // is a file actually there?
-  fetch("/assets/music.mp3", { method: "HEAD" }).then((r) => {
-    available = r.ok;
-    ready = true;
-    label();
-  }).catch(() => { available = false; ready = true; label(); });
+  // is a file actually there? (startIfWanted waits on this so the boot-tap
+  // restore doesn't lose a race with the probe and play the wrong bed)
+  const probeP = fetch("/assets/music.mp3", { method: "HEAD" })
+    .then((r) => { available = r.ok; })
+    .catch(() => { available = false; })
+    .finally(() => { ready = true; label(); });
 
   if (btn) btn.addEventListener("click", () => {
-    if (!available) { setLiveStatus("Drop a track at assets/music.mp3 to enable background music."); return; }
+    // setLiveStatus lives in main.js (a separate module) — use the cockpit log,
+    // which IS in scope; calling setLiveStatus here threw a ReferenceError.
+    if (!available) { addLine("status", "drop a track at assets/music.mp3 to enable background music"); return; }
     if (el && !el.paused) { stop(); localStorage.setItem(KEY, "0"); }
     else { play(); localStorage.setItem(KEY, "1"); }
   });
@@ -380,8 +381,14 @@ const music = (() => {
     onState,
     get playing() { return !!(el && !el.paused); },
     get volume() { return el ? el.volume : -1; }, // debug/verification
-    startIfWanted() {
-      if (available && localStorage.getItem(KEY) === "1") play(); // opt-in; needs the boot gesture
+    // opt-in; needs the boot gesture. Waits for the file probe, THEN decides:
+    // play the saved music, or fall back to the ambient hum if that's wanted —
+    // so the two never race and the wrong bed can't win.
+    startIfWanted(ambientFallback) {
+      probeP.then(() => {
+        if (available && localStorage.getItem(KEY) === "1") play();
+        else if (ambientFallback && ambient.wanted()) { ambient.start(); window.__ambientLabel && window.__ambientLabel(); }
+      });
     }
   };
 })();

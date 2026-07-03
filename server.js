@@ -80,8 +80,25 @@ const HOST = process.env.ARTEMIS_HOST || "127.0.0.1";
 const EXPOSED = HOST !== "127.0.0.1" && HOST !== "localhost";
 const USE_HTTPS = /^(1|true|yes|on)$/i.test(process.env.ARTEMIS_HTTPS || "");
 let ACCESS_TOKEN = (process.env.ARTEMIS_ACCESS_TOKEN || "").trim();
-if (EXPOSED && !ACCESS_TOKEN) ACCESS_TOKEN = randomBytes(4).toString("hex"); // never expose unprotected
+if (EXPOSED && !ACCESS_TOKEN) ACCESS_TOKEN = randomBytes(16).toString("hex"); // 128-bit — not brute-forceable
 const REQUIRE_AUTH = EXPOSED && !!ACCESS_TOKEN;
+
+// Throttle failed auth attempts per IP so a short/guessable token can't be
+// brute-forced over the LAN (the ?key= gate is otherwise un-rate-limited).
+const authFails = new Map(); // ip → { n, until }
+function authBlocked(ip) {
+  const r = authFails.get(ip);
+  return r && r.until > Date.now();
+}
+function authFail(ip) {
+  const now = Date.now();
+  const r = authFails.get(ip) || { n: 0, until: 0 };
+  r.n += 1;
+  if (r.n >= 5) { r.until = now + 60000; r.n = 0; } // 5 wrong → 60s lockout
+  authFails.set(ip, r);
+  if (authFails.size > 1000) for (const [k, v] of authFails) if (v.until < now) authFails.delete(k);
+}
+function authOk(ip) { authFails.delete(ip); } // reset on success
 
 function lanIPs() {
   const out = [];
@@ -852,7 +869,10 @@ const ACTION_PROMISE_RE =
   /\b(opening|playing|pulling (it |that |this )?up|bringing (it |that |this )?up|putting (it |that |some music |music )?on|i.?ve opened|queuing up|firing up)\b/i;
 async function enforcePromisedAction(replyText, convo, sources, clientActions, state) {
   if (!replyText || !ACTION_PROMISE_RE.test(replyText)) return;
-  if (clientActions.some((a) => a && a.type === "open")) return; // promise already kept
+  // promise already kept if a tab was opened OR any tool actually ran this turn —
+  // checking only type:"open" could re-fire an already-executed action (double open/play)
+  if (clientActions.some((a) => a && a.type === "open")) return;
+  if (state && Array.isArray(state.tools) && state.tools.length) return;
   try {
     const res = await fetchWithTimeout(
       NVIDIA_BASE + "/chat/completions",
@@ -1142,17 +1162,23 @@ function rateLimited(ip) {
 const liveSessions = new Map(); // sid → { ws, sse, pending[], lastSeen, done }
 const MAX_LIVE_SESSIONS = 4;
 
+function liveDestroy(sid, s) {
+  if (s._ka) clearInterval(s._ka);
+  try { s.ws && s.ws.close(); } catch (e) {}
+  try { s.sse && s.sse.end(); } catch (e) {}
+  liveSessions.delete(sid);
+}
 function liveCleanup() {
   const now = Date.now();
   for (const [sid, s] of liveSessions) {
-    if (now - s.lastSeen > 90000 || s.done) {
-      try { s.ws && s.ws.close(); } catch (e) {}
-      try { s.sse && s.sse.end(); } catch (e) {}
-      liveSessions.delete(sid);
+    // reclaim: done, generally idle (90s), OR started-but-never-attached-an-SSE
+    // (a tab that opened then closed instantly) after 15s — frees the billing WS
+    if (s.done || now - s.lastSeen > 90000 || (!s.sse && !s.attached && now - s.startedAt > 15000)) {
+      liveDestroy(sid, s);
     }
   }
 }
-setInterval(liveCleanup, 30000);
+setInterval(liveCleanup, 15000);
 
 function liveEmit(s, obj) {
   const line = "data: " + JSON.stringify(obj) + "\n\n";
@@ -1169,7 +1195,11 @@ function startLiveSession() {
   if (liveSessions.size >= MAX_LIVE_SESSIONS) liveCleanup();
   if (liveSessions.size >= MAX_LIVE_SESSIONS) return null;
   const sid = "live_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-  const s = { ws: null, sse: null, pending: [], lastSeen: Date.now(), done: false };
+  const now = Date.now();
+  // audioQ buffers chunks that arrive before the WS handshake completes — the
+  // browser starts POSTing audio immediately, so without this the start of the
+  // first utterance was silently dropped.
+  const s = { ws: null, sse: null, pending: [], audioQ: [], open: false, attached: false, lastSeen: now, startedAt: now, done: false, _ka: 0 };
   const q = new URLSearchParams({
     model: STT_MODEL,
     interim_results: "true",
@@ -1179,6 +1209,13 @@ function startLiveSession() {
   s.ws = wsConnect(
     { host: "api.deepgram.com", path: "/v1/listen?" + q, headers: { Authorization: `Token ${deepgramApiKey}` } },
     {
+      onOpen() {
+        s.open = true;
+        for (const chunk of s.audioQ) { try { s.ws.send(chunk); } catch (e) {} }
+        s.audioQ = [];
+        // KeepAlive during silence so Deepgram's socket doesn't idle-close mid-session
+        s._ka = setInterval(() => { try { s.ws && s.ws.send(JSON.stringify({ type: "KeepAlive" })); } catch (e) {} }, 6000);
+      },
       onMessage(msg) {
         if (typeof msg !== "string") return;
         let m;
@@ -1189,6 +1226,7 @@ function startLiveSession() {
         liveEmit(s, { t: alt.transcript || "", final: !!m.is_final, speechFinal: !!m.speech_final });
       },
       onClose() {
+        if (s._ka) { clearInterval(s._ka); s._ka = 0; }
         liveEmit(s, { done: true });
         s.done = true;
         if (s.sse) { try { s.sse.end(); } catch (e) {} }
@@ -1309,19 +1347,31 @@ async function handleRequest(req, res) {
 
   // --- access gate (only when EXPOSED to the network; loopback stays open) ---
   // A valid token via ?key=… sets a cookie; thereafter the cookie authorizes.
-  // Unauthed navigations get a login page; API calls get 401.
+  // Unauthed navigations get a login page; API calls get 401. Failed token
+  // guesses are per-IP throttled (5 → 60s lockout) so it can't be brute-forced.
   if (REQUIRE_AUTH && !tokenOk(cookieVal(req, "artemis_auth"))) {
+    const ip = (req.socket && req.socket.remoteAddress) || "unknown";
+    if (authBlocked(ip)) {
+      res.writeHead(429, { "Content-Type": "text/plain" });
+      res.end("Too many attempts — wait a minute.");
+      return;
+    }
     const key = url.searchParams.get("key");
     if (key && tokenOk(key)) {
+      authOk(ip);
       res.writeHead(302, {
         "Set-Cookie":
           "artemis_auth=" + encodeURIComponent(ACCESS_TOKEN) +
-          "; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000" + (USE_HTTPS ? "; Secure" : ""),
+          // Secure must follow the ACTUAL transport: on an HTTPS-setup failure we
+          // fall back to plain HTTP, where a Secure cookie would be dropped and
+          // lock the user in a login loop.
+          "; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000" + (httpsActive ? "; Secure" : ""),
         Location: url.pathname
       });
       res.end();
       return;
     }
+    if (key) authFail(ip); // a wrong ?key= counts against the limit
     if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) {
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "unauthorized" }));
@@ -1386,7 +1436,10 @@ async function handleRequest(req, res) {
     if (!s || s.done) { res.writeHead(410).end(); return; }
     s.lastSeen = Date.now();
     const audio = await readRequestBody(req);
-    if (audio.length && s.ws) s.ws.send(audio);
+    if (audio.length) {
+      if (s.open && s.ws) s.ws.send(audio);
+      else { s.audioQ.push(audio); if (s.audioQ.length > 40) s.audioQ.shift(); } // buffer until handshake
+    }
     res.writeHead(204).end();
     return;
   }
@@ -1400,9 +1453,13 @@ async function handleRequest(req, res) {
       "X-Accel-Buffering": "no"
     });
     s.sse = res;
+    s.attached = true;
     for (const line of s.pending) { try { res.write(line); } catch (e) {} }
     s.pending = [];
-    res.on("close", () => { if (s.sse === res) s.sse = null; });
+    // SSE heartbeat so the browser's EventSource + any proxy don't drop the
+    // stream during a silent pause (the reader is idle between utterances)
+    const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch (e) {} }, 15000);
+    res.on("close", () => { clearInterval(ping); if (s.sse === res) s.sse = null; });
     return;
   }
   if (url.pathname === "/api/stt/live/stop" && req.method === "POST") {
@@ -1420,13 +1477,16 @@ async function handleRequest(req, res) {
   // came due while the app was closed fire on the next open, flagged overdue.
   if (url.pathname === "/api/reminders/due") {
     try {
-      const reminders = await skillCtx.readJson("reminders.json", []);
       const now = Date.now();
-      const due = reminders.filter((r) => !r.fired && r.at <= now);
-      if (due.length) {
+      let due = [];
+      // atomic pop under the shared file lock — overlapping polls / a concurrent
+      // set/cancel can't double-fire, drop, or resurrect a reminder
+      await skillCtx.mutate("reminders.json", [], (reminders) => {
+        due = reminders.filter((r) => !r.fired && r.at <= now);
+        if (!due.length) return undefined; // no write when nothing is due
         for (const r of due) r.fired = true;
-        await skillCtx.writeJson("reminders.json", reminders.filter((r) => !r.fired || now - r.at < 86400000));
-      }
+        return reminders.filter((r) => !r.fired || now - r.at < 86400000);
+      });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         due: due.map((r) => ({
