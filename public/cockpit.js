@@ -735,5 +735,37 @@ window.ArtemisHUD = {
   });
 })();
 
+/* ---------------- reminders: she speaks up when one is due ---------------- */
+// Polls every 30s. Announces the moment the room is quiet — a reminder that
+// lands mid-conversation waits (retrying every 5s for up to 2 min) instead of
+// talking over anyone; the log line + card land immediately either way.
+function announceWhenQuiet(text, tries = 24) {
+  if (document.body.dataset.aiState === "idle" && window.ArtemisSpeak) {
+    window.ArtemisSpeak(text);
+    return;
+  }
+  if (tries > 0) setTimeout(() => announceWhenQuiet(text, tries - 1), 5000);
+}
+(function reminderWatch() {
+  async function poll() {
+    if (document.hidden) return;
+    try {
+      const r = await fetch("/api/reminders/due");
+      if (!r.ok) return;
+      const { due } = await r.json();
+      if (!due || !due.length) return;
+      for (const rem of due) {
+        addLine("status", "reminder · " + rem.text + (rem.overdueMin > 2 ? " (from " + rem.overdueMin + " min ago)" : ""));
+      }
+      addCard({ title: "REMINDER", lines: due.map((d) => d.text) });
+      uiTick(1560);
+      announceWhenQuiet(due.map((d) => d.spoken).join(" "));
+    } catch (e) {}
+  }
+  window.__reminderPoll = poll; // debug/test handle
+  poll();
+  setInterval(poll, 30000);
+})();
+
 /* ---------------- opening line in the log ---------------- */
 addLine("status", "systems online — say “Artemis”, tap the mic, or ask “what can I do?”");

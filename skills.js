@@ -40,6 +40,8 @@ export const skillCtx = { readJson, writeJson, resolveContact, appendAction };
 
 // last check_email listing, so "read number 2" can resolve an id (per-process)
 let lastEmailList = [];
+// last list_reminders listing, so "cancel the second one" can resolve an id
+let lastReminderList = [];
 
 // Find the top YouTube video for a query by scraping the search page's initial
 // data (zero-dep; the CONSENT/SOCS cookies skip the EU consent interstitial).
@@ -128,8 +130,81 @@ const SKILLS = [
     }
   },
   {
+    name: "set_reminder",
+    description:
+      "Set a REAL timed reminder that Artemis announces OUT LOUD when it's due. Use for 'remind me in 20 " +
+      "minutes to X' (pass minutes) or 'remind me at 6:30 to Y' (pass time as 24h HH:MM). Exactly one of " +
+      "minutes/time is required. This actually fires — never use remember_note for timed reminders.",
+    requiresConfirmation: false,
+    paramSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "What to announce, e.g. 'check the oven'." },
+        minutes: { type: "number", minimum: 0.1, description: "Fire this many minutes from now." },
+        time: { type: "string", description: "Fire at this local 24h time, e.g. '18:30' (today, or tomorrow if already past)." }
+      },
+      required: ["text"]
+    },
+    async execute(p, ctx) {
+      const text = String((p && p.text) || "").trim();
+      if (!text) return { ok: false, summary: "What should I remind you about?" };
+      let at = 0;
+      if (typeof p.minutes === "number" && p.minutes > 0) {
+        at = Date.now() + p.minutes * 60000;
+      } else if (typeof p.time === "string" && /^\d{1,2}:\d{2}$/.test(p.time.trim())) {
+        const [h, m] = p.time.trim().split(":").map(Number);
+        if (h > 23 || m > 59) return { ok: false, summary: "That time doesn't look right — use 24-hour HH:MM." };
+        const d = new Date();
+        d.setHours(h, m, 0, 0);
+        if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // already past → tomorrow
+        at = d.getTime();
+      } else {
+        return { ok: false, summary: "When should I remind you — in how many minutes, or at what time?" };
+      }
+      const reminders = await ctx.readJson("reminders.json", []);
+      reminders.push({ id: "rem_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, at, fired: false });
+      await ctx.writeJson("reminders.json", reminders);
+      const when = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      return { ok: true, summary: `Reminder set for ${when} — I'll say it out loud.` };
+    }
+  },
+  {
+    name: "list_reminders",
+    description: "List the user's pending timed reminders (with numbers, so one can be cancelled).",
+    requiresConfirmation: false,
+    paramSchema: { type: "object", properties: {}, additionalProperties: false },
+    async execute(p, ctx) {
+      const reminders = (await ctx.readJson("reminders.json", [])).filter((r) => !r.fired);
+      lastReminderList = reminders;
+      if (!reminders.length) return { ok: true, summary: "No pending reminders." };
+      const lines = reminders.map((r, i) =>
+        `${i + 1}. ${r.text} — ${new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+      return { ok: true, summary: reminders.length + " pending reminder(s): " + lines.join("; "), content: lines.join("\n") };
+    }
+  },
+  {
+    name: "cancel_reminder",
+    description: "Cancel a pending reminder by its number from the last list_reminders call ('cancel the second reminder').",
+    requiresConfirmation: false,
+    paramSchema: {
+      type: "object",
+      properties: { number: { type: "integer", minimum: 1, description: "The reminder's number from the last list." } },
+      required: ["number"]
+    },
+    async execute(p, ctx) {
+      const target = lastReminderList[(p.number || 1) - 1];
+      if (!target) return { ok: false, summary: "I don't have that one — ask me to list your reminders first." };
+      const reminders = await ctx.readJson("reminders.json", []);
+      const idx = reminders.findIndex((r) => r.id === target.id);
+      if (idx === -1) return { ok: false, summary: "That reminder is already gone." };
+      reminders.splice(idx, 1);
+      await ctx.writeJson("reminders.json", reminders);
+      return { ok: true, summary: `Cancelled: ${target.text}.` };
+    }
+  },
+  {
     name: "remember_note",
-    description: "Save a short note or reminder to the user's memory. Use when they say 'remember that…', 'note that…', 'remind me…'.",
+    description: "Save a short note to the user's memory. Use when they say 'remember that…' or 'note that…'. NOT for timed reminders — set_reminder handles those.",
     requiresConfirmation: false,
     paramSchema: {
       type: "object",
