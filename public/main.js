@@ -182,7 +182,11 @@ function ttsUrl(text) {
 // Hands-free barge-in is OFF by default — on speakers (without solid echo
 // cancellation) it can false-trigger on Artemis's own voice and abort her reply.
 // The mic button still interrupts her reliably. Set to true to re-enable.
-const BARGE_IN_ENABLED = false;
+// Hands-free "talk over her" barge-in — off by default (on speakers it can
+// false-trigger on her own voice); a runtime dock toggle turns it on, best with
+// headphones. The keyboard/mic interrupt below always works regardless.
+let BARGE_IN_ENABLED = false;
+try { BARGE_IN_ENABLED = localStorage.getItem("artemisBargeIn") === "1"; } catch (e) {}
 let bargeStream = null, bargeAnalyser = null, bargeFreq = null, bargeRaf = 0, bargeHot = 0;
 async function startBargeIn() {
   if (!BARGE_IN_ENABLED || bargeStream) return; // disabled, or already listening
@@ -240,7 +244,7 @@ async function speak(text) {
   pauseWakeForSpeech();
   orb.connectMediaElement(ttsEl); // route Artemis's voice into the orb's analyser
   orb.setStatus("speaking");
-  setLiveStatus("Artemis is responding…");
+  setLiveStatus("Artemis is responding…  (Esc to stop)");
   speaking = true;
   startBargeIn();
   ttsEl.onended = ttsEl.onerror = () => afterSpeak();
@@ -438,12 +442,14 @@ let ttsQueue = [];
 let ttsPlaying = false;
 let sentenceBuf = "";
 let ttsObjUrl = null;
+let firstChunkPending = true; // FASTER: get the first words out asap, then settle into sentences
 function fetchTtsBlob(text) {
   return fetch(ttsUrl(text)).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
 }
 function resetTtsPipe() {
   ttsQueue = [];
   sentenceBuf = "";
+  firstChunkPending = true;
   try { ttsEl.pause(); } catch (e) {}
   ttsEl.onended = ttsEl.onerror = null;
   if (ttsObjUrl) { try { URL.revokeObjectURL(ttsObjUrl); } catch (e) {} ttsObjUrl = null; }
@@ -456,6 +462,16 @@ function feedTts(t) {
     const sent = m[1] + (m[2] || "");
     sentenceBuf = sentenceBuf.slice(sent.length);
     enqueueTts(sent);
+  }
+  // FASTER: the very first chunk goes out on the first clause boundary (comma /
+  // dash / colon) or ~40 chars, so she starts speaking ~a second sooner instead
+  // of waiting for a full sentence. Only the first chunk — the rest stay whole.
+  if (firstChunkPending && sentenceBuf.length) {
+    let cut = -1;
+    const clause = sentenceBuf.match(/^[\s\S]{14,}?[,—:;-]\s/);
+    if (clause) cut = clause[0].length;
+    else if (sentenceBuf.length > 40) { const sp = sentenceBuf.lastIndexOf(" ", 40); if (sp > 18) cut = sp + 1; }
+    if (cut > 0) { enqueueTts(sentenceBuf.slice(0, cut)); sentenceBuf = sentenceBuf.slice(cut); }
   }
   if (sentenceBuf.length > 150) {
     let cut = sentenceBuf.lastIndexOf(", ");
@@ -474,6 +490,7 @@ function flushTts() {
 function enqueueTts(text) {
   text = cleanForSpeech(text);
   if (text) {
+    firstChunkPending = false; // once anything is queued, revert to whole-sentence chunks
     ttsQueue.push({ text, blobP: fetchTtsBlob(text) }); // start fetching NOW (overlaps playback)
     pumpTts();
   }
@@ -583,9 +600,15 @@ async function ask(text) {
   let clientActions = null;
   let toolsUsed = null;
   const t0 = performance.now(); // real time-to-first-word for the HUD
-  // no token after 1.2s almost always means a tool round is running server-side
+  // no token after 1.2s almost always means a tool round is running server-side.
+  // MORE HUMAN: fill the silence with a brief spoken backchannel ("let me check")
+  // through the SAME queue, so the real answer plays right after — no dead air.
   const execTimer = setTimeout(() => {
-    if (busy && !gotToken) { hud("state", "executing"); hud("log", "status", "running tools…"); }
+    if (busy && !gotToken) {
+      hud("state", "executing"); hud("log", "status", "running tools…");
+      const fillers = ["Let me check.", "One moment.", "Looking into it.", "On it.", "Give me a second."];
+      enqueueTts(fillers[Math.floor(Math.random() * fillers.length)]);
+    }
   }, 1200);
   currentAbort = new AbortController();
   const timer = setTimeout(() => {
@@ -882,14 +905,40 @@ micToggle.addEventListener("click", () => {
  */
 window.ArtemisBargeIn = {
   interrupt() {
+    stopBargeIn();
     resetTtsPipe();
     speaking = false;
     orb.stopAudio();
     if (currentAbort) { try { currentAbort.abort(); } catch (e) {} }
     busy = false;
     stopThinking();
+    afterSpeak(); // settle the orb/status back to idle (or wake-listening)
   },
 };
+
+// ---- interrupt her, three ways ----------------------------------------------
+// 1) keyboard: Escape (or Space, when you're not typing) stops her instantly.
+// 2) the mic button already cuts her off + starts listening (barge-in above).
+// 3) an opt-in "TALK OVER: ON" dock toggle enables hands-free VAD barge-in.
+function isInterruptible() { return speaking || ttsPlaying || ttsQueue.length || busy; }
+document.addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+  if (e.key === "Escape" || (e.key === " " && !typing)) {
+    if (isInterruptible()) { e.preventDefault(); window.ArtemisBargeIn.interrupt(); setLiveStatus("Stopped."); }
+  }
+});
+const bargeToggle = $("bargeToggle");
+if (bargeToggle) {
+  const label = () => { bargeToggle.textContent = "TALK OVER: " + (BARGE_IN_ENABLED ? "ON" : "OFF"); };
+  bargeToggle.addEventListener("click", () => {
+    BARGE_IN_ENABLED = !BARGE_IN_ENABLED;
+    try { localStorage.setItem("artemisBargeIn", BARGE_IN_ENABLED ? "1" : "0"); } catch (e) {}
+    if (BARGE_IN_ENABLED && speaking) startBargeIn();
+    else if (!BARGE_IN_ENABLED) stopBargeIn();
+    label();
+  });
+  label();
+}
 
 // short rising blip + orb flash the instant a wake word fires (kills dead air)
 function playEarcon() {
