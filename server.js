@@ -3,10 +3,14 @@
 // Run with:  node server.js   (Stripe key optional; the app + Test button work without it.)
 
 import { createServer } from "http";
-import { promises as fs, readFileSync, writeFileSync, existsSync } from "fs";
+import { createServer as createHttpsServer } from "https";
+import { promises as fs, readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { extname, join, normalize } from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
+import { randomBytes, timingSafeEqual } from "crypto";
+import { execFileSync } from "child_process";
+import { networkInterfaces } from "os";
 import { fetchPage } from "./webAccess.js";
 import {
   skillCtx,
@@ -66,6 +70,47 @@ function loadEnv() {
 loadEnv();
 
 const PORT = Number(process.env.PORT) || 4100;
+
+// --- network exposure (phone / other computers) ------------------------------
+// Default is loopback-only (safe). ARTEMIS_HOST=0.0.0.0 exposes to the LAN —
+// and because this API can read your Gmail, exposure ALWAYS requires an access
+// token (auto-generated if you don't set one) and STRONGLY wants HTTPS so a
+// phone's microphone works (browsers block mic on plain-http non-localhost).
+const HOST = process.env.ARTEMIS_HOST || "127.0.0.1";
+const EXPOSED = HOST !== "127.0.0.1" && HOST !== "localhost";
+const USE_HTTPS = /^(1|true|yes|on)$/i.test(process.env.ARTEMIS_HTTPS || "");
+let ACCESS_TOKEN = (process.env.ARTEMIS_ACCESS_TOKEN || "").trim();
+if (EXPOSED && !ACCESS_TOKEN) ACCESS_TOKEN = randomBytes(4).toString("hex"); // never expose unprotected
+const REQUIRE_AUTH = EXPOSED && !!ACCESS_TOKEN;
+
+function lanIPs() {
+  const out = [];
+  const ifs = networkInterfaces();
+  for (const name in ifs) for (const ni of ifs[name] || []) {
+    if (ni.family === "IPv4" && !ni.internal) out.push(ni.address);
+  }
+  return out;
+}
+function tokenOk(candidate) {
+  if (!ACCESS_TOKEN || !candidate) return false;
+  const a = Buffer.from(String(candidate)), b = Buffer.from(ACCESS_TOKEN);
+  return a.length === b.length && timingSafeEqual(a, b); // constant-time
+}
+function cookieVal(req, name) {
+  const m = (req.headers.cookie || "").match(new RegExp("(?:^|;\\s*)" + name + "=([^;]+)"));
+  return m ? decodeURIComponent(m[1]) : "";
+}
+const LOGIN_PAGE =
+  '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">' +
+  "<title>ARTEMIS · Locked</title>" +
+  '<body style="margin:0;height:100vh;display:grid;place-items:center;background:#0a0805;color:#ffb24d;font-family:ui-monospace,Menlo,monospace">' +
+  "<form onsubmit=\"location.search='?key='+encodeURIComponent(this.k.value);return false\" style=\"text-align:center\">" +
+  '<div style="letter-spacing:.45em;font-size:22px;margin-bottom:20px">ARTEMIS</div>' +
+  '<input name="k" type="password" placeholder="access token" autofocus autocapitalize="off" autocorrect="off" ' +
+  'style="background:transparent;border:1px solid #ffb24d55;border-radius:8px;color:#f6efe7;padding:12px 14px;font:inherit;outline:none;text-align:center;width:220px">' +
+  '<div><button style="margin-top:14px;background:#ffb24d18;border:1px solid #ffb24d66;border-radius:999px;color:#ffb24d;padding:9px 24px;font:inherit;letter-spacing:.12em;cursor:pointer">ENTER</button></div>' +
+  "</form></body>";
+
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 
 // --- Conversation (Claude) + voice (Deepgram) config -------------------------
@@ -1209,7 +1254,7 @@ async function composeBriefing() {
 // The async handler is wrapped so ANY throw (malformed URL, fs error, provider
 // crash) answers 500 instead of becoming an unhandled rejection that kills the
 // whole process (Node ≥15 terminates on unhandled rejections).
-const server = createServer((req, res) => {
+const onRequest = (req, res) => {
   handleRequest(req, res).catch((error) => {
     console.error("request handler error:", error && error.message);
     try {
@@ -1217,7 +1262,40 @@ const server = createServer((req, res) => {
       res.end(JSON.stringify({ error: "Internal error" }));
     } catch (e) {}
   });
-});
+};
+
+// A self-signed cert lets a phone's microphone work off-device (mic needs a
+// secure context). Generated once with openssl, SANs cover localhost + every
+// LAN IP; stored in the gitignored .data/. You accept the cert warning once.
+function ensureCert() {
+  const certPath = join(DATA_DIR, "cert.pem");
+  const keyPath = join(DATA_DIR, "key.pem");
+  if (existsSync(certPath) && existsSync(keyPath)) {
+    return { cert: readFileSync(certPath), key: readFileSync(keyPath) };
+  }
+  mkdirSync(DATA_DIR, { recursive: true });
+  const sans = ["DNS:localhost", "IP:127.0.0.1", ...lanIPs().map((ip) => "IP:" + ip)].join(",");
+  execFileSync("openssl", [
+    "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+    "-keyout", keyPath, "-out", certPath, "-days", "825",
+    "-subj", "/CN=Artemis", "-addext", "subjectAltName=" + sans
+  ], { stdio: "ignore" });
+  return { cert: readFileSync(certPath), key: readFileSync(keyPath) };
+}
+
+let server;
+let httpsActive = USE_HTTPS;
+if (USE_HTTPS) {
+  try {
+    server = createHttpsServer(ensureCert(), onRequest);
+  } catch (e) {
+    console.error("HTTPS setup failed (" + e.message + ") — falling back to HTTP.");
+    httpsActive = false;
+    server = createServer(onRequest);
+  }
+} else {
+  server = createServer(onRequest);
+}
 
 async function handleRequest(req, res) {
   let url;
@@ -1226,6 +1304,31 @@ async function handleRequest(req, res) {
   } catch (e) {
     res.writeHead(400, { "Content-Type": "text/plain" });
     res.end("Bad request");
+    return;
+  }
+
+  // --- access gate (only when EXPOSED to the network; loopback stays open) ---
+  // A valid token via ?key=… sets a cookie; thereafter the cookie authorizes.
+  // Unauthed navigations get a login page; API calls get 401.
+  if (REQUIRE_AUTH && !tokenOk(cookieVal(req, "artemis_auth"))) {
+    const key = url.searchParams.get("key");
+    if (key && tokenOk(key)) {
+      res.writeHead(302, {
+        "Set-Cookie":
+          "artemis_auth=" + encodeURIComponent(ACCESS_TOKEN) +
+          "; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000" + (USE_HTTPS ? "; Secure" : ""),
+        Location: url.pathname
+      });
+      res.end();
+      return;
+    }
+    if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/")) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+    res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(LOGIN_PAGE);
     return;
   }
 
@@ -1737,12 +1840,23 @@ async function handleRequest(req, res) {
   await serveStatic(req, res, url.pathname);
 }
 
-// Bind to LOOPBACK by default: this API can read your Gmail, run searches and
-// see your notes — on shared wi-fi it must not be reachable by other devices.
-// Set ARTEMIS_HOST=0.0.0.0 in .env only when you deliberately want LAN access.
-const HOST = process.env.ARTEMIS_HOST || "127.0.0.1";
 server.listen(PORT, HOST, () => {
-  console.log(`Artemis running at http://localhost:${PORT}` + (HOST === "127.0.0.1" ? " (localhost only)" : ` — EXPOSED on ${HOST}`));
+  const scheme = httpsActive ? "https" : "http";
+  console.log(`Artemis running at ${scheme}://localhost:${PORT}` + (EXPOSED ? "" : " (localhost only)"));
+  if (EXPOSED) {
+    console.log("Reachable on your network:");
+    for (const ip of lanIPs()) {
+      console.log(`  ${scheme}://${ip}:${PORT}` + (ACCESS_TOKEN ? `/?key=${ACCESS_TOKEN}` : "") + "   ← open this on your phone");
+    }
+    if (!process.env.ARTEMIS_ACCESS_TOKEN) {
+      console.log(`  access token (auto-generated this run): ${ACCESS_TOKEN}`);
+      console.log("  → set ARTEMIS_ACCESS_TOKEN in .env to keep it stable across restarts");
+    }
+    if (!USE_HTTPS) {
+      console.log("  ⚠ HTTP mode: a phone's mic/voice-in will NOT work off-device (browsers require HTTPS).");
+      console.log("    Set ARTEMIS_HTTPS=1 to enable voice from your phone (you'll accept a self-signed cert once).");
+    }
+  }
   if (stripeSecretKey) {
     console.log("Revenue celebration: Stripe polling enabled.");
     // catch every rejection (an fs error must not kill the process) and never
