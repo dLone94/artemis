@@ -3,3 +3,6 @@
 node_modules/
 .DS_Store
 *.log
+
+# user-supplied background music (e.g. your own copy of a song) — never committed
+assets/music.*

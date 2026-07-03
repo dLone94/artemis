@@ -249,6 +249,9 @@ body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
 /* live waveform strip inside the dock */
 .hud-wave { display: block; width: min(720px, 86vw); height: 36px; margin: 2px 0; }
 
+/* a dock toggle whose feature isn't available yet (e.g. no music file) */
+.wake-toggle.is-na { opacity: 0.5; }
+
 /* typed command line */
 .hud-cmd { display: flex; align-items: center; gap: 10px; width: min(720px, 86vw); }
 .hud-cmd-prompt { color: var(--amber, #ffb24d); font-family: var(--font-mono); font-size: 14px; }

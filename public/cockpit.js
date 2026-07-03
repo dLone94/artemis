@@ -76,9 +76,11 @@ function deliverBriefing(spoken) {
     enterHud();
     deliverBriefing(spoken);
     if (spoken) {
-      // the tap is a real gesture: light the lab hum (if wanted) and re-arm
-      // the wake word if it was ON last session — she's just LISTENING again
-      if (ambient.wanted()) { ambient.start(); window.__ambientLabel && window.__ambientLabel(); }
+      // the tap is a real gesture: start background music if you'd left it on;
+      // otherwise light the lab hum (if wanted). Re-arm the wake word if it was
+      // ON last session — she's just LISTENING again.
+      music.startIfWanted();
+      if (!music.playing && ambient.wanted()) { ambient.start(); window.__ambientLabel && window.__ambientLabel(); }
       if (localStorage.getItem("artemisWakeOn") === "1" && window.ArtemisArmWake) {
         setTimeout(() => window.ArtemisArmWake(), 500);
       }
@@ -323,6 +325,68 @@ window.__ambient = ambient; // debug/test handle
   window.__ambientLabel = label;
 })();
 
+/* ---------------- background music (your own file) ---------------- */
+// Loops a track you drop at assets/music.mp3 (any file you legally own — the
+// path is gitignored so nothing copyrighted gets committed). Ducks to ~28%
+// under her voice so she's always audible, persists on/off, and is mutually
+// exclusive with the synthesized ambient hum (they'd clash).
+const music = (() => {
+  const KEY = "artemisMusic";
+  let el = null, available = false, ready = false;
+  const FULL = 0.42;
+
+  function ensure() {
+    if (el) return el;
+    el = new Audio("/assets/music.mp3");
+    el.loop = true;
+    el.preload = "none";
+    el.volume = FULL;
+    el.addEventListener("error", () => { available = false; label(); });
+    return el;
+  }
+  function play() {
+    ensure();
+    if (ambient.running) { ambient.stop(); window.__ambientLabel && window.__ambientLabel(); } // one bed at a time
+    const p = el.play();
+    if (p && p.catch) p.catch(() => {});
+    label();
+  }
+  function stop() { if (el) el.pause(); label(); }
+  const btn = $("musicToggle");
+  function label() {
+    if (!btn) return;
+    btn.textContent = "MUSIC: " + (!available ? "ADD FILE" : el && !el.paused ? "ON" : "OFF");
+    btn.classList.toggle("is-na", !available);
+  }
+  // duck under any voice
+  function onState(s) {
+    if (!el || el.paused) return;
+    el.volume = s === "speaking" || s === "listening" ? FULL * 0.28 : FULL;
+  }
+  // is a file actually there?
+  fetch("/assets/music.mp3", { method: "HEAD" }).then((r) => {
+    available = r.ok;
+    ready = true;
+    label();
+  }).catch(() => { available = false; ready = true; label(); });
+
+  if (btn) btn.addEventListener("click", () => {
+    if (!available) { setLiveStatus("Drop a track at assets/music.mp3 to enable background music."); return; }
+    if (el && !el.paused) { stop(); localStorage.setItem(KEY, "0"); }
+    else { play(); localStorage.setItem(KEY, "1"); }
+  });
+
+  return {
+    onState,
+    get playing() { return !!(el && !el.paused); },
+    get volume() { return el ? el.volume : -1; }, // debug/verification
+    startIfWanted() {
+      if (available && localStorage.getItem(KEY) === "1") play(); // opt-in; needs the boot gesture
+    }
+  };
+})();
+window.__music = music;
+
 /* ---------------- subtle UI tick on state changes ---------------- */
 // Uses the orb's AudioContext (only exists after a user gesture, so this can
 // never fire an autoplay warning). Deliberately tiny — a whisper, not a beep.
@@ -412,6 +476,7 @@ window.ArtemisHUD = {
     if (s === "speaking" || s === "idle" || s === "error") ttfwCounting(false);
     if (STATE_TONES[s]) uiTick(STATE_TONES[s]);
     ambient.onState(s); // hum ducks under voices, brightens while thinking
+    music.onState(s);   // background track ducks under her voice too
   },
 };
 
