@@ -18,7 +18,7 @@ import {
   getPending,
   dropPending
 } from "./skills.js";
-import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode } from "./gmail.js";
+import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, listUnread } from "./gmail.js";
 import { wsConnect } from "./wsClient.js";
 import { edgeTtsSynthesize } from "./edgeTts.js";
 
@@ -672,6 +672,7 @@ async function callClaude(messages, tone) {
             const r = await getSkill(block.name).execute(block.input || {}, skillCtx);
             if (Array.isArray(r.sources)) for (const s of r.sources) sources.push(s);
             if (r.openUrl) clientActions.push({ type: "open", url: r.openUrl, label: r.label || "" });
+      if (r.panel) clientActions.push({ type: "panel", card: r.panel }); // cockpit context card
             await skillCtx.appendAction({ skill: block.name, params: block.input || {}, result: { ok: r.ok, summary: r.summary } });
             toolResults.push({ type: "tool_result", tool_use_id: block.id, content: r.content || r.summary || JSON.stringify(r) });
           } catch (e) {
@@ -783,6 +784,7 @@ async function runNvidiaTool(name, args, sources, clientActions, state) {
       const r = await getSkill(name).execute(args, skillCtx);
       if (Array.isArray(r.sources)) for (const s of r.sources) sources.push(s);
       if (r.openUrl) clientActions.push({ type: "open", url: r.openUrl, label: r.label || "" });
+      if (r.panel) clientActions.push({ type: "panel", card: r.panel }); // cockpit context card
       await skillCtx.appendAction({ skill: name, params: args, result: { ok: r.ok, summary: r.summary } });
       return r.content || r.summary || JSON.stringify(r);
     } catch (e) {
@@ -1041,6 +1043,7 @@ async function callNvidia(messages, tone) {
             const r = await getSkill(name).execute(args, skillCtx);
             if (Array.isArray(r.sources)) for (const s of r.sources) sources.push(s);
             if (r.openUrl) clientActions.push({ type: "open", url: r.openUrl, label: r.label || "" });
+      if (r.panel) clientActions.push({ type: "panel", card: r.panel }); // cockpit context card
             await skillCtx.appendAction({ skill: name, params: args, result: { ok: r.ok, summary: r.summary } });
             content = r.content || r.summary || JSON.stringify(r);
           } catch (e) {
@@ -1303,6 +1306,26 @@ async function handleRequest(req, res) {
       try { s.ws.send(JSON.stringify({ type: "CloseStream" })); } catch (e) {}
     }
     res.writeHead(204).end();
+    return;
+  }
+
+  // mail watch: current unread (id/from/subject only) — the cockpit polls this
+  // every 90s and announces NEW arrivals ("Theo, new email from …")
+  if (url.pathname === "/api/email/watch") {
+    if (!gmailConfigured()) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "gmail not configured" }));
+      return;
+    }
+    try {
+      const mails = await listUnread(5);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ mails: mails.map((m) => ({ id: m.id, from: m.from, subject: m.subject })) }));
+    } catch (e) {
+      console.error("/api/email/watch error:", e.message);
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "gmail unreachable" }));
+    }
     return;
   }
 

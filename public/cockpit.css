@@ -210,6 +210,13 @@ body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .hud-card-play:hover { border-color: var(--teal); box-shadow: 0 0 12px rgba(255, 158, 72, 0.3); }
+.hud-confirm-row { display: flex; gap: 8px; margin-top: 6px; }
+.hud-card-play.hud-abort {
+  color: #ff6b5e;
+  border-color: rgba(255, 107, 94, 0.45);
+  background: rgba(255, 107, 94, 0.07);
+}
+.hud-card-play.hud-abort:hover { border-color: #ff6b5e; box-shadow: 0 0 12px rgba(255, 107, 94, 0.35); }
 .hud-empty { font-family: var(--font-mono); font-size: 10px; color: rgba(154, 139, 122, 0.5); letter-spacing: 0.06em; }
 
 /* ---- bottom dock: full-width HUD bar (overrides the floating-bubble styles) ---- */

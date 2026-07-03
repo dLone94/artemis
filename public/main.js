@@ -373,6 +373,14 @@ function handleConfirmIfPending(text) {
   return true;
 }
 
+// Cockpit confirm buttons ([EXECUTE]/[ABORT] on the CONFIRM card) resolve the
+// SAME pending action as the spoken yes/no — one gate, two inputs.
+window.ArtemisConfirm = (yes) => {
+  if (!pendingConfirm) return false;
+  hud("log", "you", yes ? "confirm (button)" : "abort (button)");
+  return handleConfirmIfPending(yes ? "yes" : "no");
+};
+
 // ---- streaming reply accumulator (DOM-optional: voice-only has no transcript) ----
 function addAssistantStreaming() {
   let buf = "";
@@ -642,12 +650,18 @@ async function ask(text) {
       pendingConfirm = pendingAction;
       setLiveStatus("Say “yes” to confirm, or “no” to cancel.");
       hud("log", "confirm", "awaiting your yes / no");
-      hud("context", { title: "CONFIRM REQUIRED", lines: [replyText || pendingAction.name] });
+      hud("context", { title: "CONFIRM REQUIRED", lines: [replyText || pendingAction.name], confirm: true });
     }
     // execute anything Artemis chose to open (maps location, a site, etc.)
+    // + render structured tool panels (e.g. the inbox) as context cards
     if (clientActions && clientActions.length) {
       for (const a of clientActions) {
-        if (a && a.url) {
+        if (!a) continue;
+        if (a.type === "panel" && a.card) {
+          hud("context", a.card);
+          continue;
+        }
+        if (a.url) {
           openUrl(a.url, a.label);
           hud("log", "action", "open " + (a.label || a.url));
           hud("context", { title: "OPENED", links: [{ title: a.label || a.url, url: a.url }] });

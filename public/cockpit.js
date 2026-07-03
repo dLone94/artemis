@@ -158,6 +158,26 @@ function addCard(card) {
     p.textContent = t;
     div.appendChild(p);
   });
+  if (card.confirm) {
+    // consequential action: EXECUTE/ABORT buttons resolve the same server-side
+    // gate as the spoken yes/no (window.ArtemisConfirm → /api/confirm)
+    const row = document.createElement("div");
+    row.className = "hud-confirm-row";
+    const mk = (labelText, yes) => {
+      const b = document.createElement("button");
+      b.className = "hud-card-play" + (yes ? "" : " hud-abort");
+      b.type = "button";
+      b.textContent = labelText;
+      b.addEventListener("click", () => {
+        if (window.ArtemisConfirm) window.ArtemisConfirm(yes);
+        div.remove();
+      });
+      return b;
+    };
+    row.appendChild(mk("▶ EXECUTE", true));
+    row.appendChild(mk("✕ ABORT", false));
+    div.appendChild(row);
+  }
   if (card.playText) {
     // ▶ plays the held text aloud (the click IS the audio-unlock gesture)
     const b = document.createElement("button");
@@ -589,6 +609,65 @@ window.ArtemisHUD = {
     for (const el of els) el.style.translate = cx.toFixed(2) + "px " + cy.toFixed(2) + "px";
     if (Math.abs(tx - cx) > 0.05 || Math.abs(ty - cy) > 0.05) raf = requestAnimationFrame(apply);
   }
+})();
+
+/* ---------------- mail watch: she speaks up when new email lands ---------------- */
+// Polls the server every 90s (read-only Gmail scope). First poll BASELINES the
+// current unread — only mail arriving while the cockpit is open gets announced:
+// chime + context card + a spoken "New email from …" IF the room is quiet
+// (never talks over a conversation; falls back to log+card otherwise).
+(function mailWatch() {
+  const btn = $("mailWatchToggle");
+  const KEY = "artemisMailWatch";
+  let enabled = localStorage.getItem(KEY) !== "0"; // default ON
+  let available = false;
+  let baselined = false;
+  const seen = new Set();
+  const cleanFrom = (f) => String(f || "").replace(/\s*<[^>]*>/, "").replace(/"/g, "").trim() || "someone";
+  const label = () => { if (btn) btn.textContent = "MAIL WATCH: " + (!available ? "N/A" : enabled ? "ON" : "OFF"); };
+
+  async function poll() {
+    if (!enabled || document.hidden) return;
+    try {
+      const r = await fetch("/api/email/watch");
+      if (!r.ok) return;
+      const { mails } = await r.json();
+      if (!baselined) {
+        mails.forEach((m) => seen.add(m.id)); // existing unread = old news
+        baselined = true;
+        return;
+      }
+      const fresh = mails.filter((m) => !seen.has(m.id));
+      if (!fresh.length) return;
+      fresh.forEach((m) => seen.add(m.id));
+      for (const m of fresh.slice(0, 3)) {
+        addLine("status", "new email · " + cleanFrom(m.from) + " — " + m.subject);
+      }
+      addCard({
+        title: "NEW EMAIL",
+        lines: fresh.slice(0, 3).map((m) => cleanFrom(m.from) + " — " + m.subject)
+      });
+      uiTick(1320);
+      if (document.body.dataset.aiState === "idle" && window.ArtemisSpeak) {
+        const m = fresh[0];
+        const extra = fresh.length > 1 ? " And " + (fresh.length - 1) + " more." : "";
+        window.ArtemisSpeak("New email from " + cleanFrom(m.from) + ": " + m.subject + "." + extra);
+      }
+    } catch (e) {}
+  }
+  window.__mailPoll = poll; // debug/test handle
+
+  fetch("/api/status").then((r) => r.json()).then((st) => {
+    available = !!st.gmailEnabled;
+    label();
+    if (available) { poll(); setInterval(poll, 90000); }
+  }).catch(label);
+  if (btn) btn.addEventListener("click", () => {
+    if (!available) return;
+    enabled = !enabled;
+    localStorage.setItem(KEY, enabled ? "1" : "0");
+    label();
+  });
 })();
 
 /* ---------------- opening line in the log ---------------- */
