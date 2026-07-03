@@ -25,6 +25,26 @@ export class VoiceOrb {
     this._raf = 0;
     this._disposed = false;
 
+    // ---- 3D geometry (unit sphere; projected each frame in _draw) ----
+    // Particle shell — a Fibonacci sphere so points are evenly scattered, each
+    // with a twinkle phase. Rotated + perspective-projected per frame for a
+    // volumetric dust that reads as genuinely three-dimensional.
+    this._particles = [];
+    const NP = 140;
+    for (let i = 0; i < NP; i++) {
+      const y = 1 - (i / (NP - 1)) * 2;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const phi = i * 2.399963229728653; // golden angle
+      this._particles.push({ x: Math.cos(phi) * r, y, z: Math.sin(phi) * r, tw: (i * 37 % 100) / 100 });
+    }
+    // Orbital rings — real 3D circles, each in its own tilted plane (tl = tilt
+    // about X, roll = spin about Y) so they cross the sphere at different angles.
+    this._rings = [
+      { rr: 1.62, tl: 0.42, roll: 0.0, spd: 0.55, ph: 0.0 },
+      { rr: 1.30, tl: -1.05, roll: 1.1, spd: -0.42, ph: 2.0 },
+      { rr: 1.12, tl: 1.25, roll: 2.3, spd: 0.72, ph: 1.0 }
+    ];
+
     this.cv = document.createElement("canvas");
     this.cv.style.display = "block";
     this.cv.style.width = "100%";
@@ -246,80 +266,103 @@ export class VoiceOrb {
     for (let gy = 0; gy < H; gy += 38) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
 
     const amp = this.cur.amp;
-    const spin = 1; // steady rotation — her voice drives brightness + a gentle swell, not spin speed
+    const spin = 1;
     const base = Math.min(W, H) * 0.40 * recede;
-
-    const O = "rgba(255,158,72,", B = "rgba(255,202,140,", Hl = "rgba(255,232,205,", D = "rgba(208,150,98,";
+    const R = base * 0.52;              // sphere radius in px; rings extend to ~1.6 R
+    const O = "rgba(255,158,72,", B = "rgba(255,202,140,", D = "rgba(208,150,98,";
     const GLOW = "rgba(255,150,70,0.55)";
 
-    const ring = (r, w, c, a, blur) => {
-      ctx.beginPath(); ctx.lineWidth = w; ctx.strokeStyle = c + a + ")";
-      ctx.shadowColor = GLOW; ctx.shadowBlur = blur || 0; ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke(); ctx.shadowBlur = 0;
+    // ---- 3D camera: rotate the scene (auto-spin + look toward the cursor),
+    // then perspective-project. P() maps unit-sphere coords → screen offset
+    // from the orb centre, returning depth z (+ = toward you) and scale s. ----
+    const yaw = (this.reduced ? 0 : t * 0.16 * spin) + this._mx * 0.7;
+    const pitch = 0.42 + this._my * 0.42;
+    const cy_ = Math.cos(yaw), sy_ = Math.sin(yaw), cp = Math.cos(pitch), sp_ = Math.sin(pitch);
+    const CAM = 3.2;                    // camera distance in radius units
+    const P = (px, py, pz) => {
+      const x1 = px * cy_ + pz * sy_;
+      const z1 = -px * sy_ + pz * cy_;
+      const y2 = py * cp - z1 * sp_;
+      const z2 = py * sp_ + z1 * cp;
+      const s = CAM / (CAM - z2);
+      return { x: x1 * R * s, y: y2 * R * s, z: z2, s };
     };
-    const arcs = (r, segs, w, rot, c, a, blur) => {
-      ctx.lineWidth = w; ctx.strokeStyle = c + a + ")"; ctx.lineCap = "round";
-      ctx.shadowColor = GLOW; ctx.shadowBlur = blur || 0;
-      for (let i = 0; i < segs.length; i++) { ctx.beginPath(); ctx.arc(0, 0, r, rot + segs[i][0], rot + segs[i][1]); ctx.stroke(); }
-      ctx.shadowBlur = 0; ctx.lineCap = "butt";
-    };
-    const ticks = (r, n, len, rot, c, a) => {
-      ctx.strokeStyle = c + a + ")"; ctx.lineWidth = 1;
-      for (let i = 0; i < n; i++) { const ang = rot + (i / n) * Math.PI * 2, co = Math.cos(ang), si = Math.sin(ang);
-        ctx.beginPath(); ctx.moveTo(co * r, si * r); ctx.lineTo(co * (r - len), si * (r - len)); ctx.stroke(); }
-    };
-    const poly = (r, sides, rot, w, c, a) => {
-      ctx.beginPath(); ctx.lineWidth = w; ctx.strokeStyle = c + a + ")";
-      for (let i = 0; i <= sides; i++) { const ang = rot + (i / sides) * Math.PI * 2, x = Math.cos(ang) * r, y = Math.sin(ang) * r; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-      ctx.stroke();
-    };
-    const orbit = (rx, ry, tilt, phase, a) => {
-      ctx.save(); ctx.rotate(tilt);
-      ctx.beginPath(); ctx.lineWidth = 1 + amp * 0.6; ctx.strokeStyle = O + (a * 0.4 + amp * 0.4) + ")";
-      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
-      const px = Math.cos(phase) * rx, py = Math.sin(phase) * ry, depth = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(phase));
-      ctx.fillStyle = B + depth + ")"; ctx.shadowColor = "rgba(255,180,110,0.9)"; ctx.shadowBlur = (8 + amp * 16) * depth;
-      ctx.beginPath(); ctx.arc(px, py, (2.4 + 2.8 * depth) * (1 + amp * 0.7), 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
-      const wx = Math.cos(tilt) * px - Math.sin(tilt) * py, wy = Math.sin(tilt) * px + Math.cos(tilt) * py;
-      ctx.restore(); return [wx, wy, depth];
-    };
+    const dA = (z, lo, hi) => lo + (hi - lo) * Math.max(0, Math.min(1, (z + 1.6) / 3.2)); // depth→alpha
 
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.globalAlpha = hudAlpha; // fade the orb out as you scroll into the content
-    const vScale = 1 + amp * 0.11; // the whole orb breathes with her voice
-    ctx.scale(vScale, vScale);
-    ctx.transform(1, this._my * 0.05, this._mx * 0.05, 0.92 - Math.abs(this._my) * 0.05, 0, 0);
+    ctx.globalAlpha = hudAlpha;         // fade the orb as you scroll into content
     ctx.globalCompositeOperation = "lighter";
 
-    // soft amber core (low intensity → easy on the eyes); brightens with her voice
+    // ---- (1) far-hemisphere particles (drawn first, behind the core) ----
+    const drawParticles = (front) => {
+      for (const p of this._particles) {
+        const sh = 1.16 + 0.05 * Math.sin(t * 1.4 + p.tw * 6.28); // gently breathing shell
+        const q = P(p.x * sh, p.y * sh, p.z * sh);
+        if (front ? q.z < 0 : q.z >= 0) continue;
+        const tw = 0.5 + 0.5 * Math.sin(t * 2.2 + p.tw * 6.28);
+        const a = dA(q.z, 0.05, 0.5) * (0.5 + 0.5 * tw) * (0.7 + amp * 0.6);
+        ctx.fillStyle = B + a.toFixed(3) + ")";
+        ctx.beginPath(); ctx.arc(q.x, q.y, Math.max(0.4, 1.4 * q.s * (0.8 + amp * 0.5)), 0, Math.PI * 2); ctx.fill();
+      }
+    };
+    drawParticles(false);
+
+    // ---- (2) orbital rings behind the core (far halves) + satellites ----
+    const drawRing = (cfg, front) => {
+      const ct = Math.cos(cfg.tl), st = Math.sin(cfg.tl), cr = Math.cos(cfg.roll), sr = Math.sin(cfg.roll);
+      const rp = (a) => {
+        // circle in its plane → local tilt (X) → local roll (Y) → global P
+        let x = Math.cos(a) * cfg.rr, z = Math.sin(a) * cfg.rr, y = 0;
+        let y1 = y * ct - z * st, z1 = y * st + z * ct;         // tilt about X
+        let x2 = x * cr + z1 * sr, z2 = -x * sr + z1 * cr;      // roll about Y
+        return P(x2, y1, z2);
+      };
+      const SEG = 72;
+      ctx.lineWidth = 1 + amp * 0.6;
+      for (let i = 0; i < SEG; i++) {
+        const q0 = rp((i / SEG) * Math.PI * 2), q1 = rp(((i + 1) / SEG) * Math.PI * 2);
+        const zc = (q0.z + q1.z) / 2;
+        if (front ? zc < 0 : zc >= 0) continue;
+        ctx.strokeStyle = O + (dA(zc, 0.05, 0.34 + amp * 0.3)).toFixed(3) + ")";
+        ctx.beginPath(); ctx.moveTo(q0.x, q0.y); ctx.lineTo(q1.x, q1.y); ctx.stroke();
+      }
+      // satellite riding the ring + constellation link back to the core
+      const sat = rp(t * cfg.spd * spin + cfg.ph);
+      if ((front ? sat.z >= 0 : sat.z < 0)) {
+        ctx.strokeStyle = B + (dA(sat.z, 0.05, 0.3) + amp * 0.3).toFixed(3) + ")";
+        ctx.lineWidth = 1 + amp * 0.5;
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(sat.x, sat.y); ctx.stroke();
+        ctx.fillStyle = B + Math.min(1, dA(sat.z, 0.4, 1)).toFixed(3) + ")";
+        ctx.shadowColor = "rgba(255,180,110,0.9)"; ctx.shadowBlur = (6 + amp * 14) * sat.s;
+        ctx.beginPath(); ctx.arc(sat.x, sat.y, (2 + 2.6 * sat.s) * (1 + amp * 0.6), 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    };
+    for (const cfg of this._rings) drawRing(cfg, false); // far halves
+
+    // ---- (3) the glowing core: soft body + voice-reactive corona + equalizer ----
     const pulse = 0.55 + 0.16 * Math.sin(t * 1.5) + amp * 0.8;
-    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, base * 0.40);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.85);
     g.addColorStop(0, "rgba(255,228,195," + (0.42 * pulse) + ")");
     g.addColorStop(0.4, "rgba(255,150,70," + (0.24 * pulse) + ")");
     g.addColorStop(1, "rgba(180,80,30,0)");
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, base * 0.40, 0, Math.PI * 2); ctx.fill();
-
-    // reactive "talking" core — bass/mid/treble drive travelling harmonic lobes so the
-    // whole rim morphs all the way around (not one side), + a rotating equalizer corona
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R * 0.85, 0, Math.PI * 2); ctx.fill();
     {
-      const NB = this.NB, q = Math.max(1, Math.floor(NB / 3));
+      const NB = this.NB, q3 = Math.max(1, Math.floor(NB / 3));
       let bass = 0, mid = 0, treb = 0;
-      for (let b = 0; b < q; b++) bass += this.bins[b];
-      for (let b = q; b < 2 * q; b++) mid += this.bins[b];
-      for (let b = 2 * q; b < NB; b++) treb += this.bins[b];
-      bass /= q; mid /= q; treb /= (NB - 2 * q);
-      const pts = 96, rb = base * 0.2;
+      for (let b = 0; b < q3; b++) bass += this.bins[b];
+      for (let b = q3; b < 2 * q3; b++) mid += this.bins[b];
+      for (let b = 2 * q3; b < NB; b++) treb += this.bins[b];
+      bass /= q3; mid /= q3; treb /= (NB - 2 * q3);
+      const pts = 96, rb = R * 0.42;
       ctx.beginPath();
       for (let i = 0; i <= pts; i++) {
         const ang = (i / pts) * Math.PI * 2;
         const idle = 0.04 * Math.sin(ang * 3 + t * 1.2) + 0.03 * Math.sin(ang * 5 - t * 0.9);
-        const voice =
-          bass * 0.55 * Math.sin(2 * ang + t * 0.9) +
-          mid * 0.45 * Math.sin(3 * ang - t * 1.3) +
-          treb * 0.38 * Math.sin(5 * ang + t * 1.7) +
-          bass * 0.3 * Math.sin(ang - t * 0.6);
-        const rr = rb * (1 + idle + voice);
-        const x = Math.cos(ang) * rr, y = Math.sin(ang) * rr;
+        const voice = bass * 0.55 * Math.sin(2 * ang + t * 0.9) + mid * 0.45 * Math.sin(3 * ang - t * 1.3) +
+          treb * 0.38 * Math.sin(5 * ang + t * 1.7) + bass * 0.3 * Math.sin(ang - t * 0.6);
+        const rr = rb * (1 + idle + voice), x = Math.cos(ang) * rr, y = Math.sin(ang) * rr;
         i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       }
       ctx.closePath();
@@ -330,15 +373,13 @@ export class VoiceOrb {
       ctx.fillStyle = bg; ctx.shadowColor = "rgba(255,150,70,0.7)"; ctx.shadowBlur = 20; ctx.fill(); ctx.shadowBlur = 0;
       ctx.lineWidth = 1.4; ctx.strokeStyle = "rgba(255,216,164," + (0.4 + amp * 0.5) + ")"; ctx.stroke();
 
-      // travelling equalizer corona — the spectrum wraps the full circle and rotates
-      const bars = NB * 2, r0 = base * 0.27, bl = base * 0.16;
+      const bars = NB * 2, r0 = R * 0.56, bl = R * 0.34;
       ctx.lineCap = "round"; ctx.lineWidth = 2;
       for (let j = 0; j < bars; j++) {
         const ang = (j / bars) * Math.PI * 2;
         const bidx = (((j / bars) * NB + t * 3.0) % NB + NB) % NB;
         const b0 = Math.floor(bidx) % NB, b1 = (b0 + 1) % NB, fr = bidx - Math.floor(bidx);
-        const bv = this.bins[b0] * (1 - fr) + this.bins[b1] * fr;
-        const co = Math.cos(ang), si = Math.sin(ang);
+        const bv = this.bins[b0] * (1 - fr) + this.bins[b1] * fr, co = Math.cos(ang), si = Math.sin(ang);
         const len = bl * (0.08 + bv * (1.0 + amp * 0.6));
         ctx.strokeStyle = "rgba(255,190,120," + (0.22 + 0.6 * bv) + ")";
         ctx.beginPath(); ctx.moveTo(co * r0, si * r0); ctx.lineTo(co * (r0 + len), si * (r0 + len)); ctx.stroke();
@@ -346,34 +387,57 @@ export class VoiceOrb {
       ctx.lineCap = "butt";
     }
 
-    // outer broken ring + ticks (brighten + tick-length pulses with her voice)
-    arcs(base * 0.96, [[0.1, 1.5], [2.2, 3.0], [3.6, 5.2]], 2, t * 0.09 * spin, O, 0.4 + amp * 0.45, 6 + amp * 10);
-    ticks(base * 0.88, 42, base * 0.035 * (1 + amp * 0.6), -t * 0.05 * spin, D, 0.4 + amp * 0.45);
-    ring(base * 0.82, 1, O, 0.3 + amp * 0.4, 4);
-
-    // tilted orbital rings + satellites + constellation links
-    const n1 = orbit(base * 0.74, base * 0.30, 0.5, t * 0.7 * spin, 0.9);
-    const n2 = orbit(base * 0.66, base * 0.66, -0.9, -t * 0.55 * spin + 2.0, 0.9);
-    const n3 = orbit(base * 0.52, base * 0.20, 1.4, t * 0.9 * spin + 1.0, 0.9);
-    const links = [n1, n2, n3];
-    for (let i = 0; i < links.length; i++) {
-      const nd = links[i];
-      ctx.beginPath(); ctx.lineWidth = 1 + amp * 0.5; ctx.strokeStyle = B + (0.1 + 0.18 * nd[2] + amp * 0.35) + ")";
-      ctx.moveTo(0, 0); ctx.lineTo(nd[0], nd[1]); ctx.stroke();
+    // ---- (4) wireframe sphere over the core — the 3D globe (self-shading by
+    // depth: near segments bright, far segments dim, so rotation reads) ----
+    const drawLine = (pfn, seg) => {
+      let prev = pfn(0);
+      for (let i = 1; i <= seg; i++) {
+        const q = pfn(i / seg);
+        const zc = (prev.z + q.z) / 2;
+        ctx.strokeStyle = O + dA(zc, 0.04, 0.28 + amp * 0.22).toFixed(3) + ")";
+        ctx.lineWidth = (0.5 + 0.7 * q.s);
+        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+        prev = q;
+      }
+    };
+    const globe = 1 + amp * 0.1;        // breathes with her voice
+    for (let li = 0; li < 5; li++) {    // latitude circles
+      const lat = (li / 4 - 0.5) * Math.PI * 0.82, cyl = Math.cos(lat) * globe, yl = Math.sin(lat) * globe;
+      drawLine((u) => { const a = u * Math.PI * 2; return P(Math.cos(a) * cyl, yl, Math.sin(a) * cyl); }, 44);
+    }
+    for (let mi = 0; mi < 6; mi++) {    // longitude half-circles
+      const lon = (mi / 6) * Math.PI;
+      drawLine((u) => { const a = (u - 0.5) * Math.PI; const r2 = Math.cos(a) * globe, yy = Math.sin(a) * globe;
+        return P(r2 * Math.cos(lon), yy, r2 * Math.sin(lon)); }, 40);
     }
 
-    // soft scanner arc + ring + reticle (react with her voice)
-    arcs(base * 0.58, [[0.5, 2.4]], 4 + amp * 3, t * 0.5 * spin, B, 0.7 + amp * 0.4, 12);
-    ring(base * 0.40, 1, O, 0.4 + amp * 0.4, 4);
-    poly(base * (0.46 + amp * 0.05), 6, t * 0.18 * spin, 1.2, B, 0.5 + amp * 0.4); // hex reticle (frames the equalizer, breathes)
+    // ---- (5) front-hemisphere rings + particles (drawn last → in front) ----
+    for (const cfg of this._rings) drawRing(cfg, true);
+    drawParticles(true);
 
-    // sound-wave ripples emanating outward on speech peaks
+    // ---- (6) outer flat HUD bezel (the instrument frame around the 3D orb) ----
+    const arcs = (r, segs, w, rot, c, a, blur) => {
+      ctx.lineWidth = w; ctx.strokeStyle = c + a + ")"; ctx.lineCap = "round";
+      ctx.shadowColor = GLOW; ctx.shadowBlur = blur || 0;
+      for (let i = 0; i < segs.length; i++) { ctx.beginPath(); ctx.arc(0, 0, r, rot + segs[i][0], rot + segs[i][1]); ctx.stroke(); }
+      ctx.shadowBlur = 0; ctx.lineCap = "butt";
+    };
+    arcs(base * 0.98, [[0.1, 1.5], [2.2, 3.0], [3.6, 5.2]], 2, t * 0.09 * spin, O, 0.4 + amp * 0.45, 6 + amp * 10);
+    ctx.strokeStyle = D + (0.4 + amp * 0.45) + ")"; ctx.lineWidth = 1; // tick ring
+    for (let i = 0; i < 42; i++) {
+      const ang = -t * 0.05 * spin + (i / 42) * Math.PI * 2, co = Math.cos(ang), si = Math.sin(ang);
+      const rr = base * 0.90, len = base * 0.035 * (1 + amp * 0.6);
+      ctx.beginPath(); ctx.moveTo(co * rr, si * rr); ctx.lineTo(co * (rr - len), si * (rr - len)); ctx.stroke();
+    }
+    arcs(base * 0.6, [[0.5, 2.4]], 4 + amp * 3, t * 0.5 * spin, B, 0.7 + amp * 0.4, 12); // scanner sweep
+
+    // sound-wave ripples on speech peaks
     for (let i = 0; i < this._ripples.length; i++) {
       const rp = this._ripples[i], age = t - rp.t0, life = 1 - age / 1.1;
       if (life <= 0) continue;
       ctx.lineWidth = 1.8 * life;
       ctx.strokeStyle = "rgba(255,178,98," + (0.42 * life * rp.e) + ")";
-      ctx.beginPath(); ctx.arc(0, 0, base * 0.2 + age * base * 0.55, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.5 + age * base * 0.55, 0, Math.PI * 2); ctx.stroke();
     }
     ctx.restore();
 
