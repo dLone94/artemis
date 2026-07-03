@@ -993,8 +993,29 @@ const WAKE_ACKS = [
 ];
 let wakeRec = null;
 let wakeOn = false;
+let wakeRunning = false;      // is the recognizer ACTUALLY live right now (onstart/onend)
 let wakeArmed = false;        // true after "Artemis" with no command → next phrase is the command
 let wakeArmedTimer = null;
+let wakeWatchdog = 0;
+
+// Start the recognizer safely — swallow "already started" / throttle errors.
+function safeStartRec() {
+  if (!wakeRec || wakeRunning) return;
+  try { wakeRec.start(); } catch (e) { /* already started, or throttled — the watchdog retries */ }
+}
+// Watchdog: Chrome's SpeechRecognition dies silently (network blip, long
+// silence, throttled restart) and then she goes DEAF with no indication. This
+// heartbeat guarantees it's alive whenever it should be — the real fix for
+// "she stopped reacting". Only runs while wake is on and she's not talking.
+function startWakeWatchdog() {
+  if (wakeWatchdog) return;
+  wakeWatchdog = setInterval(() => {
+    if (wakeOn && !wakeRunning && !speaking && !busy) safeStartRec();
+    // keep the live indicator honest
+    if (wakeOn) window.__wakeLive = wakeRunning && !speaking && !busy;
+  }, 2500);
+}
+function stopWakeWatchdog() { if (wakeWatchdog) { clearInterval(wakeWatchdog); wakeWatchdog = 0; } window.__wakeLive = false; }
 function disarmWake() {
   wakeArmed = false;
   if (wakeArmedTimer) { clearTimeout(wakeArmedTimer); wakeArmedTimer = null; }
@@ -1043,6 +1064,7 @@ async function startWake() {
       if (e.results[i].isFinal) handleWake(e.results[i][0].transcript);
     }
   };
+  wakeRec.onstart = () => { wakeRunning = true; window.__wakeLive = !speaking && !busy; };
   wakeRec.onerror = (e) => {
     if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
       // fatal: without stopping, onend would restart instantly → error → onend,
@@ -1053,24 +1075,30 @@ async function startWake() {
       stopWake();
       return;
     }
-    if (e.error === "network") setLiveStatus("Speech recognition needs a network connection.");
-    // 'no-speech' / 'aborted' are normal between phrases — ignore
+    // 'no-speech' / 'aborted' / 'network' are transient — onend + the watchdog
+    // bring it back, so we DON'T tear down (that was making her go deaf).
   };
   wakeRec.onend = () => {
-    if (wakeOn && !speaking && !busy) {
-      try { wakeRec.start(); } catch (e) {}
-    }
+    wakeRunning = false;
+    window.__wakeLive = false;
+    // restart shortly (a tiny delay avoids Chrome's "already started" throttle);
+    // the watchdog is the backstop if this restart is dropped.
+    if (wakeOn && !speaking && !busy) setTimeout(safeStartRec, 300);
   };
   setWakeUi(true);
   orb.setStatus("listening");
-  setLiveStatus("Listening for “Artemis…”  (try: “Artemis, daddy is home”)");
-  try { wakeRec.start(); } catch (e) {}
+  setLiveStatus("● Listening for “Artemis…”");
+  startWakeWatchdog();
+  safeStartRec();
 }
 
 function stopWake() {
   setWakeUi(false);
   disarmWake();
+  stopWakeWatchdog();
+  wakeRunning = false;
   if (wakeRec) {
+    wakeRec.onend = null; // don't auto-restart after an intentional stop
     try { wakeRec.stop(); } catch (e) {}
   }
   orb.stopAudio();
@@ -1100,35 +1128,39 @@ function handleWake(raw) {
     else return;
   }
   console.debug("[wake] heard:", raw); // open the console to see what was recognized
+  window.__wakeHeard = (raw || "").trim();
   if (w) {
-    playEarcon(); // instant acknowledgement — no dead air while she thinks
+    playEarcon(); // instant chime the moment she catches her name
     orb.setStatus("listening");
     orb.feed(0.6);
     const cmd = (w.rest || "").trim();
     if (cmd) {
       runWakeCommand(cmd); // "Artemis, what's the weather" in one breath
     } else {
-      // just "Artemis": DON'T speak a blocking ack — that pauses the mic and the
-      // speaking-guard would then drop your follow-up ("…I need a favor"). The
-      // earcon already acknowledged you; keep the recogniser LIVE so the next
-      // phrase is captured immediately.
+      // just "Artemis": arm for the follow-up AND speak a short ack. The ack
+      // pauses the recogniser briefly; when it ends, resumeWake restarts it and
+      // your next phrase is captured. (Say it after she answers, not over her.)
       armWake();
       const ack = WAKE_ACKS[Math.floor(Math.random() * WAKE_ACKS.length)];
-      setLiveStatus(ack + "  (listening…)");
-      orb.setStatus("listening");
+      setLiveStatus(ack);
+      speak(ack);
     }
     return;
   }
-  // no wake word in this phrase — if we were just woken, treat it as the command
+  // heard speech but no wake word — if we were just woken, it's the command;
+  // otherwise surface what she heard so a mis-hear is VISIBLE, not silent.
   if (wakeArmed) {
     orb.feed(0.5);
     runWakeCommand(raw);
+  } else if (wakeOn && window.__wakeHeard) {
+    setLiveStatus("● Listening… (heard “" + window.__wakeHeard.slice(0, 36) + "”)");
   }
 }
 
 function pauseWakeForSpeech() {
+  window.__wakeLive = false;
   if (wakeRec) {
-    try { wakeRec.stop(); } catch (e) {}
+    try { wakeRec.stop(); } catch (e) {} // onend fires → wakeRunning=false
   }
 }
 function resumeWake() {
@@ -1145,9 +1177,9 @@ function resumeWake() {
         })
         .catch(() => {});
     }
-    if (wakeRec) {
-      try { wakeRec.start(); } catch (e) {}
-    }
+    // small delay so the just-stopped recognizer has fully ended before restart
+    // (avoids the "already started" throttle); the watchdog is the backstop.
+    setTimeout(safeStartRec, 250);
   }
 }
 

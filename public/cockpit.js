@@ -683,7 +683,9 @@ window.ArtemisHUD = {
       const secs = Math.floor((Date.now() - t0) / 1000);
       up.textContent = "UP " + String(Math.floor(secs / 60)).padStart(2, "0") + ":" + String(secs % 60).padStart(2, "0");
     }
-    if (wake) wake.textContent = "WAKE " + (window.__artemisWakeUi ? "ON" : "OFF");
+    // show the REAL recognizer state: ● LIVE = actively listening, ON = toggled
+    // but the recognizer is down (paused/dead) — so a silent failure is visible
+    if (wake) wake.textContent = window.__artemisWakeUi ? (window.__wakeLive ? "WAKE ● LIVE" : "WAKE ○ ON") : "WAKE OFF";
     if (mic) {
       const amp = typeof window.__artemisAmp === "number" ? window.__artemisAmp : 0;
       mic.textContent = amp > 0.001 ? "MIC " + Math.round(20 * Math.log10(amp)) + " dB" : "MIC −∞ dB";
