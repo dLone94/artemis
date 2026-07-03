@@ -940,6 +940,7 @@ function setWakeUi(on) {
   wakeToggle.classList.toggle("on", on);
   wakeToggle.textContent = on ? "WAKE WORD: ON" : "WAKE WORD: OFF"; // mono austerity, no emoji
   window.__artemisWakeUi = on; // cockpit telemetry footer reads this
+  try { localStorage.setItem("artemisWakeOn", on ? "1" : "0"); } catch (e) {} // survives reloads
 }
 
 let wakeStarting = false; // re-entrancy guard: the permission prompt takes a while
@@ -1067,6 +1068,10 @@ function resumeWake() {
 }
 
 wakeToggle.addEventListener("click", () => (wakeOn ? stopWake() : startWake()));
+
+// Cockpit continuity: after the boot tap (a real gesture), re-arm the wake
+// word automatically if it was ON last session — she's just listening again.
+window.ArtemisArmWake = () => { if (!wakeOn) startWake(); };
 
 // ---- hero CTAs + nav CTA (voice-first: tap = start talking) ----
 function startTalkGesture() {

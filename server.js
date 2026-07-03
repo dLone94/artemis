@@ -84,6 +84,10 @@ const tavilyKey = process.env.TAVILY_API_KEY || "";
 const braveKey = process.env.BRAVE_API_KEY || "";
 const webSearchEnabled = Boolean(tavilyKey || braveKey);
 
+// How she addresses you — "Good evening, Todor" instead of a generic "sir"
+const USER_NAME = (process.env.ASSISTANT_USER_NAME || "").trim();
+const ADDRESS = USER_NAME || "sir";
+
 const ASSISTANT_VOICE = process.env.ARTEMIS_VOICE || "aura-asteria-en"; // Deepgram TTS voice
 const STT_MODEL = process.env.ARTEMIS_STT_MODEL || "nova-2"; // Deepgram speech-to-text model
 
@@ -106,6 +110,8 @@ const ARTEMIS_SYSTEM_PROMPT =
   "weave them into a few short spoken sentences.\n" +
   "- Sound human and relaxed, with a little personality — like a sharp friend who happens to " +
   "know everything. Vary your rhythm; don't be stiff or formal.\n" +
+  "- The user's name is " + ADDRESS + " — address them by it now and then (naturally, not " +
+  "every sentence), the way JARVIS says 'sir'.\n" +
   "- Lead with the actual answer. No preamble like 'Sure' or 'Here is', no meta-commentary, " +
   "and NEVER narrate your own tools or data hiccups (don't say things like 'the data only " +
   "pulled cleanly for the first day') — just answer with what you have, or quietly try again.\n" +
@@ -1303,7 +1309,7 @@ async function handleRequest(req, res) {
   // startup news briefing (cached 30 min; concurrent requests share one compose).
   // greeting/offer are computed fresh (time of day drifts); only the news is cached.
   if (url.pathname === "/api/briefing") {
-    const greeting = `Good ${timeGreeting()}, sir. Welcome back.`;
+    const greeting = `Good ${timeGreeting()}, ${ADDRESS}. Welcome back.`;
     try {
       if (!briefingCache.text || Date.now() - briefingCache.at > BRIEFING_TTL_MS) {
         if (!briefingInflight) {

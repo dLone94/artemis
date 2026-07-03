@@ -16,6 +16,9 @@
   position: absolute;
   width: 26px; height: 26px;
   border: 1px solid rgba(255, 178, 77, 0.55);
+  /* --vg is the live voice amplitude (set per-frame by cockpit.js) — the
+     frame itself glows when anyone in the room is talking */
+  box-shadow: 0 0 calc(var(--vg, 0) * 1px) rgba(255, 178, 77, 0.55);
 }
 .hud-corner.tl { top: 10px; left: 10px; border-right: 0; border-bottom: 0; }
 .hud-corner.tr { top: 10px; right: 10px; border-left: 0; border-bottom: 0; }

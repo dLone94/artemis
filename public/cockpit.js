@@ -69,12 +69,20 @@ function deliverBriefing(spoken) {
   };
   let entered = false;
   const dismiss = (spoken) => {
-    if (entered) return; // exactly one entry (tap vs 12s fallback race)
+    if (entered) return; // exactly one entry (tap vs 30s fallback race)
     entered = true;
     el.classList.add("done");
     setTimeout(() => el.remove(), 550);
     enterHud();
     deliverBriefing(spoken);
+    if (spoken) {
+      // the tap is a real gesture: light the lab hum (if wanted) and re-arm
+      // the wake word if it was ON last session — she's just LISTENING again
+      if (ambient.wanted()) { ambient.start(); window.__ambientLabel && window.__ambientLabel(); }
+      if (localStorage.getItem("artemisWakeOn") === "1" && window.ArtemisArmWake) {
+        setTimeout(() => window.ArtemisArmWake(), 500);
+      }
+    }
   };
   el.addEventListener("click", () => dismiss(true)); // gesture → she speaks
   // safety: if the user never taps, enter silently after 30s (no gesture, no audio)
@@ -169,6 +177,132 @@ function addCard(card) {
   while (cardsEl.children.length > 12) cardsEl.removeChild(cardsEl.lastChild);
 }
 
+/* ---------------- ambient soundscape: the Stark-lab reactor hum ---------------- */
+// Fully SYNTHESIZED with Web Audio — no files, no copyright, no cost. A low
+// detuned hum that "breathes", brightens while she thinks, ducks under any
+// voice, plus sparse soft data-blips. Whisper-quiet by design: texture, not
+// music. Toggle in the dock (persisted); starts on the boot tap (audio unlock).
+const AMBIENT_KEY = "artemisAmbient";
+const ambient = (() => {
+  let ctx = null, master = null, filter = null, lfoGain = null, blipTimer = 0;
+  let running = false;
+  const BASE = 0.05; // master level — deliberately a whisper
+
+  function start() {
+    if (running) return true;
+    const orb = window.__orb;
+    if (!orb) return false;
+    ctx = orb._ensureAudio && orb._ensureAudio();
+    if (!ctx) return false;
+    master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+
+    // reactor hum: two barely-detuned saws beating against each other,
+    // muffled behind a low-pass so it reads as machinery two rooms away
+    filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 120;
+    filter.Q.value = 0.6;
+    filter.connect(master);
+    for (const f of [55, 55.6]) {
+      const o = ctx.createOscillator();
+      o.type = "sawtooth";
+      o.frequency.value = f;
+      const g = ctx.createGain();
+      g.gain.value = 0.5;
+      o.connect(g).connect(filter);
+      o.start();
+    }
+    // air: looped noise through a gentle band-pass, quieter still
+    const len = ctx.sampleRate * 2;
+    const noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    let seed = 22222;
+    for (let i = 0; i < len; i++) { seed = (seed * 16807) % 2147483647; d[i] = (seed / 2147483647) * 2 - 1; }
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    noise.loop = true;
+    const nf = ctx.createBiquadFilter();
+    nf.type = "bandpass";
+    nf.frequency.value = 420;
+    nf.Q.value = 0.4;
+    const ng = ctx.createGain();
+    ng.gain.value = 0.06;
+    noise.connect(nf).connect(ng).connect(master);
+    noise.start();
+    // slow breathing on the master level
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.07;
+    lfoGain = ctx.createGain();
+    lfoGain.gain.value = BASE * 0.25;
+    lfo.connect(lfoGain).connect(master.gain);
+    lfo.start();
+
+    master.gain.setTargetAtTime(BASE, ctx.currentTime, 1.2); // fade in
+    running = true;
+    scheduleBlip();
+    return true;
+  }
+  function scheduleBlip() {
+    clearTimeout(blipTimer);
+    blipTimer = setTimeout(() => {
+      if (running && ctx && ctx.state === "running" && !document.hidden) {
+        try {
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.frequency.value = 1100 + ((Date.now() % 7) * 190);
+          g.gain.setValueAtTime(0.008, ctx.currentTime);
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.09);
+          o.connect(g).connect(ctx.destination);
+          o.start();
+          o.stop(ctx.currentTime + 0.1);
+        } catch (e) {}
+      }
+      scheduleBlip();
+    }, 9000 + (Date.now() % 12000));
+  }
+  function stop() {
+    if (!running || !ctx) return;
+    running = false;
+    clearTimeout(blipTimer);
+    try { master.gain.setTargetAtTime(0, ctx.currentTime, 0.3); } catch (e) {}
+    // nodes idle at zero gain — cheap, and restart is instant
+  }
+  // state hooks: duck under ANY voice, brighten while she thinks
+  function onState(s) {
+    if (!running || !ctx) return;
+    const t = ctx.currentTime;
+    const duck = s === "speaking" || s === "listening" ? 0.35 : 1;
+    try {
+      master.gain.setTargetAtTime(BASE * duck, t, 0.25);
+      filter.frequency.setTargetAtTime(s === "thinking" || s === "executing" ? 230 : 120, t, 0.5);
+    } catch (e) {}
+  }
+  return {
+    get running() { return running; },
+    start, stop, onState,
+    toggle() {
+      if (running) { stop(); localStorage.setItem(AMBIENT_KEY, "0"); return false; }
+      const ok = start();
+      if (ok) localStorage.setItem(AMBIENT_KEY, "1");
+      return ok;
+    },
+    wanted: () => localStorage.getItem(AMBIENT_KEY) !== "0", // default ON
+  };
+})();
+window.__ambient = ambient; // debug/test handle
+
+// dock toggle
+(function ambientToggle() {
+  const btn = $("ambientToggle");
+  if (!btn) return;
+  const label = () => { btn.textContent = "AMBIENT: " + (ambient.running ? "ON" : "OFF"); };
+  btn.addEventListener("click", () => { ambient.toggle(); label(); });
+  label();
+  window.__ambientLabel = label;
+})();
+
 /* ---------------- subtle UI tick on state changes ---------------- */
 // Uses the orb's AudioContext (only exists after a user gesture, so this can
 // never fire an autoplay warning). Deliberately tiny — a whisper, not a beep.
@@ -257,6 +391,7 @@ window.ArtemisHUD = {
     if (s === "thinking") ttfwCounting(true);
     if (s === "speaking" || s === "idle" || s === "error") ttfwCounting(false);
     if (STATE_TONES[s]) uiTick(STATE_TONES[s]);
+    ambient.onState(s); // hum ducks under voices, brightens while thinking
   },
 };
 
@@ -298,9 +433,13 @@ window.ArtemisHUD = {
   (function loop() {
     requestAnimationFrame(loop);
     if (document.hidden) return;
-    buf[head] = Math.min(1, (typeof window.__artemisAmp === "number" ? window.__artemisAmp : 0));
+    const amp = Math.min(1, (typeof window.__artemisAmp === "number" ? window.__artemisAmp : 0));
+    buf[head] = amp;
     head = (head + 1) % N;
     draw();
+    // the whole ROOM reacts to voice: frame corners + panels glow with the
+    // live amplitude (hers while speaking, yours while listening)
+    document.body.style.setProperty("--vg", (amp * 26).toFixed(1));
   })();
 })();
 
