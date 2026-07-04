@@ -20,7 +20,7 @@ If `node` isn't on your PATH, use a standalone build directly, e.g.:
 ```
 
 Open **http://localhost:4100**, tap **TAP TO ENTER** (unlocks audio), and talk to her —
-tap the mic, type in the `›` command line, or turn on the wake word and say “Artemis”.
+tap the mic, type in the `›` command line, or turn on the wake word and say “Hey Jarvis”.
 
 ## Pages
 
@@ -85,10 +85,32 @@ self-signed-cert warning once. The token gates every request; loopback stays ung
 node test/confirm-gate.test.mjs   # proves consequential actions can't fire without a spoken "yes"
 ```
 
-## Known limitations
+## Wake word ("Hey Jarvis")
 
-- **Wake word** needs Chrome/Edge (`SpeechRecognition`); on Safari/WebKit the toggle is
-  disabled — use the mic button instead.
+Say **“Hey Jarvis”** to wake her hands-free. Detection runs **fully on-device** via
+[openWakeWord](https://github.com/dscripka/openWakeWord) (ONNX Runtime Web / WASM) — no
+audio ever leaves the browser, no key or account, and it works on **any** browser
+**including iPhone Safari** (where the built-in speech recognizer doesn't exist).
+
+The model + runtime files (~14 MB) live in `public/oww/` and are **git-ignored** — drop
+them in once so a fresh clone stays small:
+
+```
+public/oww/ort.min.js            # ONNX Runtime Web 1.14.0  (single-thread SIMD build)
+public/oww/ort-wasm-simd.wasm    # its WASM binary
+public/oww/melspectrogram.onnx   # openWakeWord release v0.5.1
+public/oww/embedding_model.onnx  #   "
+public/oww/hey_jarvis_v0.1.onnx  #   "
+```
+
+Get ORT from the `onnxruntime-web@1.14.0` npm package's `dist/` folder, and the three
+`.onnx` files from the openWakeWord **v0.5.1** GitHub release assets. `mic-worklet.js`
+is already committed. When these files are present, `/api/status` reports
+`localWake.ready:true` and the wake toggle enables on every browser. If they're absent,
+Artemis falls back to the Chrome/Edge `SpeechRecognition` recognizer (which listens for
+“Artemis” and is disabled on Safari/WebKit).
+
+## Known limitations
 - **Edge neural voices** use an unofficial Microsoft endpoint; if it breaks, she falls back
   to Deepgram automatically.
 - LAN mode is **local network only** — don't port-forward it to the public internet.

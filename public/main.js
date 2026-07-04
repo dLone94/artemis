@@ -8,7 +8,7 @@ import { matchWake } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
-import { startPorcupine, stopPorcupine, pausePorcupine, resumePorcupine, porcupineRunning } from "./wakePorcupine.js";
+import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning } from "./wakeLocal.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -267,7 +267,7 @@ function afterSpeak() {
   if (wakeOn) {
     orb.setStatus("listening");
     // keep a pending yes/no question visible — it's the most important status
-    setLiveStatus(pendingConfirm ? "Say “yes” to confirm, or “no” to cancel." : "Listening for “Artemis…”");
+    setLiveStatus(pendingConfirm ? "Say “yes” to confirm, or “no” to cancel." : "Listening for “" + wakePhrase() + "…”");
     resumeWake();
   } else {
     orb.setStatus("idle");
@@ -1040,24 +1040,28 @@ function setWakeUi(on) {
   try { localStorage.setItem("artemisWakeOn", on ? "1" : "0"); } catch (e) {} // survives reloads
 }
 
-let porcupineCfg = null;    // { key, ready } from /api/status
+let localWakeCfg = null;    // { key, ready } from /api/status
 let wakeStarting = false;   // re-entrancy guard: the permission prompt takes a while
 
-// The LOCAL wake path: Porcupine reliably detects "Artemis" on-device (works on
-// iPhone). It doesn't transcribe — on detection we capture the command with the
-// existing mic→STT pipeline, auto-ending on silence.
-function onPorcupineWake() {
+// The active wake phrase — the local engine wakes on "Hey Jarvis"; the browser
+// fallback still uses "Artemis". Status text reflects whichever is running.
+function wakePhrase() { return localWakeRunning() ? "Hey Jarvis" : "Artemis"; }
+
+// The LOCAL wake path: openWakeWord reliably detects "Hey Jarvis" on-device
+// (works on iPhone). It doesn't transcribe — on detection we capture the command
+// with the existing mic→STT pipeline, auto-ending on silence.
+function onLocalWake() {
   if (recording || busy) return;                 // already handling a turn
   if (speaking || ttsPlaying || ttsQueue.length) window.ArtemisBargeIn.interrupt(); // she was talking → interrupt
   playEarcon();
   orb.feed(0.6);
-  pausePorcupine();                              // free the mic + stop re-firing on your command
+  pauseLocalWake();                              // free the mic + stop re-firing on your command
   recordCommandVAD();
 }
 
 // Record the command after a wake, auto-stopping when you finish speaking
 // (simple energy VAD off the orb's live mic amplitude), then the normal
-// onTalkStop → STT → ask pipeline runs. Porcupine resumes in afterSpeak().
+// onTalkStop → STT → ask pipeline runs. Wake engine resumes in afterSpeak().
 function recordCommandVAD() {
   startTalk();
   const started = performance.now();
@@ -1078,15 +1082,15 @@ function recordCommandVAD() {
   }, 120);
 }
 
-async function startWakePorcupine() {
+async function startWakeLocal() {
   wakeStarting = true;
   orb._ensureAudio();
-  const ok = await startPorcupine(porcupineCfg, onPorcupineWake);
+  const ok = await startLocalWake(localWakeCfg, onLocalWake);
   wakeStarting = false;
   if (!ok) return false;
   setWakeUi(true);
   orb.setStatus("listening");
-  setLiveStatus("● Listening for “Artemis…”  (on-device)");
+  setLiveStatus("● Listening for “Hey Jarvis…”  (on-device)");
   window.__wakeLive = true;
   return true;
 }
@@ -1094,9 +1098,9 @@ async function startWakePorcupine() {
 async function startWake() {
   if (wakeOn || wakeStarting) return;
   // Prefer the reliable local engine when it's set up; else the browser recognizer.
-  if (porcupineCfg && porcupineCfg.ready) {
-    if (await startWakePorcupine()) return;
-    // Porcupine failed to load → fall through to the browser recognizer if present
+  if (localWakeCfg && localWakeCfg.ready) {
+    if (await startWakeLocal()) return;
+    // on-device engine failed to load → fall through to the browser recognizer if present
   }
   if (!SpeechRec) {
     setLiveStatus("Wake word needs Chrome or Edge (or set up the on-device engine — see README).");
@@ -1153,7 +1157,7 @@ function stopWake() {
   disarmWake();
   stopWakeWatchdog();
   wakeRunning = false;
-  if (porcupineRunning()) stopPorcupine();
+  if (localWakeRunning()) stopLocalWake();
   if (wakeRec) {
     wakeRec.onend = null; // don't auto-restart after an intentional stop
     try { wakeRec.stop(); } catch (e) {}
@@ -1216,14 +1220,14 @@ function handleWake(raw) {
 
 function pauseWakeForSpeech() {
   window.__wakeLive = false;
-  if (porcupineRunning()) { pausePorcupine(); return; } // local engine: stop hearing during her speech
+  if (localWakeRunning()) { pauseLocalWake(); return; } // local engine: stop hearing during her speech
   if (wakeRec) {
     try { wakeRec.stop(); } catch (e) {} // onend fires → wakeRunning=false
   }
 }
 function resumeWake() {
   if (!wakeOn) return;
-  if (porcupineRunning()) { resumePorcupine(); window.__wakeLive = true; return; } // local engine
+  if (localWakeRunning()) { resumeLocalWake(); window.__wakeLive = true; return; } // local engine
   // a stream whose tracks were stopped (orb.stopAudio) is useless — check
   // liveness, not just presence, or the orb never reacts after the 1st turn
   const live = micStream && micStream.getTracks().some((t) => t.readyState === "live");
@@ -1691,15 +1695,16 @@ fetch("/api/status")
   .then((r) => r.json())
   .then((s) => {
     if (!s.chatEnabled) setLiveStatus("Set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in .env to enable conversation.");
-    // Local Porcupine wake engine ready? Then the wake word works reliably —
-    // and on iPhone — regardless of the browser recognizer.
-    porcupineCfg = s.porcupine || null;
-    if (porcupineCfg && porcupineCfg.ready) {
+    // Local openWakeWord engine ready? Then the wake word ("Hey Jarvis") works
+    // reliably — and on iPhone — regardless of the browser recognizer.
+    localWakeCfg = s.localWake || null;
+    if (localWakeCfg && localWakeCfg.ready) {
       wakeToggle.disabled = false;
-      wakeToggle.title = "On-device wake word (Porcupine) — works on any browser, including iPhone";
+      wakeToggle.title = "On-device wake word “Hey Jarvis” — works on any browser, including iPhone";
+      window.__wakePhrase = "Hey Jarvis";
     } else if (!SpeechRec) {
       wakeToggle.disabled = true;
-      wakeToggle.title = "Wake word needs Chrome or Edge (or add the local Porcupine engine — see README)";
+      wakeToggle.title = "Wake word needs Chrome or Edge (or the on-device engine — see README)";
     }
     // Email triage card flips to Live once Gmail is authorized (see .env.example)
     const emailStatus = $("emailStatus");

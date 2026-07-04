@@ -8,4 +8,8 @@ node_modules/
 assets/music.*
 
 # your personal Porcupine wake-word keyword (from the Picovoice console)
-public/porcupine/artemis.ppn
+
+# vendored wake engine binaries (re-fetchable; keep git lean)
+public/oww/*.wasm
+public/oww/*.onnx
+public/oww/ort.min.js
