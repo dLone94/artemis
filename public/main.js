@@ -768,11 +768,13 @@ let liveEs = null;
 let liveFinal = "";
 let liveDoneResolve = null;
 let livePending = []; // chunks recorded before the session opened (incl. the webm header)
+let liveSendQ = Promise.resolve(); // serializes chunk POSTs — parallel fetches can arrive OUT OF ORDER
 
 async function openLiveStt() {
   liveFinal = "";
   liveSid = null;
   livePending = [];
+  liveSendQ = Promise.resolve();
   try {
     const r = await fetch("/api/stt/live/start", { method: "POST" });
     if (!r.ok) return;
@@ -811,7 +813,12 @@ async function openLiveStt() {
 }
 function liveSendChunk(blob) {
   if (!liveSid) { if (livePending.length < 120) livePending.push(blob); return; } // hold until the session opens
-  fetch("/api/stt/live/chunk?sid=" + liveSid, { method: "POST", body: blob, keepalive: true }).catch(() => {});
+  const sid = liveSid; // capture: the chain may run after closeLiveStt nulls liveSid
+  // chain, don't fire-and-forget: the browser runs parallel POSTs on ~6 sockets
+  // and they can ARRIVE REORDERED — shuffled webm = garbled/partial transcript
+  liveSendQ = liveSendQ.then(() =>
+    fetch("/api/stt/live/chunk?sid=" + sid, { method: "POST", body: blob, keepalive: true }).catch(() => {})
+  );
 }
 function closeLiveStt() {
   const sid = liveSid;
@@ -819,7 +826,11 @@ function closeLiveStt() {
   if (!sid) return Promise.resolve("");
   return new Promise((resolve) => {
     liveDoneResolve = resolve;
-    fetch("/api/stt/live/stop?sid=" + sid, { method: "POST" }).catch(() => {});
+    // drain the chunk queue BEFORE signalling stop — otherwise CloseStream can
+    // beat the final audio chunks to the server and the last words get eaten
+    liveSendQ.then(() =>
+      fetch("/api/stt/live/stop?sid=" + sid, { method: "POST" }).catch(() => {})
+    );
     // don't hold the turn hostage: Deepgram flushes finals fast or not at all
     setTimeout(() => {
       if (liveDoneResolve) { liveDoneResolve(liveFinal.trim()); liveDoneResolve = null; }

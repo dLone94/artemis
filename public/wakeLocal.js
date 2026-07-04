@@ -22,6 +22,8 @@ const BUF = 32000;          // 2 s of 16 kHz audio (≥196 mel frames)
 const audio = new Float32Array(BUF);
 let filled = 0;
 let sinceInfer = 0;
+let inferBusy = false; // one inference at a time — overlap spirals CPU on slow devices
+let micGen = 0;        // bumped by closeMic so an in-flight openMic knows it went stale
 
 function loadOrt() {
   return new Promise((resolve, reject) => {
@@ -54,8 +56,8 @@ async function infer() {
   const melIn = new ort.Tensor("float32", audio, [1, BUF]);
   const melOut = (await melSess.run({ [melSess.inputNames[0]]: melIn }))[melSess.outputNames[0]];
   const md = melOut.dims;
-  const frames = md[md.length - 2], bins = md[md.length - 2] === 32 ? md[md.length - 1] : 32; // 32 mel bins
-  const nBins = 32;
+  const frames = md[md.length - 2];
+  const nBins = 32; // openWakeWord melspectrograms are always 32 mel bins
   const mel = melOut.data; // flat [.. frames*32], normalize openWakeWord-style
   for (let k = 0; k < mel.length; k++) mel[k] = mel[k] / 10 + 2;
   if (frames < 196) return 0; // not enough context yet
@@ -88,32 +90,48 @@ function pushFrame(f) {
   audio.set(f, BUF - f.length);
   filled = Math.min(BUF, filled + f.length);
   if (paused || filled < BUF) return;
-  // run inference every ~3 frames (~240 ms) to keep CPU modest
-  if (++sinceInfer < 3) return;
+  // run inference every ~3 frames (~240 ms) to keep CPU modest; never overlap
+  // runs — if the device is slower than the cadence, piled-up inferences would
+  // starve the CPU and lag the whole tab (iPhone especially)
+  if (++sinceInfer < 3 || inferBusy) return;
   sinceInfer = 0;
+  inferBusy = true;
   infer().then((score) => {
     if (!running || paused) return;
     if (score >= THRESHOLD && performance.now() - lastFire > COOLDOWN_MS) {
       lastFire = performance.now();
       onDetectCb && onDetectCb(score);
     }
-  }).catch(() => {});
+  }).catch(() => {}).finally(() => { inferBusy = false; });
 }
 
 // Build the mic → worklet → analyser graph. Shared by start AND resume so the
 // mic is always opened exactly one way. The (expensive) ONNX sessions are kept
 // loaded across pauses — only the audio graph is torn down and rebuilt.
 async function openMic() {
-  micStream = await navigator.mediaDevices.getUserMedia({
+  // Build into LOCALS and only commit to the module globals at the end, gated
+  // on micGen: if closeMic ran while we were awaiting (pause during a resume),
+  // committing would leak a live mic that then fights the command recorder.
+  const g = micGen;
+  const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
   });
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-  await ctx.audioWorklet.addModule("/oww/mic-worklet.js");
-  const src = ctx.createMediaStreamSource(micStream);
-  node = new AudioWorkletNode(ctx, "mic-downsampler");
-  node.port.onmessage = (e) => pushFrame(e.data);
-  src.connect(node);
-  const sink = ctx.createGain(); sink.gain.value = 0; node.connect(sink).connect(ctx.destination); // silent keep-alive
+  const c = new (window.AudioContext || window.webkitAudioContext)();
+  let n = null;
+  try {
+    await c.audioWorklet.addModule("/oww/mic-worklet.js");
+    if (g !== micGen) throw new Error("superseded"); // closed while opening — discard
+    const src = c.createMediaStreamSource(stream);
+    n = new AudioWorkletNode(c, "mic-downsampler");
+    n.port.onmessage = (e) => pushFrame(e.data);
+    src.connect(n);
+    const sink = c.createGain(); sink.gain.value = 0; n.connect(sink).connect(c.destination); // silent keep-alive
+  } catch (e) {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch (e2) {}
+    try { if (c.state !== "closed") c.close(); } catch (e2) {}
+    throw e;
+  }
+  micStream = stream; ctx = c; node = n;
   filled = 0; sinceInfer = 0;
 }
 
@@ -121,10 +139,14 @@ async function openMic() {
 // the awaited ctx.close()), so the device is freed for the command recorder the
 // instant this is called — no two-streams-on-one-mic contention.
 async function closeMic() {
-  try { node && (node.port.onmessage = null); node && node.disconnect(); } catch (e) {}
-  try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
-  try { if (ctx && ctx.state !== "closed") await ctx.close(); } catch (e) {}
+  micGen++; // any in-flight openMic is now stale and will self-discard
+  // detach the globals SYNCHRONOUSLY, then tear down the captured locals —
+  // nothing this function awaits can touch state a concurrent openMic commits
+  const n = node, s = micStream, c = ctx;
   node = null; micStream = null; ctx = null; filled = 0;
+  try { n && (n.port.onmessage = null); n && n.disconnect(); } catch (e) {}
+  try { s && s.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { if (c && c.state !== "closed") await c.close(); } catch (e) {}
 }
 
 export async function startLocalWake(_cfg, onDetect) {
