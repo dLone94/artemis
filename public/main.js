@@ -8,7 +8,7 @@ import { matchWake } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
-import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning } from "./wakeLocal.js";
+import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand } from "./wakeLocal.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -730,6 +730,9 @@ let micStream = null;
 async function startTalk() {
   if (busy || recording) return;
   stopBargeIn(); // we're recording now — no need for the barge-in listener
+  // manual recording needs EXCLUSIVE mic access — a second stream on the same
+  // device can come back silent (iPhone). resumeWake() restarts the engine.
+  if (localWakeRunning()) await stopLocalWake();
   orb._ensureAudio(); // unlock audio in this gesture
   try {
     // stop the wake-mode viz stream first — overwriting it leaks a live mic
@@ -1067,39 +1070,39 @@ let wakeStarting = false;   // re-entrancy guard: the permission prompt takes a 
 function wakePhrase() { return localWakeRunning() ? "Hey Jarvis" : "Artemis"; }
 
 // The LOCAL wake path: openWakeWord reliably detects "Hey Jarvis" on-device
-// (works on iPhone). It doesn't transcribe — on detection we capture the command
-// with the existing mic→STT pipeline, auto-ending on silence.
-function onLocalWake() {
-  if (recording || busy) return;                 // already handling a turn
+// (works on iPhone). On detection the ENGINE ITSELF captures the command from
+// the same mic stream — including ~1.2s of pre-roll from before detection
+// fired — so nothing you said is ever lost to a mic handoff. The WAV goes to
+// batch STT (the reliable path); no MediaRecorder, no chunk streaming.
+let wakeCapturing = false;
+async function onLocalWake() {
+  if (recording || busy || wakeCapturing) return; // already handling a turn
   if (speaking || ttsPlaying || ttsQueue.length) window.ArtemisBargeIn.interrupt(); // she was talking → interrupt
+  wakeCapturing = true;
   playEarcon();
   orb.feed(0.6);
-  pauseLocalWake();                              // free the mic + stop re-firing on your command
-  recordCommandVAD();
-}
-
-// Record the command after a wake, auto-stopping when you finish speaking
-// (simple energy VAD off the orb's live mic amplitude), then the normal
-// onTalkStop → STT → ask pipeline runs. Wake engine resumes in afterSpeak().
-async function recordCommandVAD() {
-  await startTalk();                          // MUST await: recording=true is set inside, after getUserMedia
-  if (!recording) { afterSpeak(); return; }   // mic failed to open → re-arm the wake word instead of hanging
-  const started = performance.now();
-  let heardSpeech = false, quietSince = 0;
-  const iv = setInterval(() => {
-    if (!recording) { clearInterval(iv); return; }
-    const amp = orb.cur ? orb.cur.amp : 0;
-    const now = performance.now();
-    if (amp > 0.08) { heardSpeech = true; quietSince = 0; }
-    else if (heardSpeech) { if (!quietSince) quietSince = now; }
-    // end when: ~1.1s of silence after speech, or you never spoke (3s), or 9s cap
-    if ((heardSpeech && quietSince && now - quietSince > 1100) ||
-        (!heardSpeech && now - started > 3000) ||
-        now - started > 9000) {
-      clearInterval(iv);
-      if (recording) stopTalk();
-    }
-  }, 120);
+  orb.setStatus("listening");
+  setLiveStatus("Listening…");
+  window.__wakeLive = false;
+  try {
+    const wav = await captureCommand({ onLevel: (rms) => orb.feed(Math.min(1, rms * 10)) });
+    if (!wav) { setLiveStatus("Didn't catch that — try again."); afterSpeak(); return; }
+    setLiveStatus("Transcribing…");
+    const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
+    const data = await res.json();
+    let text = (data.transcript || "").trim();
+    // the pre-roll may include the tail of the wake phrase — scrub it off
+    text = text.replace(/^\s*(hey|hi|ok(?:ay)?|a)?[,.\s]*(jarvis|jervis|jarvys|gervais)\b[,.!?\s]*/i, "").trim();
+    if (!text) { setLiveStatus("Didn't catch that — try again."); afterSpeak(); return; }
+    setLiveStatus("");
+    if (handleConfirmIfPending(text)) return;
+    if (!handleOpenIntent(text)) ask(text);
+  } catch (e) {
+    setLiveStatus("Transcription failed.");
+    afterSpeak();
+  } finally {
+    wakeCapturing = false;
+  }
 }
 
 async function startWakeLocal() {
@@ -1247,7 +1250,8 @@ function pauseWakeForSpeech() {
 }
 function resumeWake() {
   if (!wakeOn) return;
-  if (localWakeRunning()) { resumeLocalWake(); window.__wakeLive = true; return; } // local engine
+  if (localWakeRunning()) { resumeLocalWake(); window.__wakeLive = true; return; } // local engine: re-arm detection
+  if (localWakeCfg && localWakeCfg.ready) { startWakeLocal(); return; } // a manual talk stopped the engine — restart it
   // a stream whose tracks were stopped (orb.stopAudio) is useless — check
   // liveness, not just presence, or the orb never reacts after the 1st turn
   const live = micStream && micStream.getTracks().some((t) => t.readyState === "live");

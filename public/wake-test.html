@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Artemis · Wake Word Test</title>
+<style>
+  body { margin:0; padding:24px; background:#06080d; color:#cfe3ff; font:15px/1.5 -apple-system, "SF Pro Text", Segoe UI, sans-serif; }
+  h1 { font-size:18px; letter-spacing:.12em; color:#7fd4ff; }
+  .card { background:#0b1018; border:1px solid #1b2940; border-radius:12px; padding:16px; margin:14px 0; }
+  .meter { height:14px; background:#0f1622; border-radius:7px; overflow:hidden; margin:6px 0 2px; position:relative; }
+  .meter > i { display:block; height:100%; width:0%; background:linear-gradient(90deg,#1e6fb8,#41d6ff); transition:width 80ms linear; }
+  .meter > b { position:absolute; top:0; bottom:0; width:2px; background:#ffb347; }
+  .lbl { display:flex; justify-content:space-between; font-size:12px; color:#7d93b8; }
+  button { background:#123; color:#bfe6ff; border:1px solid #2a4a72; border-radius:8px; padding:12px 18px; font-size:15px; margin:4px 6px 4px 0; }
+  button:active { background:#1a3a5c; }
+  #log { font-family:ui-monospace, Menlo, monospace; font-size:12.5px; white-space:pre-wrap; max-height:260px; overflow:auto; color:#9fb6d8; }
+  .big { font-size:26px; font-weight:700; color:#41d6ff; }
+  .ok { color:#57e389; } .bad { color:#ff7b72; }
+</style>
+</head>
+<body>
+<h1>ARTEMIS · WAKE WORD TEST</h1>
+<p>Diagnoses the on-device “Hey Jarvis” pipeline. Tap start, watch the meters, say <b>“Hey Jarvis”</b>, then a command.</p>
+
+<div class="card">
+  <button id="start">▶ Start engine</button>
+  <button id="stop" disabled>■ Stop</button>
+  <span id="state">not running</span>
+</div>
+
+<div class="card">
+  <div class="lbl"><span>Mic level (RMS)</span><span id="rmsV">–</span></div>
+  <div class="meter"><i id="rmsBar"></i><b id="floorMark" style="left:0%"></b></div>
+  <div class="lbl"><span>orange line = learned noise floor · speak and this bar must clearly jump past it</span></div>
+  <div class="lbl" style="margin-top:10px"><span>Wake score (fires ≥ 0.5)</span><span id="scoreV">–</span></div>
+  <div class="meter"><i id="scoreBar" style="background:linear-gradient(90deg,#7a4dbf,#ff5ad0)"></i><b style="left:50%"></b></div>
+  <div class="lbl"><span>Mode: <b id="modeV">–</b></span><span>Detections: <b id="detV">0</b></span></div>
+</div>
+
+<div class="card">
+  <div>Last captured command: <span id="capInfo">–</span></div>
+  <audio id="capAudio" controls style="width:100%; margin-top:8px; display:none"></audio>
+  <div style="margin-top:8px">Transcript: <span id="capText" class="big">–</span></div>
+</div>
+
+<div class="card"><div id="log">ready.
+</div></div>
+
+<script type="module">
+  import { startLocalWake, stopLocalWake, resumeLocalWake, captureCommand } from "/wakeLocal.js";
+  const $ = (id) => document.getElementById(id);
+  const log = (m) => { $("log").textContent += new Date().toTimeString().slice(0,8) + "  " + m + "\n"; $("log").scrollTop = 1e9; };
+  let dets = 0, busy = false;
+
+  async function onWake(score) {
+    dets++; $("detV").textContent = dets;
+    if (busy) return;
+    busy = true;
+    log("WAKE fired! score=" + score.toFixed(3) + " — speak your command…");
+    try {
+      const wav = await captureCommand({});
+      if (!wav) { log("capture: no speech detected (VAD never tripped)"); return; }
+      const secs = ((wav.size - 44) / 32000).toFixed(1);
+      $("capInfo").textContent = (wav.size/1024).toFixed(0) + " KB · " + secs + "s";
+      const url = URL.createObjectURL(wav);
+      $("capAudio").src = url; $("capAudio").style.display = "block";
+      log("captured " + secs + "s — transcribing…");
+      const r = await fetch("/api/stt", { method:"POST", headers:{"Content-Type":"audio/wav"}, body: wav });
+      const d = await r.json();
+      const t = (d.transcript || "").trim();
+      $("capText").textContent = t || "(empty)";
+      $("capText").className = t ? "big ok" : "big bad";
+      log(t ? "transcript: “" + t + "”" : "transcript EMPTY (audio reached server but Deepgram heard nothing)");
+    } catch (e) {
+      log("ERROR: " + (e && e.message));
+    } finally {
+      busy = false;
+      resumeLocalWake();
+      log("re-armed — say “Hey Jarvis” again.");
+    }
+  }
+
+  $("start").onclick = async () => {
+    $("state").textContent = "loading models…";
+    const ok = await startLocalWake(null, onWake);
+    $("state").textContent = ok ? "RUNNING — say “Hey Jarvis”" : "FAILED (see log)";
+    $("start").disabled = ok; $("stop").disabled = !ok;
+    log(ok ? "engine running (models + mic OK)" : "engine failed to start — mic permission? models missing?");
+  };
+  $("stop").onclick = async () => { await stopLocalWake(); $("state").textContent = "stopped"; $("start").disabled = false; $("stop").disabled = true; };
+
+  setInterval(() => {
+    const d = window.__wakeDebug; if (!d) return;
+    const stale = performance.now() - d.t > 1000;
+    $("rmsV").textContent = stale ? "no frames!" : d.rms.toFixed(4);
+    $("rmsBar").style.width = Math.min(100, d.rms * 800) + "%";
+    $("floorMark").style.left = Math.min(100, d.floor * 800) + "%";
+    if (d.score !== undefined) { $("scoreV").textContent = d.score.toFixed(3); $("scoreBar").style.width = Math.min(100, d.score * 100) + "%"; }
+    $("modeV").textContent = stale ? "STALLED (mic frames stopped)" : d.mode;
+  }, 120);
+</script>
+</body>
+</html>
