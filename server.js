@@ -1617,6 +1617,14 @@ async function handleRequest(req, res) {
         // Anthropic has built-in search; NVIDIA needs Tavily/Brave for live web answers.
         webEnabled: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? webSearchEnabled : Boolean(anthropicApiKey),
         gmailEnabled: gmailConfigured(),
+        // local Porcupine wake engine: client-side access key + whether the
+        // custom "Artemis" keyword file has been dropped in. Both present → the
+        // reliable on-device wake word (works on iPhone) is used instead of the
+        // flaky browser recognizer.
+        porcupine: {
+          key: process.env.PICOVOICE_ACCESS_KEY || "",
+          ready: Boolean(process.env.PICOVOICE_ACCESS_KEY) && existsSync(join(PUBLIC_DIR, "porcupine", "artemis.ppn"))
+        },
         serverTime: Date.now()
       })
     );
