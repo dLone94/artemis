@@ -767,16 +767,24 @@ let liveSid = null;
 let liveEs = null;
 let liveFinal = "";
 let liveDoneResolve = null;
+let livePending = []; // chunks recorded before the session opened (incl. the webm header)
 
 async function openLiveStt() {
   liveFinal = "";
   liveSid = null;
+  livePending = [];
   try {
     const r = await fetch("/api/stt/live/start", { method: "POST" });
     if (!r.ok) return;
     const { sid } = await r.json();
     if (!recording && !mediaRecorder) return; // user already stopped — don't open a dead session
     liveSid = sid;
+    // Flush everything recorded before the session was ready — IN ORDER, so
+    // Deepgram gets a valid webm stream starting with its header chunk. Without
+    // this, a slow /start (common over wifi/LAN) silently drops the first words
+    // of the command and only the tail ("…please") ever gets transcribed.
+    const backlog = livePending; livePending = [];
+    for (const b of backlog) liveSendChunk(b);
     liveEs = new EventSource("/api/stt/live/events?sid=" + sid);
     let interim = "";
     liveEs.onmessage = (ev) => {
@@ -802,7 +810,7 @@ async function openLiveStt() {
   } catch (e) { /* no live transcript this turn — batch handles it */ }
 }
 function liveSendChunk(blob) {
-  if (!liveSid) return;
+  if (!liveSid) { if (livePending.length < 120) livePending.push(blob); return; } // hold until the session opens
   fetch("/api/stt/live/chunk?sid=" + liveSid, { method: "POST", body: blob, keepalive: true }).catch(() => {});
 }
 function closeLiveStt() {
