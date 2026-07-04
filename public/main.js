@@ -1062,8 +1062,9 @@ function onLocalWake() {
 // Record the command after a wake, auto-stopping when you finish speaking
 // (simple energy VAD off the orb's live mic amplitude), then the normal
 // onTalkStop → STT → ask pipeline runs. Wake engine resumes in afterSpeak().
-function recordCommandVAD() {
-  startTalk();
+async function recordCommandVAD() {
+  await startTalk();                          // MUST await: recording=true is set inside, after getUserMedia
+  if (!recording) { afterSpeak(); return; }   // mic failed to open → re-arm the wake word instead of hanging
   const started = performance.now();
   let heardSpeech = false, quietSince = 0;
   const iv = setInterval(() => {

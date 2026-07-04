@@ -100,6 +100,33 @@ function pushFrame(f) {
   }).catch(() => {});
 }
 
+// Build the mic → worklet → analyser graph. Shared by start AND resume so the
+// mic is always opened exactly one way. The (expensive) ONNX sessions are kept
+// loaded across pauses — only the audio graph is torn down and rebuilt.
+async function openMic() {
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+  });
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.audioWorklet.addModule("/oww/mic-worklet.js");
+  const src = ctx.createMediaStreamSource(micStream);
+  node = new AudioWorkletNode(ctx, "mic-downsampler");
+  node.port.onmessage = (e) => pushFrame(e.data);
+  src.connect(node);
+  const sink = ctx.createGain(); sink.gain.value = 0; node.connect(sink).connect(ctx.destination); // silent keep-alive
+  filled = 0; sinceInfer = 0;
+}
+
+// Fully release the mic + audio graph. track.stop() runs synchronously (before
+// the awaited ctx.close()), so the device is freed for the command recorder the
+// instant this is called — no two-streams-on-one-mic contention.
+async function closeMic() {
+  try { node && (node.port.onmessage = null); node && node.disconnect(); } catch (e) {}
+  try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { if (ctx && ctx.state !== "closed") await ctx.close(); } catch (e) {}
+  node = null; micStream = null; ctx = null; filled = 0;
+}
+
 export async function startLocalWake(_cfg, onDetect) {
   if (running) return true;
   if (loading) return loading;
@@ -107,18 +134,8 @@ export async function startLocalWake(_cfg, onDetect) {
   loading = (async () => {
     try {
       await ensureModels();
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
-      });
-      ctx = new (window.AudioContext || window.webkitAudioContext)();
-      await ctx.audioWorklet.addModule("/oww/mic-worklet.js");
-      const src = ctx.createMediaStreamSource(micStream);
-      node = new AudioWorkletNode(ctx, "mic-downsampler");
-      node.port.onmessage = (e) => pushFrame(e.data);
-      src.connect(node);
-      // keep the graph alive without audible output
-      const sink = ctx.createGain(); sink.gain.value = 0; node.connect(sink).connect(ctx.destination);
-      filled = 0; sinceInfer = 0; paused = false; running = true;
+      await openMic();
+      paused = false; running = true;
       return true;
     } catch (e) {
       console.warn("openWakeWord failed to start — falling back:", e && e.message);
@@ -133,18 +150,21 @@ export async function startLocalWake(_cfg, onDetect) {
 
 export async function stopLocalWake() {
   running = false; paused = false;
-  try { node && (node.port.onmessage = null); node && node.disconnect(); } catch (e) {}
-  try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
-  try { ctx && ctx.state !== "closed" && (await ctx.close()); } catch (e) {}
-  node = null; micStream = null; ctx = null; filled = 0;
+  await closeMic();
 }
 
-// During her speech / command capture: stop analysing (and free the mic tap) so
-// it can't hear her voice or fight the recorder; resume re-opens it.
-export function pauseLocalWake() { paused = true; try { ctx && ctx.suspend(); } catch (e) {} }
-export function resumeLocalWake() {
-  if (!running) return;
-  paused = false; filled = 0; sinceInfer = 0; // refill before re-arming (avoid stale trigger)
-  try { ctx && ctx.resume(); } catch (e) {}
+// During her speech / command capture: FULLY release the mic (not just suspend)
+// so the command recorder gets exclusive access to the device — two live
+// getUserMedia streams on one mic can silence each other on some browsers.
+export async function pauseLocalWake() {
+  if (paused) return;
+  paused = true;
+  await closeMic();
+}
+export async function resumeLocalWake() {
+  if (!running || !paused) return;
+  paused = false;
+  try { await ensureModels(); await openMic(); }         // reacquire mic + rebuild graph (sessions stay loaded)
+  catch (e) { console.warn("openWakeWord resume failed:", e && e.message); }
 }
 export function localWakeRunning() { return running; }
