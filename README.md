@@ -22,6 +22,16 @@ If `node` isn't on your PATH, use a standalone build directly, e.g.:
 Open **http://localhost:4100**, tap **TAP TO ENTER** (unlocks audio), and talk to her —
 tap the mic, type in the `›` command line, or turn on the wake word and say “Hey Jarvis”.
 
+### …or run her as a Mac app
+
+```bash
+bash app/build.sh && open app/build/Artemis.app
+```
+
+A real windowed app that starts the server for you, with no terminal and no
+browser tab. Links open in your default browser, so pop-up blocking stops
+applying and hands-free opening always works. See [`app/README.md`](app/README.md).
+
 ## Pages
 
 - `/` — the **cockpit** (daily driver): orb, command log, context panel, controls.
