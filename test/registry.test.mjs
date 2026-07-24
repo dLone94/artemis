@@ -77,9 +77,16 @@ const NO_MAIL = { search: true, gmail: false };
   // an unconfigured family can't produce an action turn
   assert.equal(classifyIntent("check my email", NO_MAIL).intent, "chat", "no gmail → not an executable action");
 
+  // an explicitly negated action is conversation — the recall bias must not
+  // turn "don't open anything" into an open
+  for (const negated of ["don't open anything, just tell me what youtube.com is", "do not play any music", "without opening it, what is that site?"]) {
+    assert.equal(classifyIntent(negated, ALL).intent, "chat", `"${negated}" must not force a tool`);
+  }
+
   // a bare pronoun with nothing to point at gets a question, not a guess
   const vague = classifyIntent("open it", ALL, []);
   assert.equal(vague.intent, "needs_clarification");
+  assert.equal(classifyIntent("play that one", ALL, []).intent, "needs_clarification", "'play that one' is unresolved too");
 
   // …but the same words resolve once the conversation supplies a referent
   const withRef = classifyIntent("open it", ALL, [{ role: "assistant", content: "I found https://example.com/thing" }]);

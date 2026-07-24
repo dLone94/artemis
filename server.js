@@ -8,7 +8,7 @@ import { promises as fs, readFileSync, writeFileSync, existsSync, mkdirSync, ren
 import { extname, join, normalize } from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
-import { randomBytes, timingSafeEqual } from "crypto";
+import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import { execFileSync } from "child_process";
 import { networkInterfaces } from "os";
 import { fetchPage } from "./webAccess.js";
@@ -34,6 +34,7 @@ import {
   classifyIntent
 } from "./toolRegistry.js";
 import { mayStreamNarration, failureLine } from "./public/ttsPolicy.js";
+import { fakeToolResult } from "./fakeTools.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -956,6 +957,15 @@ function newTurnState(intent) {
 
 const MAX_TOOL_CALLS_PER_TURN = 6;
 
+// Evaluation mode: run the real loop, execute nothing. Used to benchmark a
+// model's tool use against adversarial prompts without those prompts reaching a
+// real inbox or the real web. Loud on purpose — if this is ever on by accident,
+// the operator should see it in the first line of the log.
+const FAKE_TOOLS = /^(1|true|yes|on)$/i.test(process.env.ARTEMIS_FAKE_TOOLS || "");
+if (FAKE_TOOLS) {
+  console.warn("⚠️  ARTEMIS_FAKE_TOOLS=1 — every tool returns a synthetic result. NOTHING WILL ACTUALLY HAPPEN.");
+}
+
 // Execute one NVIDIA tool call.
 //
 // Validation happens BEFORE anything is recorded or mutated. The old order
@@ -985,6 +995,16 @@ async function runNvidiaTool(name, rawArgs, sources, clientActions, state, opts 
   const args = v.args;
   state.calls += 1;
   state.tools.push(name); // validated — safe to show in the HUD
+
+  // Evaluation mode intercepts here: AFTER validation and accounting, so the
+  // registry, forcing and success rules under test behave exactly as in
+  // production — only the side effect is replaced.
+  if (FAKE_TOOLS) {
+    const r = fakeToolResult(name, args);
+    if (UNTRUSTED_SKILLS.has(name) || name === "fetch_page") state.readUntrusted = true;
+    if (r.clientAction) clientActions.push(r.clientAction);
+    return { ok: r.ok, content: r.content };
+  }
 
   if (name === "web_search") {
     const sr = await webSearch(args.query, 5);
@@ -1895,6 +1915,28 @@ async function handleRequest(req, res) {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Chat failed. Check the server log / API key." }));
     }
+    return;
+  }
+
+  // Run metadata for the evaluation harness. A benchmark number is meaningless
+  // without knowing which model, endpoint, prompt and tool set produced it, so
+  // the harness stamps every report with these. Only exposed in fake-tool mode.
+  if (url.pathname === "/api/eval/meta" && FAKE_TOOLS) {
+    const sha = (s) => createHash("sha256").update(s).digest("hex").slice(0, 12);
+    const caps = currentCaps();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        provider: LLM_PROVIDER,
+        model: NVIDIA_MODEL,
+        endpoint: NVIDIA_BASE,
+        temperature: 0.3,
+        systemPromptHash: sha(ARTEMIS_SYSTEM_PROMPT),
+        toolRegistryHash: sha(JSON.stringify(openaiToolDefs(caps))),
+        capabilities: caps,
+        tools: openaiToolDefs(caps).map((t) => t.function.name)
+      })
+    );
     return;
   }
 

@@ -13,3 +13,6 @@ assets/music.*
 public/oww/*.wasm
 public/oww/*.onnx
 public/oww/ort.min.js
+
+# ad-hoc evaluation reports (the committed baseline lives in eval/baseline-*.json)
+eval/results/

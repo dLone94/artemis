@@ -76,7 +76,14 @@ const FAMILY_PATTERNS = {
 // referent of its own. If nothing earlier in the conversation supplies one,
 // forcing a tool would make her guess — she should ask instead.
 const PRONOUN_ONLY_RE =
-  /\b(open|play|read|show|pull\s+up|put\s+on)\s+(it|that|this|them|those|these|the\s+(first|second|third|fourth|last|next|one))\b[\s.!?]*$/i;
+  /\b(open|play|read|show|pull\s+up|put\s+on)\s+((it|that|this|them|those|these)(\s+one)?|the\s+(first|second|third|fourth|last|next|one))\b[\s.!?]*$/i;
+
+// Detection is deliberately recall-biased — missing a real request is the bug we
+// are fixing, so borderline turns lean toward acting. That bias has one sharp
+// edge: "don't open anything" contains "open". An explicitly negated action is
+// conversation, and forcing a tool there would be acting against instruction.
+const NEGATED_ACTION_RE =
+  /\b(don'?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|send|text|message|remind|remember|check|save|add|cancel)\w*\b/i;
 
 function capOk(entry, caps) {
   return !entry.requires || !!caps[entry.requires];
@@ -220,6 +227,7 @@ function historyHasReferent(history = []) {
 export function classifyIntent(text, caps = {}, history = []) {
   const s = String(text || "").trim();
   if (!s) return { intent: "chat", family: null, expected: [], reason: "empty" };
+  if (NEGATED_ACTION_RE.test(s)) return { intent: "chat", family: null, expected: [], reason: "action is negated" };
 
   const tools = availableTools(caps);
   const families = new Set(tools.map((t) => t.family));
