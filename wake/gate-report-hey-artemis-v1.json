@@ -1,0 +1,106 @@
+{
+  "model": "hey_artemis.onnx",
+  "negativeHours": 1.079,
+  "positiveTrials": 35,
+  "cadenceMs": 240,
+  "cooldownS": 2.0,
+  "gate": {
+    "maxFaPerHourUpper95": 1.0,
+    "minRecall": 0.85
+  },
+  "sweep": [
+    {
+      "threshold": 0.05,
+      "recall": 1.0,
+      "falseAccepts": 125,
+      "faPerHour": 115.881,
+      "faPerHourUpper95": 134.435
+    },
+    {
+      "threshold": 0.1,
+      "recall": 1.0,
+      "falseAccepts": 98,
+      "faPerHour": 90.851,
+      "faPerHourUpper95": 107.458
+    },
+    {
+      "threshold": 0.15,
+      "recall": 1.0,
+      "falseAccepts": 85,
+      "faPerHour": 78.799,
+      "faPerHourUpper95": 94.374
+    },
+    {
+      "threshold": 0.2,
+      "recall": 1.0,
+      "falseAccepts": 77,
+      "faPerHour": 71.383,
+      "faPerHourUpper95": 86.283
+    },
+    {
+      "threshold": 0.3,
+      "recall": 1.0,
+      "falseAccepts": 67,
+      "faPerHour": 62.112,
+      "faPerHourUpper95": 76.118
+    },
+    {
+      "threshold": 0.4,
+      "recall": 1.0,
+      "falseAccepts": 56,
+      "faPerHour": 51.915,
+      "faPerHourUpper95": 64.857
+    },
+    {
+      "threshold": 0.5,
+      "recall": 1.0,
+      "falseAccepts": 48,
+      "faPerHour": 44.498,
+      "faPerHourUpper95": 56.6
+    },
+    {
+      "threshold": 0.6,
+      "recall": 1.0,
+      "falseAccepts": 42,
+      "faPerHour": 38.936,
+      "faPerHourUpper95": 50.361
+    },
+    {
+      "threshold": 0.7,
+      "recall": 1.0,
+      "falseAccepts": 32,
+      "faPerHour": 29.666,
+      "faPerHourUpper95": 39.847
+    },
+    {
+      "threshold": 0.8,
+      "recall": 1.0,
+      "falseAccepts": 28,
+      "faPerHour": 25.957,
+      "faPerHourUpper95": 35.588
+    },
+    {
+      "threshold": 0.9,
+      "recall": 1.0,
+      "falseAccepts": 17,
+      "faPerHour": 15.76,
+      "faPerHourUpper95": 23.639
+    },
+    {
+      "threshold": 0.95,
+      "recall": 1.0,
+      "falseAccepts": 11,
+      "faPerHour": 10.198,
+      "faPerHourUpper95": 16.879
+    },
+    {
+      "threshold": 0.99,
+      "recall": 0.9714,
+      "falseAccepts": 2,
+      "faPerHour": 1.854,
+      "faPerHourUpper95": 5.837
+    }
+  ],
+  "operatingPoint": null,
+  "verdict": "FAIL"
+}

@@ -86,14 +86,19 @@ The pipeline works end to end and the model exports with the exact browser
 contract. It does **not** pass the gate, so `manifest.json` is absent and the
 shipped **“Hey Jarvis”** profile is still what runs.
 
-Measured on 1.08 h of unseen LibriSpeech with 222 synthetic training speakers and
-1,776 positive utterances:
+Measured on 1.08 h of unseen LibriSpeech, at two corpus sizes. The second run
+used 7.6x the positives (222 speakers, 1,776 utterances vs 116 and 232):
 
-| threshold | recall | false accepts/hour (95% ub) |
-|---|---|---|
-| 0.50 | 1.00 | 89.3 |
-| 0.90 | 1.00 | 44.1 |
-| 0.99 | 1.00 | 13.4 |
+| threshold | recall | FA/h (95% ub) — 232 positives | FA/h (95% ub) — 1,776 positives |
+|---|---|---|---|
+| 0.50 | 1.00 | 89.3 | 56.6 |
+| 0.90 | 1.00 | 44.1 | 23.6 |
+| 0.99 | 1.00 / 0.97 | 13.4 | **5.8** |
+
+Scaling the corpus 7.6x cut false accepts about 4x, with recall essentially
+unchanged. That is the useful result: the curve says this is a **data problem,
+not an architecture problem**, and it says roughly how much further there is to
+go. The gate wants ≤ 1.0 and the best point is 5.8.
 
 Two things were learned, and both are in the code now:
 
@@ -102,11 +107,12 @@ Two things were learned, and both are in the code now:
    recall nobody needed and paid for it in false accepts. `--pos-weight` now
    defaults to 1.0, and checkpoints are selected on estimated false accepts per
    hour rather than accuracy.
-2. **The corpus is still roughly two orders of magnitude too small.**
+2. **The corpus is still roughly an order of magnitude too small.**
    openWakeWord's own models train on tens of thousands of synthetic positives
    and millions of negative windows; this used 1,776 and 90,000. Recall pinned at
    1.00 across every threshold is the signature of a decision boundary that hasn't
-   been pushed anywhere near where it needs to be.
+   been pushed anywhere near where it needs to be — only at 0.99, on the larger
+   corpus, does it finally start to bite.
 
 The honest next step is scale, not architecture: generate ~30k positives across
 every available speaker, add a much larger and more varied negative pool (MUSAN
