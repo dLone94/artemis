@@ -17,6 +17,8 @@
 // recorded. One mic, zero gap, and the result is a plain 16 kHz WAV for batch
 // STT — no MediaRecorder, no chunk streaming, no ordering hazards.
 
+import { resolveWakeProfile, FALLBACK_PROFILE } from "./wakeProfile.js";
+
 let ort = null;
 let melSess = null, embSess = null, wwSess = null;
 let ctx = null, node = null, micStream = null;
@@ -25,8 +27,15 @@ let mode = "detect"; // "detect" | "capture" | "idle" (idle: her speech — keep
 let onDetectCb = null;
 let lastFire = 0;
 
-const THRESHOLD = 0.5;      // hey_jarvis fires reliably around here
-const COOLDOWN_MS = 2000;   // one utterance = one trigger
+// Detection thresholds come from the active wake profile — a custom model has
+// its own operating point, chosen from its ROC, and hardcoding one here is how
+// the UI and the engine drift apart. These are the fallback's values until the
+// profile resolves.
+let profile = FALLBACK_PROFILE;
+const THRESHOLD = () => profile.threshold;
+const COOLDOWN_MS = () => profile.cooldownMs || 2000;   // one utterance = one trigger
+/** The verified profile currently driving detection (phrase, threshold, id). */
+export function activeWakeProfile() { return profile; }
 const BUF = 32000;          // 2 s of 16 kHz audio (≥196 mel frames)
 const audio = new Float32Array(BUF);
 let filled = 0;
@@ -65,16 +74,26 @@ function loadOrt() {
 
 async function ensureModels() {
   if (wwSess) return;
+  // Resolve and hash-verify the wake profile BEFORE loading anything. If the
+  // active profile doesn't check out this rolls back to the shipped Jarvis model
+  // rather than starting recognition with an unverified classifier.
+  const resolved = await resolveWakeProfile();
+  profile = resolved.profile;
+  if (resolved.fellBack && resolved.reason) console.warn("wake profile rolled back:", resolved.reason);
+
   ort = await loadOrt();
   ort.env.wasm.wasmPaths = "/oww/";
   ort.env.wasm.numThreads = 1;   // no threads → no COOP/COEP header requirement
   ort.env.wasm.simd = true;
   ort.env.logLevel = "error";
   const opt = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
+  // build sessions from the ALREADY VERIFIED bytes where we have them, so the
+  // file can't change between the hash check and the load
+  const src = (url) => (resolved.bytes && resolved.bytes[url] ? new Uint8Array(resolved.bytes[url]) : url);
   [melSess, embSess, wwSess] = await Promise.all([
-    ort.InferenceSession.create("/oww/melspectrogram.onnx", opt),
-    ort.InferenceSession.create("/oww/embedding_model.onnx", opt),
-    ort.InferenceSession.create("/oww/hey_jarvis_v0.1.onnx", opt),
+    ort.InferenceSession.create(src("/oww/melspectrogram.onnx"), opt),
+    ort.InferenceSession.create(src("/oww/embedding_model.onnx"), opt),
+    ort.InferenceSession.create(src(profile.classifierUrl), opt),
   ]);
 }
 
@@ -136,7 +155,7 @@ function pushFrame(f) {
   infer().then((score) => {
     if (window.__wakeDebug) window.__wakeDebug.score = score;
     if (!running || mode !== "detect") return;
-    if (score >= THRESHOLD && performance.now() - lastFire > COOLDOWN_MS) {
+    if (score >= THRESHOLD() && performance.now() - lastFire > COOLDOWN_MS()) {
       lastFire = performance.now();
       onDetectCb && onDetectCb(score);
     }

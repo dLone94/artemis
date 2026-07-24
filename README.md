@@ -85,9 +85,15 @@ self-signed-cert warning once. The token gates every request; loopback stays ung
 node test/confirm-gate.test.mjs   # proves consequential actions can't fire without a spoken "yes"
 ```
 
-## Wake word ("Hey Jarvis")
+## Wake word (ships as "Hey Jarvis")
 
-Say **“Hey Jarvis”** to wake her hands-free. Detection runs **fully on-device** via
+Say the active wake phrase — **“Hey Jarvis”** out of the box — to wake her
+hands-free. The phrase, the classifier and its threshold all come from one
+verified *wake profile* (`public/oww/manifest.json`); the UI never hardcodes it,
+so what's displayed is always what the engine actually loaded. Training and
+publishing a custom phrase is documented in [`wake/README.md`](wake/README.md).
+
+Detection runs **fully on-device** via
 [openWakeWord](https://github.com/dscripka/openWakeWord) (ONNX Runtime Web / WASM) — no
 audio ever leaves the browser, no key or account, and it works on **any** browser
 **including iPhone Safari** (where the built-in speech recognizer doesn't exist).

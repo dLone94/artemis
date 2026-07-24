@@ -1159,6 +1159,45 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
   }
 }
 
+// ---- wake profile -----------------------------------------------------------
+// Server-side validation of the wake manifest. The browser verifies asset hashes
+// itself before loading anything; this exists so /api/status reports the profile
+// that will ACTUALLY run, including the rollback. A status line that disagrees
+// with the engine is worse than no status line.
+const WAKE_FALLBACK = { id: "hey-jarvis-v0.1", phrase: "Hey Jarvis", classifier: "hey_jarvis_v0.1.onnx" };
+
+function activeWakeStatus() {
+  const owwDir = join(PUBLIC_DIR, "oww");
+  const engineReady = existsSync(join(owwDir, "ort-wasm-simd.wasm")) &&
+                      existsSync(join(owwDir, "melspectrogram.onnx")) &&
+                      existsSync(join(owwDir, "embedding_model.onnx"));
+  let active = WAKE_FALLBACK;
+  let rolledBack = null;
+  try {
+    const manifest = JSON.parse(readFileSync(join(owwDir, "manifest.json"), "utf8"));
+    const p = manifest && manifest.profiles && manifest.profiles[manifest.active];
+    if (p) {
+      const rel = String(p.classifierUrl || "").replace(/^\/oww\//, "");
+      // every declared asset must exist on disk, or the browser's hash check
+      // would fail anyway — better to report the rollback up front
+      const missing = Object.keys(p.assets || {}).filter(
+        (u) => !existsSync(join(owwDir, String(u).replace(/^\/oww\//, "")))
+      );
+      if (!rel || missing.length) rolledBack = missing.length ? `missing ${missing.length} asset(s)` : "no classifier url";
+      else active = { id: p.id, phrase: p.phrase, classifier: rel, threshold: p.threshold };
+    }
+  } catch (e) {
+    // no manifest at all is the normal state before a custom model is bundled
+    if (e.code !== "ENOENT") rolledBack = "manifest unreadable: " + e.message;
+  }
+  return {
+    ready: engineReady && existsSync(join(owwDir, active.classifier)),
+    phrase: active.phrase,
+    profileId: active.id,
+    rolledBack: rolledBack || undefined
+  };
+}
+
 // One structured line per turn — enough to see which stage failed without a
 // telemetry pipeline. Single-user app; the server log is the dashboard.
 function logTurn(state, extra = {}) {
@@ -1876,13 +1915,11 @@ async function handleRequest(req, res) {
         // Anthropic has built-in search; NVIDIA needs Tavily/Brave for live web answers.
         webEnabled: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? webSearchEnabled : Boolean(anthropicApiKey),
         gmailEnabled: gmailConfigured(),
-        // local openWakeWord engine: on-device "Hey Jarvis" detection (ONNX/WASM),
-        // works on any browser incl. iPhone. Ready when the model files are present.
-        localWake: {
-          ready: existsSync(join(PUBLIC_DIR, "oww", "hey_jarvis_v0.1.onnx")) &&
-                 existsSync(join(PUBLIC_DIR, "oww", "ort-wasm-simd.wasm")),
-          phrase: "Hey Jarvis"
-        },
+        // local openWakeWord engine: on-device detection (ONNX/WASM), works on
+        // any browser incl. iPhone. The phrase is read from the active wake
+        // profile — never hardcoded, or the UI can advertise one wake word while
+        // the engine listens for another.
+        localWake: activeWakeStatus(),
         serverTime: Date.now()
       })
     );

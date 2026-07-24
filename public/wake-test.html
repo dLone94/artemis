@@ -21,7 +21,7 @@
 </head>
 <body>
 <h1>ARTEMIS · WAKE WORD TEST</h1>
-<p>Diagnoses the on-device “Hey Jarvis” pipeline. Tap start, watch the meters, say <b>“Hey Jarvis”</b>, then a command.</p>
+<p>Diagnoses the on-device wake pipeline. Tap start, watch the meters, say the active wake phrase (shown below once the engine loads), then a command.</p>
 
 <div class="card">
   <button id="start">▶ Start engine</button>
@@ -48,7 +48,10 @@
 </div></div>
 
 <script type="module">
-  import { startLocalWake, stopLocalWake, resumeLocalWake, captureCommand } from "/wakeLocal.js";
+  import { startLocalWake, stopLocalWake, resumeLocalWake, captureCommand, activeWakeProfile } from "/wakeLocal.js";
+  // always report the phrase the ENGINE loaded — a diagnostic page that prints a
+  // guess is worse than useless when the thing you're diagnosing is the phrase
+  const phrase = () => activeWakeProfile().phrase;
   const $ = (id) => document.getElementById(id);
   const log = (m) => { $("log").textContent += new Date().toTimeString().slice(0,8) + "  " + m + "\n"; $("log").scrollTop = 1e9; };
   let dets = 0, busy = false;
@@ -77,14 +80,14 @@
     } finally {
       busy = false;
       resumeLocalWake();
-      log("re-armed — say “Hey Jarvis” again.");
+      log("re-armed — say “" + phrase() + "” again.");
     }
   }
 
   $("start").onclick = async () => {
     $("state").textContent = "loading models…";
     const ok = await startLocalWake(null, onWake);
-    $("state").textContent = ok ? "RUNNING — say “Hey Jarvis”" : "FAILED (see log)";
+    $("state").textContent = ok ? "RUNNING — say “" + phrase() + "” (profile " + activeWakeProfile().id + ")" : "FAILED (see log)";
     $("start").disabled = ok; $("stop").disabled = !ok;
     log(ok ? "engine running (models + mic OK)" : "engine failed to start — mic permission? models missing?");
   };

@@ -8,7 +8,7 @@ import { matchWake } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
-import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand } from "./wakeLocal.js";
+import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand, activeWakeProfile } from "./wakeLocal.js";
 import { shouldSpeakFiller, fillerFor } from "./ttsPolicy.js";
 
 const $ = (id) => document.getElementById(id);
@@ -1084,9 +1084,20 @@ function setWakeUi(on) {
 let localWakeCfg = null;    // { key, ready } from /api/status
 let wakeStarting = false;   // re-entrancy guard: the permission prompt takes a while
 
-// The active wake phrase — the local engine wakes on "Hey Jarvis"; the browser
-// fallback still uses "Artemis". Status text reflects whichever is running.
-function wakePhrase() { return localWakeRunning() ? "Hey Jarvis" : "Artemis"; }
+// Strips a leading wake phrase off a transcript. The alternatives come from the
+// profile because every wake word gets misheard differently — the recognizer
+// hears "gervais" for Jarvis and "artist" for Artemis, and a list tuned for one
+// is useless for the other.
+function wakePrefixRe() {
+  const alias = activeWakeProfile().aliasPattern || "(artemis)";
+  return new RegExp(`^\\s*(hey|hi|ok(?:ay)?|a)?[,.\\s]*${alias}\\b[,.!?\\s]*`, "i");
+}
+
+// The active wake phrase comes from the VERIFIED profile the engine actually
+// loaded — never from a constant here. Displaying one phrase while the engine
+// listens for another is worse than displaying nothing: the user says the wrong
+// words and concludes she's broken.
+function wakePhrase() { return localWakeRunning() ? activeWakeProfile().phrase : "Artemis"; }
 
 // The LOCAL wake path: openWakeWord reliably detects "Hey Jarvis" on-device
 // (works on iPhone). On detection the ENGINE ITSELF captures the command from
@@ -1110,8 +1121,9 @@ async function onLocalWake() {
     const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
     const data = await res.json();
     let text = (data.transcript || "").trim();
-    // the pre-roll may include the tail of the wake phrase — scrub it off
-    text = text.replace(/^\s*(hey|hi|ok(?:ay)?|a)?[,.\s]*(jarvis|jervis|jarvys|gervais)\b[,.!?\s]*/i, "").trim();
+    // the pre-roll may include the tail of the wake phrase — scrub it off, using
+    // the mishearings the active profile declares rather than a fixed list
+    text = text.replace(wakePrefixRe(), "").trim();
     if (!text) { setLiveStatus("Didn't catch that — try again."); afterSpeak(); return; }
     setLiveStatus("");
     if (handleConfirmIfPending(text)) return;
@@ -1132,7 +1144,7 @@ async function startWakeLocal() {
   if (!ok) return false;
   setWakeUi(true);
   orb.setStatus("listening");
-  setLiveStatus("● Listening for “Hey Jarvis…”  (on-device)");
+  setLiveStatus(`● Listening for “${activeWakeProfile().phrase}…”  (on-device)`);
   window.__wakeLive = true;
   return true;
 }
@@ -1738,13 +1750,16 @@ fetch("/api/status")
   .then((r) => r.json())
   .then((s) => {
     if (!s.chatEnabled) setLiveStatus("Set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in .env to enable conversation.");
-    // Local openWakeWord engine ready? Then the wake word ("Hey Jarvis") works
-    // reliably — and on iPhone — regardless of the browser recognizer.
+    // Local openWakeWord engine ready? Then the wake word works reliably — and
+    // on iPhone — regardless of the browser recognizer. The phrase shown is the
+    // server's view of the active profile; once the engine loads and verifies
+    // its assets, wakePhrase() takes over from the verified profile itself.
     localWakeCfg = s.localWake || null;
     if (localWakeCfg && localWakeCfg.ready) {
+      const phrase = localWakeCfg.phrase || "Hey Jarvis";
       wakeToggle.disabled = false;
-      wakeToggle.title = "On-device wake word “Hey Jarvis” — works on any browser, including iPhone";
-      window.__wakePhrase = "Hey Jarvis";
+      wakeToggle.title = `On-device wake word “${phrase}” — works on any browser, including iPhone`;
+      window.__wakePhrase = phrase;
     } else if (!SpeechRec) {
       wakeToggle.disabled = true;
       wakeToggle.title = "Wake word needs Chrome or Edge (or the on-device engine — see README)";
