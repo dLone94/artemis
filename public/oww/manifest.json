@@ -1,0 +1,23 @@
+{
+  "active": "hey-artemis-v1",
+  "profiles": {
+    "hey-artemis-v1": {
+      "id": "hey-artemis-v1",
+      "phrase": "Hey Artemis",
+      "aliasPattern": "(artemis|artemus|art[ei]miss|artist|our themis)",
+      "classifierUrl": "/oww/models/hey-artemis-v1/hey_artemis_r2.onnx",
+      "threshold": 0.99,
+      "cooldownMs": 2000,
+      "assets": {
+        "/oww/models/hey-artemis-v1/hey_artemis_r2.onnx": "837d8dd56d9b6cd16b6a82f93e84884a927218bc762487f96a911ee7b273f683",
+        "/oww/melspectrogram.onnx": "ba2b0e0f8b7b875369a2c89cb13360ff53bac436f2895cced9f479fa65eb176f",
+        "/oww/embedding_model.onnx": "70d164290c1d095d1d4ee149bc5e00543250a7316b59f31d056cff7bd3075c1f"
+      },
+      "evaluation": {
+        "verdict": "FAIL",
+        "negativeHours": 5.385,
+        "operatingPoint": {}
+      }
+    }
+  }
+}

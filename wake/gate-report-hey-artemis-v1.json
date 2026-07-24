@@ -1,7 +1,9 @@
 {
-  "model": "hey_artemis.onnx",
-  "negativeHours": 1.079,
-  "positiveTrials": 35,
+  "model": "hey_artemis_r2.onnx",
+  "negativeHours": 5.385,
+  "tightestPossibleUpper95": 0.556,
+  "underpowered": false,
+  "positiveTrials": 19,
   "cadenceMs": 240,
   "cooldownS": 2.0,
   "gate": {
@@ -12,93 +14,93 @@
     {
       "threshold": 0.05,
       "recall": 1.0,
-      "falseAccepts": 125,
-      "faPerHour": 115.881,
-      "faPerHourUpper95": 134.435
+      "falseAccepts": 831,
+      "faPerHour": 154.316,
+      "faPerHourUpper95": 163.417
     },
     {
       "threshold": 0.1,
       "recall": 1.0,
-      "falseAccepts": 98,
-      "faPerHour": 90.851,
-      "faPerHourUpper95": 107.458
+      "falseAccepts": 481,
+      "faPerHour": 89.321,
+      "faPerHourUpper95": 96.317
     },
     {
       "threshold": 0.15,
       "recall": 1.0,
-      "falseAccepts": 85,
-      "faPerHour": 78.799,
-      "faPerHourUpper95": 94.374
+      "falseAccepts": 363,
+      "faPerHour": 67.409,
+      "faPerHourUpper95": 73.526
     },
     {
       "threshold": 0.2,
       "recall": 1.0,
-      "falseAccepts": 77,
-      "faPerHour": 71.383,
-      "faPerHourUpper95": 86.283
+      "falseAccepts": 293,
+      "faPerHour": 54.41,
+      "faPerHourUpper95": 59.936
     },
     {
       "threshold": 0.3,
       "recall": 1.0,
-      "falseAccepts": 67,
-      "faPerHour": 62.112,
-      "faPerHourUpper95": 76.118
+      "falseAccepts": 228,
+      "faPerHour": 42.339,
+      "faPerHourUpper95": 47.251
     },
     {
       "threshold": 0.4,
       "recall": 1.0,
-      "falseAccepts": 56,
-      "faPerHour": 51.915,
-      "faPerHourUpper95": 64.857
+      "falseAccepts": 180,
+      "faPerHour": 33.426,
+      "faPerHourUpper95": 37.824
     },
     {
       "threshold": 0.5,
       "recall": 1.0,
-      "falseAccepts": 48,
-      "faPerHour": 44.498,
-      "faPerHourUpper95": 56.6
+      "falseAccepts": 141,
+      "faPerHour": 26.184,
+      "faPerHourUpper95": 30.112
     },
     {
       "threshold": 0.6,
       "recall": 1.0,
-      "falseAccepts": 42,
-      "faPerHour": 38.936,
-      "faPerHourUpper95": 50.361
+      "falseAccepts": 114,
+      "faPerHour": 21.17,
+      "faPerHourUpper95": 24.733
     },
     {
       "threshold": 0.7,
       "recall": 1.0,
-      "falseAccepts": 32,
-      "faPerHour": 29.666,
-      "faPerHourUpper95": 39.847
+      "falseAccepts": 94,
+      "faPerHour": 17.456,
+      "faPerHourUpper95": 20.72
     },
     {
       "threshold": 0.8,
       "recall": 1.0,
-      "falseAccepts": 28,
-      "faPerHour": 25.957,
-      "faPerHourUpper95": 35.588
+      "falseAccepts": 68,
+      "faPerHour": 12.628,
+      "faPerHourUpper95": 15.452
     },
     {
       "threshold": 0.9,
       "recall": 1.0,
-      "falseAccepts": 17,
-      "faPerHour": 15.76,
-      "faPerHourUpper95": 23.639
+      "falseAccepts": 40,
+      "faPerHour": 7.428,
+      "faPerHourUpper95": 9.669
     },
     {
       "threshold": 0.95,
       "recall": 1.0,
-      "falseAccepts": 11,
-      "faPerHour": 10.198,
-      "faPerHourUpper95": 16.879
+      "falseAccepts": 22,
+      "faPerHour": 4.085,
+      "faPerHourUpper95": 5.834
     },
     {
       "threshold": 0.99,
-      "recall": 0.9714,
-      "falseAccepts": 2,
-      "faPerHour": 1.854,
-      "faPerHourUpper95": 5.837
+      "recall": 1.0,
+      "falseAccepts": 6,
+      "faPerHour": 1.114,
+      "faPerHourUpper95": 2.199
     }
   ],
   "operatingPoint": null,
