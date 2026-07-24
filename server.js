@@ -1301,6 +1301,19 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
     // accumulates that this is clearly the final answer (→ go live).
     let live = false;
     let sawToolCall = false;
+    // How much text to hold before speaking. The buffer exists because models
+    // narrate ("Let me check…") before emitting a tool call, and speaking that
+    // and then the real answer sounds broken.
+    //
+    // On the answer round of an action turn that is already satisfied, none of
+    // that applies — the tool ran, this text IS the answer — so holding it is
+    // pure latency, and it was expensive: short replies never reached 150
+    // characters and so arrived only when the stream closed. Measured, dropping
+    // the wait took "open youtube" from ~3.2s to ~1.9s to first word.
+    //
+    // Every other round keeps a guard, because a chat turn really can narrate
+    // before deciding to search.
+    const liveAfter = (isAction && state.requiredActionSatisfied) ? 0 : 120;
     while (true) {
       const { done, value } = await readWithTimeout(reader); // bounded: stalled model can't hang the turn
       if (done) break;
@@ -1323,7 +1336,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
           // real; if a repair round follows, it is discarded rather than spoken.
           if (!speakAllowed()) continue;
           if (live) onText(d.content);
-          else if (!sawToolCall && contentBuf.length > 150) { live = true; onText(contentBuf); }
+          else if (!sawToolCall && contentBuf.length >= liveAfter) { live = true; onText(contentBuf); }
         }
         if (d.tool_calls) {
           sawToolCall = true;
