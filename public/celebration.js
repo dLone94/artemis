@@ -1,6 +1,6 @@
 /*
  * Artemis revenue celebration module — dependency-free.
- * Loaded BEFORE app.js so the payment poller can call window.celebratePayment(payment).
+ * Loaded before main.js so its payment poller can call window.celebratePayment(payment).
  *
  * Public API:
  *   window.celebratePayment(payment)   payment = { id, amount, currency, customerLabel }
