@@ -4,20 +4,46 @@ import WebKit
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private let mode: RunMode
     private let url: URL
+    private let root: URL
+    private let config: ArtemisConfig
+    private let bridge = BrowserBridge()
+    private var server: ServerController!
     private var window: NSWindow!
     private var webView: WKWebView!
 
-    init(mode: RunMode, url: URL) {
+    init(mode: RunMode, url: URL, root: URL, config: ArtemisConfig) {
         self.mode = mode
         self.url = url
+        self.root = root
+        self.config = config
         super.init()
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        server = ServerController(root: root, config: config)
+        do {
+            try server.start()
+        } catch {
+            presentStartupFailure(error)
+            return
+        }
+        buildWindow()
+        webView.load(URLRequest(url: url))
+    }
+
+    private func buildWindow() {
         let cfg = WKWebViewConfiguration()
         cfg.mediaTypesRequiringUserActionForPlayback = []
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: BrowserBridge.openShimJS,
+                                              injectionTime: .atDocumentStart,
+                                              forMainFrameOnly: false))
+        controller.add(bridge, name: BrowserBridge.messageName)
+        cfg.userContentController = controller
+
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1180, height: 820), configuration: cfg)
         webView.navigationDelegate = self
+        webView.uiDelegate = bridge
 
         window = NSWindow(
             contentRect: webView.frame,
@@ -25,23 +51,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             backing: .buffered, defer: false)
         window.title = "Artemis"
         window.contentView = webView
+        window.setFrameAutosaveName("ArtemisMain")
         window.center()
-        // Even in compat-check mode the app must come forward: the microphone
-        // prompt is what we're testing, and an invisible prompt just hangs.
+        // Even in compat-check mode the app comes forward: the microphone prompt
+        // is part of what's being tested, and an invisible prompt just hangs.
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
         if mode == .compatCheck {
-            // Never hang a scripted run. Report what we have and fail loudly.
             DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
                 print("compat-check timed out after 60s (unanswered permission prompt?)")
                 exit(4)
             }
         }
-        webView.load(URLRequest(url: url))
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ note: Notification) {
+        server?.stop()   // no-op unless we started it
+    }
 
     /// Artemis serves a self-signed certificate so phones can use the mic over
     /// the LAN. Trust it for loopback only — see LoopbackTrust.
@@ -58,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func webView(_ wv: WKWebView, didFinish nav: WKNavigation!) {
         guard mode == .compatCheck else { return }
         // callAsyncJavaScript, not evaluateJavaScript: the probe awaits
-        // getUserMedia, and evaluateJavaScript cannot marshal a Promise.
+        // getUserMedia, and a Promise cannot be marshalled back.
         wv.callAsyncJavaScript(Self.compatProbeJS, arguments: [:], in: nil, in: .page) { result in
             switch result {
             case .success(let value):
@@ -72,18 +101,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     func webView(_ wv: WKWebView, didFailProvisionalNavigation nav: WKNavigation!, withError error: Error) {
-        print("load failed: \(error.localizedDescription)")
-        if mode == .compatCheck { exit(3) }
+        if mode == .compatCheck { print("load failed: \(error.localizedDescription)"); exit(3) }
+        presentLoadFailure(error)
     }
 
     func webView(_ wv: WKWebView, didFail nav: WKNavigation!, withError error: Error) {
-        print("load failed: \(error.localizedDescription)")
-        if mode == .compatCheck { exit(3) }
+        if mode == .compatCheck { print("load failed: \(error.localizedDescription)"); exit(3) }
+        presentLoadFailure(error)
     }
 
-    // Reports every web API the Artemis UI actually depends on. getUserMedia is
-    // invoked for real, not merely feature-detected, because the presence of the
-    // function says nothing about whether the permission plumbing works.
+    // MARK: failure presentation
+    // Every failure says what happened. A blank white window is the worst
+    // possible outcome and the easiest one to ship by accident.
+
+    private func fatalAlert(_ title: String, _ body: String) {
+        let a = NSAlert()
+        a.alertStyle = .critical
+        a.messageText = title
+        a.informativeText = body
+        a.addButton(withTitle: "Quit")
+        a.runModal()
+        NSApp.terminate(nil)
+    }
+
+    private func presentStartupFailure(_ error: Error) {
+        switch error {
+        case ServerError.nodeMissing:
+            fatalAlert("Artemis can't find Node.",
+                       "Looked in:\n" + NodeLocator.searched.joined(separator: "\n") +
+                       "\n\nSet ARTEMIS_NODE to the full path of your node binary and try again.")
+        case ServerError.rootMissing(let path):
+            fatalAlert("Artemis can't find its files.",
+                       "Expected server.js in:\n\(path)\n\n" +
+                       "If you moved the project, rebuild with app/build.sh, " +
+                       "or set ARTEMIS_ROOT to the new location.")
+        case ServerError.foreignServer:
+            fatalAlert("Port \(config.port) is already in use.",
+                       "Something is answering on that port, but it isn't Artemis. " +
+                       "Stop it and reopen Artemis, or set ARTEMIS_PORT to a free port.")
+        case ServerError.timeout(let log):
+            fatalAlert("The Artemis server didn't start.",
+                       (log.isEmpty ? "It produced no output." : "Last output:\n\n" + log) +
+                       "\n\nFull log: \(server.logURL.path)")
+        default:
+            fatalAlert("Artemis failed to start.", "\(error)\n\nLog: \(server.logURL.path)")
+        }
+    }
+
+    private func presentLoadFailure(_ error: Error) {
+        let a = NSAlert()
+        a.alertStyle = .warning
+        a.messageText = "Couldn't load the Artemis interface."
+        a.informativeText = "\(error.localizedDescription)\n\nLog: \(server.logURL.path)"
+        a.addButton(withTitle: "Retry")
+        a.addButton(withTitle: "Quit")
+        if a.runModal() == .alertFirstButtonReturn {
+            webView.load(URLRequest(url: url))
+        } else {
+            NSApp.terminate(nil)
+        }
+    }
+
     static let compatProbeJS = """
       const simdBytes = new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]);
       const out = {

@@ -38,7 +38,7 @@ let repoRoot: URL = {
 let config = ArtemisConfig.load(root: repoRoot)
 
 let app = NSApplication.shared
-let delegate = AppDelegate(mode: mode, url: config.initialURL)
+let delegate = AppDelegate(mode: mode, url: config.initialURL, root: repoRoot, config: config)
 app.setActivationPolicy(.regular)
 app.delegate = delegate
 app.run()
