@@ -14,7 +14,23 @@ struct ArtemisConfig {
     let accessToken: String?
 
     var scheme: String { usesHTTPS ? "https" : "http" }
-    var statusURL: URL { URL(string: "\(scheme)://127.0.0.1:\(port)/api/status")! }
+
+    /// Status URL for probing, carrying the token when there is one.
+    ///
+    /// Without the key this returns 401 rather than JSON whenever the server is
+    /// bound to the LAN — and a probe that reads 401 as "nothing there" would
+    /// make the app try to spawn a second server onto an occupied port.
+    var statusURL: URL {
+        var c = URLComponents()
+        c.scheme = scheme
+        c.host = "127.0.0.1"
+        c.port = Int(port)
+        c.path = "/api/status"
+        if let token = accessToken, !token.isEmpty {
+            c.queryItems = [URLQueryItem(name: "key", value: token)]
+        }
+        return c.url!
+    }
 
     /// First load carries `?key=`; the server answers with a cookie and a 302,
     /// and every later request rides the cookie.
