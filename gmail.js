@@ -10,8 +10,9 @@
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
-// readonly = check/read; compose = create DRAFTS (drafts never send by themselves)
-const SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose";
+// readonly = check/read. That's all Artemis does with Gmail; no draft/send scope
+// is requested, so a compromised token can never send or alter mail.
+const SCOPES = "https://www.googleapis.com/auth/gmail.readonly";
 
 const env = (k) => process.env[k] || "";
 export function gmailConfigured() {
