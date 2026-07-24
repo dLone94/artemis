@@ -98,6 +98,19 @@ def main():
     hours = seconds / 3600.0
     print(f"negatives: {hours:.2f} h of unseen speech, {sum(len(s) for s in neg_scores)} scored windows")
 
+    # A gate you cannot pass is not a gate. With k=0 events the tightest bound
+    # this much audio can produce is chi2(0.95,2)/2/hours — on ~1 h that is
+    # 2.77/h, so a PERFECT model would still "fail" a 1/h gate. Say so loudly
+    # rather than reporting a failure the data could never have avoided.
+    if not neg_scores:
+        raise SystemExit(f"no usable audio in {args.negatives} — note that find/rglob does not "
+                         f"follow symlinks; point --negatives at a real directory")
+    floor = poisson_upper(0, hours)
+    if floor > 1.0:
+        print(f"  ⚠️  {hours:.2f} h is too little audio to certify 1.0/h: even zero false "
+              f"accepts would only bound the rate at {floor:.2f}/h.")
+        print(f"      Need at least {chi2.ppf(0.95, 2) / 2.0:.2f} h for a clean run to pass.")
+
     # ---- positives: unseen speakers, spliced into real background ----------
     neg_bed = [read_any(p) for p in files[-40:]]
     pos_files = sorted(Path(args.positives).glob("*.wav"))
@@ -148,6 +161,8 @@ def main():
     report = {
         "model": args.model,
         "negativeHours": round(hours, 3),
+        "tightestPossibleUpper95": round(floor, 3),
+        "underpowered": bool(floor > 1.0),
         "positiveTrials": len(pos_trials),
         "cadenceMs": 240, "cooldownS": COOLDOWN_S,
         "gate": {"maxFaPerHourUpper95": 1.0, "minRecall": 0.85},

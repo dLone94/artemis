@@ -116,16 +116,48 @@ def build(args):
                 add(F.features_2s(w), 0, split)
     print(f"  {sum(1 for v in y if v == 0)} near-miss windows")
 
-    print("continuous-speech negatives…")
-    got = 0
+    # Continuous speech negatives, optionally MINED.
+    #
+    # Recall was already 1.00 at every threshold — the model has plenty of
+    # positive signal and simply isn't discriminative on negatives. So the
+    # useful thing is not more wake-word samples, it's more of the negatives
+    # this model gets WRONG. With --mine, every candidate window is scored by an
+    # existing model and the ones it already rejects confidently are mostly
+    # discarded; what survives is the hard tail that actually moves the false
+    # accept rate.
+    #
+    # Scored during extraction rather than afterwards so memory stays bounded:
+    # the full candidate pool would be gigabytes.
+    miner = None
+    if args.mine:
+        import onnxruntime as ort
+        s = ort.InferenceSession(args.mine, providers=["CPUExecutionProvider"])
+        name = s.get_inputs()[0].name
+        miner = lambda f: float(s.run(None, {name: f[None].astype(np.float32)})[0].reshape(-1)[0])
+        print(f"mining hard negatives with {args.mine} (keep >= {args.mine_threshold}, "
+              f"else 1-in-{args.mine_easy_ratio})…")
+    else:
+        print("continuous-speech negatives…")
+
+    got, seen, hard = 0, 0, 0
     for p in neg_train_files:
         a = read(p)
         for feat, _t in F.stream_windows(a, hop_embeddings=args.neg_hop):
+            seen += 1
+            if miner is not None:
+                score = miner(feat)
+                if score >= args.mine_threshold:
+                    hard += 1
+                elif rng.randrange(args.mine_easy_ratio) != 0:
+                    continue          # an easy negative the model already nails
             add(feat, 0, "train")
             got += 1
         if got >= args.neg_windows:
             break
-    print(f"  {got} continuous windows")
+    if miner is not None:
+        print(f"  {got} kept from {seen} scanned ({hard} hard, {got - hard} sampled easy)")
+    else:
+        print(f"  {got} continuous windows from {seen} scanned")
 
     X = np.stack(X).astype(np.float32)
     y = np.array(y, dtype=np.float32)
@@ -258,6 +290,11 @@ def main():
                     help="deliberately 1.0 — see the note in train()")
     ap.add_argument("--max-fa-hour", type=float, default=2.0,
                     help="checkpoint selection: estimated false accepts/hour a model may have")
+    ap.add_argument("--mine", help="existing model whose mistakes become the new negatives")
+    ap.add_argument("--mine-threshold", type=float, default=0.05,
+                    help="a candidate scoring at or above this is kept as a hard negative")
+    ap.add_argument("--mine-easy-ratio", type=int, default=25,
+                    help="keep 1 in N of the negatives the model already rejects")
     ap.add_argument("--reuse", action="store_true")
     args = ap.parse_args()
 
