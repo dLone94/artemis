@@ -9,7 +9,6 @@ import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
 import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand, activeWakeProfile } from "./wakeLocal.js";
-import { shouldSpeakFiller, fillerFor } from "./ttsPolicy.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -618,14 +617,9 @@ async function ask(text) {
     if (!busy || gotToken) return;
     hud("state", "executing");
     hud("log", "status", "running tools…");
-    if (shouldSpeakFiller({ intentClass, gotToken, busy })) {
-      const line = fillerFor(intentClass);
-      if (line) enqueueTts(line);
-    } else {
-      // action turn (or not yet classified): show the wait, don't claim it
-      orb.setStatus("thinking");
-      setLiveStatus("Working…");
-    }
+    // Show the wait, never announce it. See shouldSpeakFiller.
+    orb.setStatus("thinking");
+    setLiveStatus("Working…");
   }, 1200);
   currentAbort = new AbortController();
   const timer = setTimeout(() => {

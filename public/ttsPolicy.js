@@ -16,27 +16,24 @@ export const INTENT = {
 };
 
 /**
- * May the client speak a filler ("one moment") while waiting for the first token?
+ * May the client speak a filler ("let me check") while waiting for the first token?
  *
- * The rule that matters: never on a turn that is supposed to *do* something.
- * A filler on an action turn is a promise the client is in no position to make —
- * it has no idea whether the tool ran. Silence costs a moment of dead air; a
- * false promise costs the user's trust that anything works.
+ * No. Never. This exists as a function so the rule is testable and so nobody
+ * reintroduces one by accident.
  *
- * Unknown intent is treated as an action turn. The server sends `intent_pending`
- * before it invokes the model, so "unknown" means something went wrong, and the
- * safe answer when we don't know is to say nothing.
+ * It used to fire at 1.2s on every turn, and it was the single most robotic
+ * thing about her: a canned phrase from a fixed list of four, delivered whether
+ * or not anything was actually happening. On an action turn it was worse than
+ * annoying — the client has no idea whether a tool ran, so "let me check" was a
+ * promise it had no standing to make.
+ *
+ * The reason it existed was dead air during tool rounds. That reason is gone:
+ * chat turns now reach the first real word in about a second, so the filler
+ * mostly arrived on top of the actual answer. A person who is thinking simply
+ * pauses; they don't announce that they're about to speak.
  */
-export function shouldSpeakFiller({ intentClass, gotToken = false, busy = true } = {}) {
-  if (!busy || gotToken) return false;
-  return intentClass === INTENT.CHAT;
-}
-
-/** Pick a filler phrase. `rand` is injectable so tests aren't random. */
-const FILLERS = ["Let me check.", "One moment.", "Looking into it.", "Give me a second."];
-export function fillerFor(intentClass, rand = Math.random) {
-  if (!shouldSpeakFiller({ intentClass, gotToken: false, busy: true })) return null;
-  return FILLERS[Math.floor(rand() * FILLERS.length)];
+export function shouldSpeakFiller() {
+  return false;
 }
 
 /**

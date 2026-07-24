@@ -12,7 +12,7 @@ import {
   needsConfirmation,
   classifyIntent
 } from "../toolRegistry.js";
-import { shouldSpeakFiller, fillerFor, mayStreamNarration, failureLine, INTENT } from "../public/ttsPolicy.js";
+import { shouldSpeakFiller, mayStreamNarration, failureLine, INTENT } from "../public/ttsPolicy.js";
 
 const ALL = { search: true, gmail: true };
 const NO_MAIL = { search: true, gmail: false };
@@ -118,16 +118,14 @@ const NO_MAIL = { search: true, gmail: false };
 
 // ---- TTS policy -------------------------------------------------------------
 {
-  // the bug, as an assertion
-  assert.equal(shouldSpeakFiller({ intentClass: INTENT.ACTION }), false, "never fill silence on an action turn");
-  assert.equal(shouldSpeakFiller({ intentClass: null }), false, "unknown intent stays silent");
-  assert.equal(shouldSpeakFiller({ intentClass: INTENT.CLARIFY }), false);
-  assert.equal(shouldSpeakFiller({ intentClass: INTENT.CHAT }), true, "conversation may still get a backchannel");
-  assert.equal(shouldSpeakFiller({ intentClass: INTENT.CHAT, gotToken: true }), false, "no filler once real text arrived");
-  assert.equal(shouldSpeakFiller({ intentClass: INTENT.CHAT, busy: false }), false, "no filler after the turn ended");
-
-  assert.equal(fillerFor(INTENT.ACTION), null, "no phrase to say on an action turn");
-  assert.equal(typeof fillerFor(INTENT.CHAT, () => 0), "string");
+  // The bug, as an assertion. There is no turn of any kind on which she
+  // announces that she is about to answer — a canned "let me check" was the
+  // single most robotic thing she did, and on an action turn it was a promise
+  // the client had no standing to make.
+  for (const cls of [INTENT.ACTION, INTENT.CHAT, INTENT.CLARIFY, null, undefined]) {
+    assert.equal(shouldSpeakFiller({ intentClass: cls }), false, `no filler for intent ${cls}`);
+  }
+  assert.equal(shouldSpeakFiller(), false, "no filler even with no arguments");
 
   // server-side twin: narration is withheld until the action is real
   assert.equal(mayStreamNarration({ intentClass: INTENT.ACTION, actionSatisfied: false }), false);
