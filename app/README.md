@@ -75,6 +75,20 @@ Server output is logged to `~/Library/Logs/Artemis/server.log`.
 - **Moving the project** breaks the baked-in path until you rebuild, or set
   `ARTEMIS_ROOT`.
 
+## The icon
+
+`makeicon.swift` draws it with Core Graphics rather than embedding a bitmap: the
+same amber core and orbital rings the app renders on screen, with every size
+drawn at its own resolution instead of downsampled — which is what keeps it
+legible at 16px in the menu bar.
+
+```bash
+swiftc -O -o /tmp/makeicon app/makeicon.swift && /tmp/makeicon app/AppIcon.icns
+```
+
+`build.sh` regenerates it automatically if `AppIcon.icns` is missing. To use a
+different icon, drop your own `app/AppIcon.icns` in place and rebuild.
+
 ## Tests
 
 ```bash
