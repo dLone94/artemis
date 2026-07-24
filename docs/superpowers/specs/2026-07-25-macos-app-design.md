@@ -122,21 +122,43 @@ app stops being rebuilt. A Developer ID certificate would fix it permanently.
 
 ## WKWebView compatibility
 
-Verified by inspection; confirmed by the spike below before anything else is built.
+**Measured 2026-07-25** by the spike, against the real UI on macOS 27. All green:
 
-| API | Used by | Expectation |
+| API | Used by | Result |
 |---|---|---|
-| `getUserMedia` | wake engine, STT, barge-in | Supported; needs the permission delegate |
-| `AudioWorklet` | `wakeLocal.js:249` mic downsampler | Supported |
-| WASM + SIMD | ONNX Runtime Web | Supported |
-| `crypto.subtle` | `wakeProfile.js:60` hash verification | Needs a secure context; `127.0.0.1` qualifies |
-| SSE / streaming fetch | `/api/chat/stream` | Supported |
-| `MediaRecorder` | `main.js` (3 sites), `wakeLocal.js` (2) | Needs verification |
-| `webkitSpeechRecognition` | browser wake fallback | **Absent in WKWebView** |
+| `getUserMedia` | wake engine, STT, barge-in | ✅ present, permission granted |
+| `AudioWorklet` | `wakeLocal.js:249` mic downsampler | ✅ |
+| WASM + SIMD | ONNX Runtime Web | ✅ both |
+| `crypto.subtle` | `wakeProfile.js:60` hash verification | ✅ (`isSecureContext` true) |
+| SSE (`EventSource`) | `/api/chat/stream` | ✅ |
+| `MediaRecorder` | `main.js` (3 sites), `wakeLocal.js` (2) | ✅ |
+| `webkitSpeechRecognition` | browser wake fallback | ✅ **present** |
 
-The missing `webkitSpeechRecognition` is acceptable and already handled: it is
-the *fallback* wake path, absent on iPhone Safari too, and `main.js` disables
-that route when the on-device openWakeWord engine is available — which it is.
+Two predictions in the original draft were wrong and are corrected here:
+
+- `webkitSpeechRecognition` was expected to be **absent**. It is present on
+  macOS 27, so the browser wake fallback works in the app as well. Nothing needs
+  to handle its absence.
+- The app was expected to load plain `http://127.0.0.1:4100`. This install runs
+  `ARTEMIS_HOST=0.0.0.0` with `ARTEMIS_HTTPS=1` and an access token, so every
+  request is treated as remote and answered with 401. See the next section.
+
+## Transport and authentication
+
+The app cannot assume `http://127.0.0.1:4100`. It reads the project's own `.env`
+— the same file the server reads, so the two cannot disagree — and derives:
+
+- **Scheme** from `ARTEMIS_HTTPS`.
+- **Port** from `ARTEMIS_PORT`/`PORT`.
+- **Token** from `ARTEMIS_ACCESS_TOKEN`. The first load carries `?key=<token>`;
+  the server replies with a `Set-Cookie` and a 302, and every later request
+  rides the `artemis_auth` cookie (`server.js:1700-1715`).
+
+Artemis serves a **self-signed certificate** so phones can use the microphone
+over the LAN, and both `WKWebView` and `URLSession` reject it by default. The app
+supplies a credential for it, **pinned to loopback hosts only**
+(`LoopbackTrust.isLoopback`), so it can never silently accept a bad certificate
+from anywhere else.
 
 ## Error handling
 
@@ -180,9 +202,10 @@ in the default browser; quitting leaves a hand-started server alive.
 
 ## Risks
 
-- **`MediaRecorder` unsupported in WKWebView** — the spike decides; would need
-  the recording paths reworked onto the AudioWorklet capture the wake engine
-  already uses.
+- ~~**`MediaRecorder` unsupported in WKWebView**~~ — **resolved 2026-07-25**: the
+  spike confirms it is supported. No rework needed.
 - **TCC re-prompts on rebuild** — accepted, documented above.
+- **`.env` drift** — the app reads `.env` at launch, so changing the port or
+  token requires restarting the app, not just the server.
 - **Hardcoded repo path** — moving the working copy breaks the app until
   rebuilt; mitigated by a clear alert and the `ARTEMIS_ROOT` override.
