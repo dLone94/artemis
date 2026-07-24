@@ -9,6 +9,7 @@ import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
 import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand } from "./wakeLocal.js";
+import { shouldSpeakFiller, fillerFor } from "./ttsPolicy.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -325,12 +326,19 @@ function stopThinking() {
 }
 
 // ---- "open a website" intent (browser opens URLs in new tabs only) ----
+// A local shortcut that skips the round-trip for a plain "open <site>". It used
+// to announce "Opening X." unconditionally — including when the pop-up was
+// blocked and nothing had actually opened, which is the same lie the server side
+// of this bug told. It now reports what really happened. (It does not re-ask the
+// server on a block: the one-tap Open pill is already on screen, and a second
+// pass would queue a duplicate open.)
 function handleOpenIntent(text) {
   const r = resolveOpenIntent(text);
   if (!r) return false;
   // new tab if pop-ups are allowed, else the one-tap Open pill (never this tab)
-  openUrl(r.url, r.label);
-  const phrase = r.kind === "search" ? `Opening a Google search for ${r.term}.` : `Opening ${r.label}.`;
+  const opened = openUrl(r.url, r.label);
+  const target = r.kind === "search" ? `a Google search for ${r.term}` : r.label;
+  const phrase = opened ? `Opening ${target}.` : `My pop-up was blocked — tap Open and I'll bring up ${target}.`;
   addMsg("user", text);
   addMsg("artemis", phrase, [{ title: `Open ${r.label}`, url: r.url }]);
   conversation.push({ role: "user", content: text });
@@ -601,14 +609,22 @@ async function ask(text) {
   let clientActions = null;
   let toolsUsed = null;
   const t0 = performance.now(); // real time-to-first-word for the HUD
-  // no token after 1.2s almost always means a tool round is running server-side.
-  // MORE HUMAN: fill the silence with a brief spoken backchannel ("let me check")
-  // through the SAME queue, so the real answer plays right after — no dead air.
+  // The server tells us what kind of turn this is (intent_pending) before it
+  // invokes the model. Until that arrives the class is unknown — and unknown
+  // means SILENT. Speaking "let me check" on a turn that turns out to execute
+  // nothing is exactly how she used to sound busy while doing nothing.
+  let intentClass = null;
   const execTimer = setTimeout(() => {
-    if (busy && !gotToken) {
-      hud("state", "executing"); hud("log", "status", "running tools…");
-      const fillers = ["Let me check.", "One moment.", "Looking into it.", "On it.", "Give me a second."];
-      enqueueTts(fillers[Math.floor(Math.random() * fillers.length)]);
+    if (!busy || gotToken) return;
+    hud("state", "executing");
+    hud("log", "status", "running tools…");
+    if (shouldSpeakFiller({ intentClass, gotToken, busy })) {
+      const line = fillerFor(intentClass);
+      if (line) enqueueTts(line);
+    } else {
+      // action turn (or not yet classified): show the wait, don't claim it
+      orb.setStatus("thinking");
+      setLiveStatus("Working…");
     }
   }, 1200);
   currentAbort = new AbortController();
@@ -641,7 +657,10 @@ async function ask(text) {
         const event = evLine.slice(6).trim();
         let data = {};
         try { data = JSON.parse(dataLine.slice(5).trim()); } catch (e) {}
-        if (event === "token") {
+        if (event === "intent_pending") {
+          intentClass = data.intent || null;
+          hud("log", "status", "intent: " + intentClass);
+        } else if (event === "token") {
           if (!gotToken) {
             gotToken = true;
             stopThinking();

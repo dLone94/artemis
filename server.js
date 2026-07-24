@@ -26,11 +26,19 @@ import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, listU
 import { wsConnect } from "./wsClient.js";
 import { edgeTtsSynthesize } from "./edgeTts.js";
 import { wrapUntrusted, UNTRUSTED_SKILLS, dropTaintedOpens } from "./untrusted.js";
+import {
+  openaiToolDefs,
+  toolDefsForFamily,
+  validateToolCall,
+  needsConfirmation,
+  classifyIntent
+} from "./toolRegistry.js";
+import { mayStreamNarration, failureLine } from "./public/ttsPolicy.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
 const ASSETS_DIR = join(__dirname, "assets");
-const DATA_DIR = join(__dirname, ".data");
+const DATA_DIR = process.env.ARTEMIS_DATA_DIR || join(__dirname, ".data");
 const revenueLogPath = join(DATA_DIR, "revenue-events.json");
 
 // Crash-safe writes: write a temp file then atomically rename over the target,
@@ -239,7 +247,9 @@ const ANTHROPIC_MODEL = "claude-opus-4-8";
 
 // --- NVIDIA NIM (OpenAI-compatible) as an alternative, free LLM brain --------
 const nvidiaApiKey = process.env.NVIDIA_API_KEY || "";
-const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1";
+// Overridable so tests can point the whole brain at a local fake endpoint
+// instead of reaching the real NVIDIA cloud.
+const NVIDIA_BASE = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
 const NVIDIA_MODEL = process.env.NVIDIA_MODEL || "qwen/qwen3-next-80b-a3b-instruct"; // fast MoE (~3B active), good tool use
 // Which brain: explicit LLM_PROVIDER, else NVIDIA when its key is set, else Anthropic.
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || (nvidiaApiKey ? "nvidia" : "anthropic")).toLowerCase();
@@ -337,12 +347,15 @@ const TONE = {
 };
 const VOICE_RE = /^aura-[a-z0-9-]+-en$/; // Deepgram Aura voice id (Aura-1 + Aura-2)
 
-function fetchWithTimeout(url, opts, ms) {
+// The timeout signal is created here and would clobber any signal passed in
+// opts, so cancellation is threaded through an explicit `extra` argument and
+// COMPOSED with the timeout: whichever fires first aborts the request. Without
+// this, hanging up mid-turn left the model call running to completion.
+function fetchWithTimeout(url, opts, ms, extra) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  return fetch(url, Object.assign({}, opts, { signal: ctrl.signal })).finally(() =>
-    clearTimeout(timer)
-  );
+  const timer = setTimeout(() => ctrl.abort(new Error("timed out after " + ms + "ms")), ms);
+  const signal = extra ? AbortSignal.any([ctrl.signal, extra]) : ctrl.signal;
+  return fetch(url, Object.assign({}, opts, { signal })).finally(() => clearTimeout(timer));
 }
 
 // fetchWithTimeout only bounds time-to-HEADERS; a stalled upstream BODY would
@@ -913,144 +926,303 @@ async function webSearch(query, n = 5) {
   return { results: [], answer: "", error: "No web search configured. Add TAVILY_API_KEY (or BRAVE_API_KEY) to .env." };
 }
 
-// OpenAI-format tool defs for NVIDIA: web_search + fetch_page + our skills.
-function nvidiaTools() {
-  const fns = [
-    {
-      name: "web_search",
-      description:
-        "Search the web for current/live information — news, weather, prices, places, restaurants, anything time-sensitive. Returns top results with snippets (and sometimes a direct answer).",
-      parameters: { type: "object", properties: { query: { type: "string", description: "The search query." } }, required: ["query"] }
-    },
-    {
-      name: "fetch_page",
-      description: "Fetch and read the readable text of a specific web page URL.",
-      parameters: { type: "object", properties: { url: { type: "string" }, max_chars: { type: "integer" } }, required: ["url"] }
-    },
-    ...skillToolDefs().map((s) => ({ name: s.name, description: s.description, parameters: s.input_schema }))
-  ];
-  return fns.map((f) => ({ type: "function", function: f }));
+// What Artemis can do right now — drives which tools are even offered.
+function currentCaps() {
+  return { search: webSearchEnabled, gmail: gmailConfigured() };
 }
 
-// Execute one NVIDIA tool call → returns the tool_result content string.
-async function runNvidiaTool(name, args, sources, clientActions, state) {
-  if (state && Array.isArray(state.tools)) state.tools.push(name); // HUD: show what ran
+// OpenAI-format tool defs for NVIDIA, straight from the registry.
+function nvidiaTools(caps = currentCaps()) {
+  return openaiToolDefs(caps);
+}
+
+// A fresh per-turn state object. Every field the reliability logic reads lives
+// here, so the streaming and non-streaming paths cannot drift apart.
+function newTurnState(intent) {
+  return {
+    fetches: 0,
+    tools: [], // names of calls that PASSED validation and ran (the HUD list)
+    rejected: [], // {name, error} for calls refused before execution
+    calls: 0, // execution budget counter
+    readUntrusted: false,
+    // The one that matters: did a required action actually succeed? A tool call
+    // is not proof — search and skills routinely return error strings.
+    requiredActionSatisfied: false,
+    forceAttempted: false,
+    intent: intent || { intent: "chat", family: null, expected: [] },
+    id: randomBytes(4).toString("hex")
+  };
+}
+
+const MAX_TOOL_CALLS_PER_TURN = 6;
+
+// Execute one NVIDIA tool call.
+//
+// Validation happens BEFORE anything is recorded or mutated. The old order
+// pushed the name onto state.tools first, so a malformed call still counted as
+// "a tool ran" and suppressed the repair round that should have fixed it.
+//
+// @returns {{ok: boolean, content: string}} — ok drives requiredActionSatisfied
+async function runNvidiaTool(name, rawArgs, sources, clientActions, state, opts = {}) {
+  const caps = opts.caps || currentCaps();
+  const signal = opts.signal;
+
+  const v = validateToolCall(name, rawArgs, caps);
+  if (!v.ok) {
+    state.rejected.push({ name, error: v.error });
+    return { ok: false, content: "Tool call rejected: " + v.error + ". Fix the arguments and call it again." };
+  }
+  if (state.calls >= MAX_TOOL_CALLS_PER_TURN) {
+    state.rejected.push({ name, error: "per-turn tool budget exhausted" });
+    return { ok: false, content: "Tool budget for this turn is used up." };
+  }
+  // A cancelled turn must not keep writing to disk or driving the browser.
+  if (signal && signal.aborted) {
+    state.rejected.push({ name, error: "turn cancelled" });
+    return { ok: false, content: "Turn cancelled." };
+  }
+
+  const args = v.args;
+  state.calls += 1;
+  state.tools.push(name); // validated — safe to show in the HUD
+
   if (name === "web_search") {
     const sr = await webSearch(args.query, 5);
-    if (sr.error) return sr.error;
+    if (sr.error) return { ok: false, content: sr.error };
     for (const r of sr.results) sources.push({ title: r.title, url: r.url });
     const lines = sr.results.map((r, i) => `${i + 1}. ${r.title}\n${r.url}\n${r.content}`).join("\n\n");
-    return (sr.answer ? "Summary: " + sr.answer + "\n\n" : "") + (lines || "No results found.");
+    if (!sr.results.length && !sr.answer) return { ok: false, content: "No results found." };
+    return { ok: true, content: (sr.answer ? "Summary: " + sr.answer + "\n\n" : "") + lines };
   }
   if (name === "fetch_page") {
-    if (state.fetches >= MAX_FETCHES_PER_TURN) return "Fetch limit reached for this turn.";
+    if (state.fetches >= MAX_FETCHES_PER_TURN) return { ok: false, content: "Fetch limit reached for this turn." };
     state.fetches += 1;
     const page = await fetchPage(args.url, args.max_chars);
-    if (page.error) return "Could not fetch that page: " + page.error;
+    if (page.error) return { ok: false, content: "Could not fetch that page: " + page.error };
     sources.push({ title: page.title || page.finalUrl, url: page.finalUrl });
-    if (state) state.readUntrusted = true;
-    return wrapUntrusted("UNTRUSTED_WEB_CONTENT", `url="${page.finalUrl}" title="${(page.title || "").replace(/"/g, "'")}"`, page.text);
+    state.readUntrusted = true;
+    return {
+      ok: true,
+      content: wrapUntrusted("UNTRUSTED_WEB_CONTENT", `url="${page.finalUrl}" title="${(page.title || "").replace(/"/g, "'")}"`, page.text)
+    };
   }
   if (isSkill(name)) {
     try {
-      if (state && UNTRUSTED_SKILLS.has(name)) state.readUntrusted = true;
+      if (UNTRUSTED_SKILLS.has(name)) state.readUntrusted = true;
       const r = await getSkill(name).execute(args, skillCtx);
+      if (signal && signal.aborted) return { ok: false, content: "Turn cancelled." };
       if (Array.isArray(r.sources)) for (const s of r.sources) sources.push(s);
       if (r.openUrl) clientActions.push({ type: "open", url: r.openUrl, label: r.label || "" });
       if (r.panel) clientActions.push({ type: "panel", card: r.panel }); // cockpit context card
       await skillCtx.appendAction({ skill: name, params: args, result: { ok: r.ok, summary: r.summary } });
-      return r.content || r.summary || JSON.stringify(r);
+      return { ok: r.ok !== false, content: r.content || r.summary || JSON.stringify(r) };
     } catch (e) {
-      return "Skill failed: " + e.message;
+      return { ok: false, content: "Skill failed: " + e.message };
     }
   }
-  return "Unknown tool: " + name;
+  return { ok: false, content: "Unknown tool: " + name };
 }
 
-// ---- promise enforcement ----------------------------------------------------
-// The model sometimes SAYS "opening it now" / "playing the music now" without
-// calling any tool — the user hears a promise and nothing happens. If the final
-// reply claims an open/play action but no open clientAction was produced, run
-// ONE corrective round with tool_choice:"required" so the model must do what it
-// said. Confirm-gated skills are never auto-run from here (safety unchanged).
-const ACTION_PROMISE_RE =
-  /\b(opening|playing|pulling (it |that |this )?up|bringing (it |that |this )?up|putting (it |that |some music |music )?on|i.?ve opened|queuing up|firing up)\b/i;
-async function enforcePromisedAction(replyText, convo, sources, clientActions, state) {
-  if (!replyText || !ACTION_PROMISE_RE.test(replyText)) return;
-  // promise already kept if a tab was opened OR any tool actually ran this turn —
-  // checking only type:"open" could re-fire an already-executed action (double open/play)
-  if (clientActions.some((a) => a && a.type === "open")) return;
-  if (state && Array.isArray(state.tools) && state.tools.length) return;
+// Run a batch of tool calls, append each result to the conversation, and record
+// whether the turn's required action was actually accomplished. Shared by the
+// normal rounds and the backstop so success accounting can't diverge.
+async function runToolCalls(toolCalls, convo, sources, clientActions, state, opts) {
+  for (const tc of toolCalls) {
+    const r = await runNvidiaTool(tc.name, tc.arguments, sources, clientActions, state, opts);
+    if (r.ok && isSatisfyingCall(tc.name, state)) state.requiredActionSatisfied = true;
+    convo.push({ role: "tool", tool_call_id: tc.id, content: String(r.content) });
+  }
+}
+
+// A successful call only satisfies the turn if it belongs to the family the user
+// actually asked for — searching the web does not satisfy "open my calendar".
+function isSatisfyingCall(name, state) {
+  const expected = (state.intent && state.intent.expected) || [];
+  return expected.length ? expected.includes(name) : true;
+}
+
+// ---- the backstop -----------------------------------------------------------
+// One POST to the brain. Everything that talks to NVIDIA goes through here so
+// the endpoint stays injectable and cancellation is threaded consistently.
+async function nvidiaChat(body, signal, ms = 30000) {
+  const res = await fetchWithTimeout(
+    NVIDIA_BASE + "/chat/completions",
+    {
+      method: "POST",
+      headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ model: NVIDIA_MODEL }, body))
+    },
+    ms,
+    signal
+  );
+  if (!res.ok) throw new Error("NVIDIA HTTP " + res.status + ": " + (await res.text()).slice(0, 300));
+  return res.json();
+}
+
+// Normalize an OpenAI-shaped tool_calls array into our internal form.
+function normalizeToolCalls(list) {
+  return (list || [])
+    .map((tc, i) => ({
+      id: tc.id || "call_" + i,
+      name: (tc.function && tc.function.name) || "",
+      arguments: (tc.function && tc.function.arguments) || "{}"
+    }))
+    .filter((tc) => tc.name);
+}
+
+// When an action turn produced no usable tool call, this is the repair. Unlike
+// the old best-effort version it is a REAL round: the forced call is executed,
+// its result is appended to the conversation, and one more completion is
+// requested so what the user hears describes what actually happened. Returns the
+// text to speak, or null if the action could not be completed.
+async function backstopToolRound(convo, sources, clientActions, state, opts) {
+  if (state.forceAttempted) return null;
+  state.forceAttempted = true;
+  const caps = opts.caps || currentCaps();
+  const family = state.intent.family;
+
+  // Narrow the model's options to the family the user actually asked about —
+  // "required" alone let it satisfy the constraint with an unrelated call.
+  const familyTools = family ? toolDefsForFamily(caps, family) : nvidiaTools(caps);
+  if (!familyTools.length) return null;
+  const toolChoice =
+    familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].function.name } } : "required";
+
   try {
-    const res = await fetchWithTimeout(
-      NVIDIA_BASE + "/chat/completions",
+    const data = await nvidiaChat(
       {
-        method: "POST",
-        headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: NVIDIA_MODEL,
-          messages: [
-            ...convo,
-            { role: "assistant", content: replyText },
-            {
-              role: "user",
-              content:
-                "You just told me you're opening/playing it, but no tool was called, so NOTHING happened. " +
-                "Do it RIGHT NOW: for music/video call play_media with the query; for a site call open_url " +
-                "with the exact URL. Tool call only — no text."
-            }
-          ],
-          tools: nvidiaTools(),
-          tool_choice: "required",
-          max_tokens: 200,
-          temperature: 0
-        })
+        messages: [
+          ...convo,
+          {
+            role: "user",
+            content:
+              "You did not call a tool, so NOTHING happened yet. Call the correct tool now to actually " +
+              "carry out my request. Tool call only — no prose."
+          }
+        ],
+        tools: familyTools,
+        tool_choice: toolChoice,
+        max_tokens: 256,
+        temperature: 0
       },
+      opts.signal,
       20000
     );
-    if (!res.ok) return;
-    const data = await res.json().catch(() => ({}));
-    const tcs = data.choices?.[0]?.message?.tool_calls || [];
-    for (const tc of tcs) {
-      const name = tc.function && tc.function.name;
-      const s = getSkill(name);
-      if (s && s.requiresConfirmation) continue; // consequential skills still need a spoken yes
-      let args = {};
-      try { args = JSON.parse((tc.function && tc.function.arguments) || "{}"); } catch (e) {}
-      await runNvidiaTool(name, args, sources, clientActions, state);
-    }
+
+    const calls = normalizeToolCalls(data.choices?.[0]?.message?.tool_calls);
+    if (!calls.length) return null;
+
+    // The safety gate still owns consequential actions — a forced round must
+    // never be a way around an explicit spoken yes.
+    const gated = calls.filter((tc) => !needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
+    if (!gated.length) return null;
+
+    convo.push({
+      role: "assistant",
+      content: null,
+      tool_calls: gated.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } }))
+    });
+    await runToolCalls(gated, convo, sources, clientActions, state, opts);
+    if (!state.requiredActionSatisfied) return null; // it ran and still failed — say so honestly
+
+    // One post-tool completion so she reports the real outcome, not a guess.
+    const after = await nvidiaChat(
+      { messages: convo, tools: nvidiaTools(caps), tool_choice: "none", max_tokens: 300, temperature: 0.3 },
+      opts.signal,
+      20000
+    );
+    const text = after.choices?.[0]?.message?.content || "";
+    return text.trim() || null;
   } catch (e) {
-    // best-effort: the reply already streamed; a failed rescue changes nothing
-    console.warn("promise enforcement failed:", e.message);
+    console.warn("[turn " + state.id + "] backstop failed:", e.message);
+    return null;
   }
+}
+
+// One structured line per turn — enough to see which stage failed without a
+// telemetry pipeline. Single-user app; the server log is the dashboard.
+function logTurn(state, extra = {}) {
+  console.log(
+    "[turn " + state.id + "] " +
+      JSON.stringify(
+        Object.assign(
+          {
+            intent: state.intent.intent,
+            family: state.intent.family,
+            expected: state.intent.expected,
+            ran: state.tools,
+            rejected: state.rejected,
+            forced: state.forceAttempted,
+            satisfied: state.requiredActionSatisfied
+          },
+          extra
+        )
+      )
+  );
+}
+
+/** The text of the most recent user message. */
+export function lastUserText(messages) {
+  const m = [...(messages || [])].reverse().find((x) => x && x.role === "user");
+  return m ? String(m.content || "") : "";
 }
 
 // STREAMING NVIDIA brain — forwards the final answer token-by-token via onText so
 // Artemis starts speaking the first sentence while the rest is still generating.
-// Tool rounds run silently, then the next round's answer streams.
-async function streamNvidia(messages, tone, onText) {
+//
+// On a turn that is supposed to DO something, nothing is spoken until a tool has
+// actually succeeded. That is the whole fix: the model's opening narration
+// ("Sure, opening that now") is generated before any tool call exists, and
+// speaking it was what made a turn that executed nothing sound like it worked.
+async function streamNvidia(messages, tone, onText, opts = {}) {
+  const caps = opts.caps || currentCaps();
+  const signal = opts.signal;
   const system = "detailed thinking off\n\n" + ARTEMIS_SYSTEM_PROMPT + (TONE[tone] || "");
-  const tools = nvidiaTools();
+  const tools = nvidiaTools(caps);
   const convo = [{ role: "system", content: system }, ...messages.map((m) => ({ role: m.role, content: m.content }))];
   const sources = [];
   const clientActions = [];
-  const state = { fetches: 0, tools: [], readUntrusted: false };
+  const state = newTurnState(opts.intent || classifyIntent(lastUserText(messages), caps, messages));
+  const toolOpts = { caps, signal };
+  const isAction = state.intent.intent === "executable_action";
 
-  // If it's clearly an "open/show me…" request, FORCE a tool call on the first round
-  // so the model can't just narrate "opening now" without actually calling open_url.
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const openish = lastUser && /\b(open|pull up|pull it up|show me|take me to|navigate to|launch|bring up|maps|play|put on|youtube|music|song|video)\b/i.test(String(lastUser.content || ""));
+  const speakAllowed = () =>
+    mayStreamNarration({ intentClass: state.intent.intent, actionSatisfied: state.requiredActionSatisfied });
+
+  const finishTurn = (extra = {}) => {
+    logTurn(state, extra);
+    return {
+      sources: dedupeSources(sources),
+      clientActions: dropTaintedOpens(clientActions, state.readUntrusted),
+      toolsUsed: state.tools,
+      intent: state.intent.intent,
+      streamed: true
+    };
+  };
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const toolChoice = round === 0 && openish ? "required" : "auto";
+    if (signal && signal.aborted) return finishTurn({ cancelled: true });
+
+    // Round 0 of an action turn is forced, and forced INTO THE RIGHT FAMILY —
+    // plain tool_choice:"required" was satisfiable with any unrelated call.
+    const familyTools = isAction && state.intent.family ? toolDefsForFamily(caps, state.intent.family) : [];
+    const forcing = round === 0 && isAction && familyTools.length > 0;
+    const roundTools = forcing ? familyTools : tools;
+    let toolChoice = "auto";
+    if (forcing) toolChoice = familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].function.name } } : "required";
+    // An unresolvable request ("open it" with no referent) must produce a
+    // question, never a guessed action.
+    if (state.intent.intent === "needs_clarification") toolChoice = "none";
+
     const res = await fetchWithTimeout(
       NVIDIA_BASE + "/chat/completions",
       {
         method: "POST",
         headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: NVIDIA_MODEL, messages: convo, tools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true })
+        body: JSON.stringify({ model: NVIDIA_MODEL, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true })
       },
-      60000
+      60000,
+      signal
     );
     if (!res.ok) {
       const body = await res.text();
@@ -1088,6 +1260,9 @@ async function streamNvidia(messages, tone, onText) {
         const d = ch.delta || {};
         if (d.content) {
           contentBuf += d.content;
+          // On an action turn this text is withheld entirely until the action is
+          // real; if a repair round follows, it is discarded rather than spoken.
+          if (!speakAllowed()) continue;
           if (live) onText(d.content);
           else if (!sawToolCall && contentBuf.length > 150) { live = true; onText(contentBuf); }
         }
@@ -1109,104 +1284,121 @@ async function streamNvidia(messages, tone, onText) {
 
     const toolCalls = tcs.filter(Boolean).filter((tc) => tc.name);
     if (toolCalls.length) {
-      // SAFETY GATE
-      const confirm = toolCalls.find((tc) => { const s = getSkill(tc.name); return s && s.requiresConfirmation; });
+      // SAFETY GATE — validated against the registry, and a mutation on a turn
+      // that read untrusted text needs a spoken yes even if the skill itself
+      // doesn't normally ask.
+      const confirm = toolCalls.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
       if (confirm) {
         let params = {};
         try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
         const confirmId = createPending(confirm.name, params);
-        return { reply: confirmPromptFor(confirm.name, params), sources: dedupeSources(sources), clientActions, pendingAction: { confirmId, name: confirm.name, params } };
+        logTurn(state, { awaitingConfirm: confirm.name });
+        return {
+          reply: confirmPromptFor(confirm.name, params),
+          sources: dedupeSources(sources),
+          clientActions,
+          intent: state.intent.intent,
+          pendingAction: { confirmId, name: confirm.name, params }
+        };
       }
       convo.push({ role: "assistant", content: contentBuf || null, tool_calls: toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })) });
-      for (const tc of toolCalls) {
-        let args = {};
-        try { args = JSON.parse(tc.arguments || "{}"); } catch (e) {}
-        const content = await runNvidiaTool(tc.name, args, sources, clientActions, state);
-        convo.push({ role: "tool", tool_call_id: tc.id, content: String(content) });
-      }
+      await runToolCalls(toolCalls, convo, sources, clientActions, state, toolOpts);
       continue; // next round streams the spoken answer
     }
-    // final round: flush anything still held back (short answers never hit the
-    // 150-char live threshold), then finish the turn
-    if (!live && contentBuf) onText(contentBuf);
-    // if she SAID she's opening/playing something, make sure it actually happened
-    await enforcePromisedAction(contentBuf, convo, sources, clientActions, state);
-    return { sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, state.readUntrusted), toolsUsed: state.tools, streamed: true };
+
+    // No tool call this round.
+    if (isAction && !state.requiredActionSatisfied) {
+      // Everything above was narration about an action that never happened —
+      // it was never spoken, and it is dropped here rather than flushed.
+      const repaired = await backstopToolRound(convo, sources, clientActions, state, toolOpts);
+      if (repaired) onText(repaired);
+      else onText(failureLine(state.intent.family));
+      return finishTurn({ repaired: !!repaired });
+    }
+    // flush anything still held back (short answers never hit the 150-char
+    // live threshold), then finish the turn
+    if (!live && contentBuf && speakAllowed()) onText(contentBuf);
+    return finishTurn();
   }
-  return { sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, state.readUntrusted), toolsUsed: state.tools, streamed: true };
+  // Ran out of rounds. If an action was owed and never landed, say so.
+  if (isAction && !state.requiredActionSatisfied) onText(failureLine(state.intent.family));
+  return finishTurn({ roundsExhausted: true });
 }
 
 // Artemis brain on NVIDIA NIM (OpenAI-compatible), with the same agentic loop,
 // safety gate, sources, and client actions as the Anthropic path.
-async function callNvidia(messages, tone) {
+async function callNvidia(messages, tone, opts = {}) {
+  const caps = opts.caps || currentCaps();
+  const signal = opts.signal;
   const system = "detailed thinking off\n\n" + ARTEMIS_SYSTEM_PROMPT + (TONE[tone] || "");
-  const tools = nvidiaTools();
+  const tools = nvidiaTools(caps);
   const convo = [{ role: "system", content: system }, ...messages.map((m) => ({ role: m.role, content: m.content }))];
   const sources = [];
   const clientActions = [];
-  // shared turn state (fetch count, tools run, untrusted-read taint) — the same
-  // object runNvidiaTool mutates, so this path and streamNvidia stay identical.
-  const state = { fetches: 0, tools: [], readUntrusted: false };
+  const state = newTurnState(opts.intent || classifyIntent(lastUserText(messages), caps, messages));
+  const toolOpts = { caps, signal };
+  const isAction = state.intent.intent === "executable_action";
 
-  // same forcing as streamNvidia: on an explicit "open …" request the model MUST
-  // call a tool in round 0 — Qwen otherwise sometimes narrates without acting
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  const openish = lastUser && /\b(open|pull up|pull it up|show me|take me to|navigate to|launch|bring up|maps|play|put on|youtube|music|song|video)\b/i.test(String(lastUser.content || ""));
+  const finishTurn = (reply, extra = {}) => {
+    logTurn(state, extra);
+    return {
+      reply,
+      sources: dedupeSources(sources),
+      clientActions: dropTaintedOpens(clientActions, state.readUntrusted),
+      toolsUsed: state.tools,
+      intent: state.intent.intent
+    };
+  };
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const res = await fetchWithTimeout(
-      NVIDIA_BASE + "/chat/completions",
-      {
-        method: "POST",
-        headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: NVIDIA_MODEL, messages: convo, tools, tool_choice: round === 0 && openish ? "required" : "auto", max_tokens: 1024, temperature: 0.3 })
-      },
+    if (signal && signal.aborted) return finishTurn("Cancelled.", { cancelled: true });
+
+    // identical forcing policy to streamNvidia — same registry, same family
+    const familyTools = isAction && state.intent.family ? toolDefsForFamily(caps, state.intent.family) : [];
+    const forcing = round === 0 && isAction && familyTools.length > 0;
+    const roundTools = forcing ? familyTools : tools;
+    let toolChoice = "auto";
+    if (forcing) toolChoice = familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].function.name } } : "required";
+    if (state.intent.intent === "needs_clarification") toolChoice = "none";
+
+    const data = await nvidiaChat(
+      { messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3 },
+      signal,
       60000
     );
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error("NVIDIA HTTP " + res.status + ": " + body.slice(0, 300));
-    }
-    const data = await res.json();
     const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
+    const toolCalls = normalizeToolCalls(msg.tool_calls);
 
-    if (msg.tool_calls && msg.tool_calls.length) {
-      // SAFETY GATE: a confirm-required skill stops here and asks first.
-      const confirm = msg.tool_calls.find((tc) => {
-        const s = getSkill(tc.function && tc.function.name);
-        return s && s.requiresConfirmation;
-      });
+    if (toolCalls.length) {
+      const confirm = toolCalls.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
       if (confirm) {
         let params = {};
-        try { params = JSON.parse(confirm.function.arguments || "{}"); } catch (e) {}
-        const confirmId = createPending(confirm.function.name, params);
+        try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
+        const confirmId = createPending(confirm.name, params);
+        logTurn(state, { awaitingConfirm: confirm.name });
         return {
-          reply: confirmPromptFor(confirm.function.name, params),
+          reply: confirmPromptFor(confirm.name, params),
           sources: dedupeSources(sources),
           clientActions,
-          pendingAction: { confirmId, name: confirm.function.name, params }
+          intent: state.intent.intent,
+          pendingAction: { confirmId, name: confirm.name, params }
         };
       }
-
       convo.push(msg); // assistant turn carrying the tool_calls
-      for (const tc of msg.tool_calls) {
-        const name = tc.function && tc.function.name;
-        let args = {};
-        try { args = JSON.parse((tc.function && tc.function.arguments) || "{}"); } catch (e) {}
-        // one shared executor for web_search / fetch_page / skills — same code the
-        // streaming path uses, so sentinel-stripping and the exfil taint can't drift
-        const content = await runNvidiaTool(name, args, sources, clientActions, state);
-        convo.push({ role: "tool", tool_call_id: tc.id, content: String(content) });
-      }
+      await runToolCalls(toolCalls, convo, sources, clientActions, state, toolOpts);
       continue;
     }
 
     const replyText = (msg.content || "").trim();
-    // same net as the streaming path: a spoken "playing it now" must ACT
-    await enforcePromisedAction(replyText, convo, sources, clientActions, state);
-    return { reply: replyText || "(no response)", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, state.readUntrusted), toolsUsed: state.tools };
+    if (isAction && !state.requiredActionSatisfied) {
+      // drop the narration; it describes something that never happened
+      const repaired = await backstopToolRound(convo, sources, clientActions, state, toolOpts);
+      return finishTurn(repaired || failureLine(state.intent.family), { repaired: !!repaired });
+    }
+    return finishTurn(replyText || "(no response)");
   }
-  return { reply: "That took too many steps — try rephrasing?", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, state.readUntrusted), toolsUsed: state.tools };
+  if (isAction && !state.requiredActionSatisfied) return finishTurn(failureLine(state.intent.family), { roundsExhausted: true });
+  return finishTurn("That took too many steps — try rephrasing?", { roundsExhausted: true });
 }
 
 // the active brain
@@ -1771,15 +1963,32 @@ async function handleRequest(req, res) {
       // NVIDIA brain: stream the answer token-by-token so she starts speaking the
       // first sentence while the rest generates (tool rounds run silently first).
       if (nvidiaActive) {
+        const caps = currentCaps();
+        // Classify BEFORE invoking the model and tell the client immediately.
+        // The client used to decide on its own whether to fill the silence with
+        // "let me check"; it has no idea what is running, so the decision belongs
+        // here. It stays silent until this arrives.
+        const intent = classifyIntent(lastUserText(messages), caps, messages);
+        send("intent_pending", { intent: intent.intent, family: intent.family });
+
+        // Hanging up must actually stop the work — model calls, tool calls and
+        // any writes they would have made.
+        const turnAbort = new AbortController();
+        req.on("close", () => { if (!res.writableEnded) turnAbort.abort(new Error("client disconnected")); });
+
         let gotText = false;
-        const meta = await streamNvidia(messages, tone, (t) => { if (t) { gotText = true; send("token", { t }); } });
+        const meta = await streamNvidia(messages, tone, (t) => { if (t) { gotText = true; send("token", { t }); } }, {
+          caps,
+          intent,
+          signal: turnAbort.signal
+        });
         if (meta.reply) {
           // the confirm-gate question must ALWAYS reach the user; if narration
           // already streamed, reset the client's partial text first
           if (gotText) send("reset", {});
           send("token", { t: meta.reply });
         }
-        send("done", { sources: meta.sources, model: NVIDIA_MODEL, pendingAction: meta.pendingAction, clientActions: meta.clientActions, toolsUsed: meta.toolsUsed });
+        send("done", { sources: meta.sources, model: NVIDIA_MODEL, pendingAction: meta.pendingAction, clientActions: meta.clientActions, toolsUsed: meta.toolsUsed, intent: meta.intent });
         try { res.end(); } catch (e) {}
         return;
       }

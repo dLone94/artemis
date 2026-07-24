@@ -10,7 +10,9 @@ import { runResearch, RESEARCH_SITES } from "./research.js";
 import { gmailConfigured, listUnread, readMessage } from "./gmail.js";
 import { stripSentinels } from "./untrusted.js";
 
-const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), ".data");
+// Overridable so tests get their own scratch directory instead of appending to
+// the real reminder/note/action history.
+const DATA_DIR = process.env.ARTEMIS_DATA_DIR || join(dirname(fileURLToPath(import.meta.url)), ".data");
 
 async function readJson(name, dflt) {
   try {
