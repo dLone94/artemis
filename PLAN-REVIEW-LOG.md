@@ -1,0 +1,53 @@
+# Plan Review Log: Fix narrate-don't-execute bug + custom "Hey Artemis" wake word
+Act 1 (grill) complete — plan locked with the user. MAX_ROUNDS=5.
+
+Reviewer model: config pinned `gpt-5.6-sol` was NOT supported on the ChatGPT account (400); overrode to `gpt-5.6-terra` (verified working via probe). Also cleared a stale `~/.codex/models_cache.json` (missing `supports_reasoning_summaries` field, incompatible with codex-cli 0.144.1).
+
+## Round 1 — Codex (INCOMPLETE — usage limit)
+Codex began the review (read-only, ~22 file-reading steps) and emitted two partial findings, then the turn FAILED with: "You've hit your usage limit. Upgrade to Plus to continue using Codex … try again at Aug 23rd, 2026." No `VERDICT:` line was reached.
+
+Partial findings salvaged from the stream before it died:
+1. **Plan targets only one of two NVIDIA loops** — it patched the streaming `streamNvidia` path but not the non-streaming `callNvidia`/`callBrain` fallback; the bug would survive there.
+2. **The forced-tool retry can fire after streaming has already spoken the failed narration** — user hears "I'm on it", then also hears the real result (double-speak) or hears a wrong answer.
+
+### Claude's response
+Both findings judged valid and incorporated into `PLAN.md`:
+- Part 1 step 5 now mandates extracting the intent/force/backstop logic into a shared helper applied to **both** NVIDIA loops, with a test for the non-streaming path.
+- Part 1 step 4 now requires **suppressing narration TTS on actionable intents until the turn resolves** (buffer text; speak only the post-tool result or, for genuine chat, flush normally) — eliminating the double-speak / spoken-failure window.
+- Added risks: buffering latency tradeoff; and an explicit note that Act 2 did NOT complete a full adversarial pass (wake-word training feasibility + model-eval remain unreviewed by Codex).
+
+**Status after R1: Act 2 blocked by account usage limit; user chose self-review, then asked to retry Codex. Retried by RESUMING the same thread with model override `-m gpt-5.6-terra` — succeeded.**
+
+## Round 2 — Codex (resume, COMPLETE) — VERDICT: REVISE
+Codex finished the review it couldn't complete in R1. Verified anchors and found substantial issues. Key findings:
+- **Root cause A (new):** `main.js:604` client-side ~1.2s timer speaks "On it"/"Let me check" independent of the backend — server fixes alone don't stop the false claim.
+- **Backstop bug:** forced retry executes tools but never appends tool-call/result nor requests a post-tool completion → email/search results silently discarded.
+- **Anchor corrections:** `callBrain` does not exist (1213 is `callLLM`); non-streaming has its own trigger (1154) + prompt assembly (1142); the 1790 Anthropic instruction is NOT dead (active when NVIDIA off); shared base prompt at 264. Confirmed correct: streamNvidia 1031, openish 1042, ACTION_PROMISE_RE 976-978, callNvidia 1141.
+- **Safety:** generic `tool_choice:required` can fire wrong tool / unconfirmed mutators; "calendar" intent has no backing tool.
+- **Robustness:** no AbortSignal/cancellation; one-retry under-specified vs multiple tool calls; fallback replays false-success prose; no test seam (`NVIDIA_BASE` hardcoded); no observability; client `handleOpenIntent` bypasses server policy.
+- **Wake word:** my "3.14 no wheels" premise wrong; real blocker is openWakeWord's legacy TF/torchaudio pins + CUDA/CPU-not-MPS; shape-match ≠ contract equivalence (mel norm, backbone version, score orientation, ONNX ops); 9/10 + ≤1/hr bar statistically weak (needs offline ROC scorer); Part 4 phrase locations corrected to main.js 1070/1095/1116; ship hashed model manifest + rollback.
+- **Part 2:** needs gold labels, repeated trials, red-team/prompt-injection corpus, wrong-tool/side-effect as release blockers.
+
+### Claude's response — revised PLAN.md
+Accepted nearly all findings. Rewrote: Part 0 (dedicated branch/worktree, don't grab-bag the audit commit); Part 1 now has 9 steps incl. kill the client filler + non-verbal pending (step 2), policy in shared base prompt 264 applied to both providers (3), registry-derived allowlisted forcing dropping calendar (4), backstop as a real tool round appending call+result+post-tool completion (5), mutator arg-validation via confirm-gate (6), execution budget + honest failure (7), AbortSignal (8), injectable endpoint + expanded tests (9), lightweight local observability (10). Part 2 given real eval criteria + red-team corpus (11). Part 3 leads with a pinned install/export **feasibility spike** (12), diverse data + CPU/remote budget (13), deployment-contract equivalence via Python-vs-browser fixture scoring (14), offline ROC validation (15). Part 4: hashed manifest, feature-flag rollback, corrected phrase anchors (16).
+**Right-sized (not adopted verbatim):** full production telemetry → local structured logging only (single-user app).
+
+## Round 3 — Codex (resume, COMPLETE) — VERDICT: REVISE
+No longer finding *wrong* things — demanding tighter implementation specs and forcing 3 architectural decisions left as "either/or". Material findings incorporated:
+- Streaming still could speak pre-repair narration (flush at 1131 before repair at 1133) → buffer ALL first-response tokens on executable turns until a valid tool call or final failure; discard on repair.
+- "Both providers" was prompt-text only → **decision: scope the reliability guarantee to the NVIDIA path**; Anthropic legacy (shared prompt only).
+- Client can't suppress filler without the server's decision → **`intent_pending` SSE event**, client silent when unknown; route `handleOpenIntent` through shared policy.
+- Recall-biased forcing acts on unresolved references → **three-way intent** (chat / needs_clarification / executable_action); force only executable.
+- No enforceable registry → **single `availableTools()`** driving advertised tools, capability, intent map, filtering, arg validation, auth (native tools inline in nvidiaTools 917; skills.js 428 static).
+- `runNvidiaTool` (937) records before validation; mutators unconfirmed → validate-before-record, effect/confirmation metadata, confirm-gate.
+- A valid tool call ≠ fulfilled action (error strings) → track **`requiredActionSatisfied`** separately.
+- `fetchWithTimeout` (340) overwrites signal → request-scoped controller composed with timeout.
+- `enqueueTts` (491) browser-only → extract pure TTS-policy module for tests.
+- Part 0 needs explicit file allowlist + clean `git diff --cached`.
+- Part 2 must be hermetic (fake tools + synthetic fixtures), versioned rubric, log effective config hash, canary = local opt-in flag.
+- Wake: versioned **`wakeProfile`** (startLocalWake ignores cfg); immutable bundles + atomic manifest + corrupt-asset rollback + verified-Jarvis-before-browser-fallback; event-level FAR + UCB gate; more phrase sites (main.js 1727/1728, .env.example 61); remote-training pivot = data-governance gate → local-only spike, explicit approval before any remote/audio transfer.
+
+### Claude's response — revised PLAN.md (implementation-ready)
+Made all three decisions (scope→NVIDIA; route handleOpenIntent through shared policy; local-only spike) and folded in the architectural backbone: `availableTools()` registry, `intent_pending` SSE, three-way intent, buffer-until-resolved, `requiredActionSatisfied`, validate-before-record, AbortSignal composition, pure TTS-policy module, `wakeProfile` + hashed bundles + rollback, hermetic Part 2. 
+
+**Arbiter judgment:** R1→R3 moved from structural bugs → deep implementation specs. The hard design decisions are now settled; remaining Codex asks are increasingly implementation-detail that TDD surfaces naturally. Pausing the loop at R3 (of MAX 5) to return to the user rather than spend more limited Codex quota chasing spec-completeness. Not faking APPROVED — this is a deliberate arbiter call to ship-review.
