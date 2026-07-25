@@ -95,6 +95,45 @@ import { getSkill } from "../skills.js";
   assert.equal(missing.ok, false);
   assert.equal(opened.length, 0, "nothing opened for an unknown contact");
   assert.match(missing.summary, /don't have a number/i);
+  // The model, not just the user, has to be told how to recover. Without this
+  // it can only retry the identical call — which is exactly the loop the user
+  // hit: read back, confirm, "no number", repeat, forever.
+  assert.match(String(missing.content || ""), /add_contact|phone/i,
+    "the tool result must tell the model how to fix it");
+
+  // THE LOOP FIX: the user says the number, so it arrives as an argument and
+  // the message goes out in that same turn.
+  opened.length = 0;
+  const saved = {};
+  const withNumber = await skill.execute(
+    { to: "wife", body: "on my way", phone: "+359 88 123 4567" },
+    {
+      resolveContact: async () => null,
+      openWhatsApp: async (url) => { opened.push(url); },
+      readJson: async () => saved,
+      writeJson: async (_n, d) => Object.assign(saved, d)
+    }
+  );
+  assert.equal(withNumber.ok, true, "a supplied number is enough to send");
+  assert.equal(opened.length, 1, "opened the chat");
+  assert.ok(opened[0].includes("phone=359881234567"), "used the number the user gave");
+  // and it must not have to be asked twice
+  assert.equal(saved.wife && saved.wife.phone, "359881234567", "remembers it for next time");
+
+  // a supplied number that is junk fails honestly instead of dialling nonsense
+  opened.length = 0;
+  const junk = await skill.execute({ to: "wife", body: "hi", phone: "12345" }, {
+    resolveContact: async () => null, openWhatsApp: async (u) => opened.push(u),
+    readJson: async () => ({}), writeJson: async () => {}
+  });
+  assert.equal(junk.ok, false);
+  assert.equal(opened.length, 0);
+
+  // a known contact still wins when no number is supplied
+  opened.length = 0;
+  const known = await skill.execute({ to: "mom", body: "hi" }, ctx({ name: "Maria", phone: "+359881234567" }));
+  assert.equal(known.ok, true);
+  assert.equal(opened.length, 1);
 
   // contact saved without a number
   opened.length = 0;

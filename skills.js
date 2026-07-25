@@ -420,8 +420,16 @@ const SKILLS = [
     paramSchema: {
       type: "object",
       properties: {
-        to: { type: "string", description: "Contact name or alias, e.g. 'Mom'." },
-        body: { type: "string", description: "The message text." }
+        to: { type: "string", description: "Contact name or alias, e.g. 'Mom' or 'wife'." },
+        body: { type: "string", description: "The message text." },
+        phone: {
+          type: "string",
+          description:
+            "The recipient's phone number with country code, e.g. '+359881234567'. Provide this " +
+            "whenever the user has told you the number, or when a previous attempt said there was " +
+            "no number saved for this contact. It gets saved under the alias, so you only ever " +
+            "need it once."
+        }
       },
       required: ["to", "body"]
     },
@@ -431,19 +439,56 @@ const SKILLS = [
     },
     async execute(p, ctx) {
       const contact = await ctx.resolveContact(p.to);
-      if (!contact) {
+
+      // A number given in the request wins, and is remembered. Without this the
+      // skill had no way to accept a number the user had just spoken aloud: the
+      // model could only retry the identical failing call, and because sending
+      // is confirmation-gated every retry cost another read-back. That was an
+      // infinite loop with a polite voice.
+      let digits = null;
+      let displayName = contact ? contact.name : p.to;
+      if (p.phone) {
+        digits = normalizePhone(p.phone);
+        if (!digits) {
+          return {
+            ok: false,
+            summary: `That number doesn't look right — I need it with the country code, like +359 88 123 4567.`,
+            content: `The phone "${p.phone}" is not a valid number. Ask the user to repeat it with the country code.`
+          };
+        }
+        try {
+          const store = await ctx.readJson("contacts.json", {});
+          const alias = String(p.to || "").toLowerCase().trim();
+          const existing = store[alias] || {};
+          store[alias] = { name: existing.name || displayName, phone: digits, email: existing.email || "" };
+          await ctx.writeJson("contacts.json", store);
+        } catch (e) {
+          // failing to remember shouldn't block this message going out
+        }
+      } else if (!contact) {
         return {
           ok: false,
-          summary: `I don't have a number saved for ${p.to}. Tell me the number and I'll remember it.`
+          summary: `I don't have a number saved for ${p.to}. What's the number?`,
+          // The user is told above; the MODEL is told here. Otherwise its only
+          // option is to repeat the same call and ask again forever.
+          content:
+            `There is no contact saved under "${p.to}", so nothing was sent. ` +
+            `Ask the user for the number. When they give it, call send_message again with ` +
+            `phone set to that number (or call add_contact first) — do NOT retry without a phone.`
         };
+      } else {
+        digits = normalizePhone(contact.phone);
       }
-      const digits = normalizePhone(contact.phone);
+
       if (!digits) {
         return {
           ok: false,
-          summary: contact.phone
-            ? `The number I have for ${contact.name} doesn't look right — it needs the country code.`
-            : `I have ${contact.name} saved, but without a phone number.`
+          summary: contact && contact.phone
+            ? `The number I have for ${displayName} doesn't look right — it needs the country code.`
+            : `I have ${displayName} saved, but without a phone number. What is it?`,
+          content:
+            `The stored number for "${p.to}" is unusable. Ask the user for it, then call ` +
+            `send_message again with the phone argument.`
         };
       }
       if (!whatsappInstalled()) {
@@ -459,9 +504,9 @@ const SKILLS = [
       // codebase spent the day removing.
       return {
         ok: true,
-        to: contact.name,
+        to: displayName,
         body: p.body,
-        summary: `WhatsApp is open with your message to ${contact.name} — press Enter to send it.`
+        summary: `WhatsApp is open with your message to ${displayName} — press Enter to send it.`
       };
     }
   }
