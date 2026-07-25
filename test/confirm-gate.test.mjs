@@ -3,6 +3,11 @@
 import assert from "node:assert";
 import { getSkill, createPending, getPending, dropPending, skillCtx } from "../skills.js";
 
+// send_message now opens WhatsApp for real, so the opener is stubbed — running
+// the test suite must never launch an app or put a message in front of a human.
+const opened = [];
+skillCtx.openWhatsApp = async (url) => { opened.push(url); };
+
 // spy on the real send_message.execute (registry returns the same object)
 let sendCalls = 0;
 const sm = getSkill("send_message");
@@ -42,11 +47,15 @@ async function confirmHandler(id, decision) {
   await confirmHandler(id1, "no");
   await confirmHandler("bogus-id", "yes"); // expired/unknown id must not execute
   assert.equal(sendCalls, 0, "send MUST NOT fire without an explicit yes");
+  assert.equal(opened.length, 0, "and no WhatsApp chat may be opened either");
 
   // 4) an explicit yes executes it exactly once
   const id2 = createPending("send_message", { to: "Mom", body: "hi" });
   await confirmHandler(id2, "yes");
   assert.equal(sendCalls, 1, "send must fire exactly once after yes");
+  // Mom may or may not have a usable number in this developer's store, so assert
+  // the invariant that holds either way: never more than one chat, only after yes.
+  assert.ok(opened.length <= 1, "at most one chat opened, and only after a yes");
 
   // 5) a non-consequential skill is never gated (auto-runs in the loop)
   assert.ok(!gatedSkill([{ name: "remember_note", input: { text: "x" } }]), "remember_note must not be gated");

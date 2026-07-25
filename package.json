@@ -7,7 +7,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/untrusted.test.mjs && node test/confirm-gate.test.mjs && node test/registry.test.mjs && node test/wakeProfile.test.mjs && node test/boot-smoke.test.mjs && node test/reliability.test.mjs && node eval/run.mjs --selftest",
+    "test": "node test/untrusted.test.mjs && node test/confirm-gate.test.mjs && node test/whatsapp.test.mjs && node test/registry.test.mjs && node test/wakeProfile.test.mjs && node test/boot-smoke.test.mjs && node test/reliability.test.mjs && node eval/run.mjs --selftest",
     "eval": "node eval/run.mjs",
     "eval:selftest": "node eval/run.mjs --selftest"
   }

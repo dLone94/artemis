@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import { runResearch, RESEARCH_SITES } from "./research.js";
 import { gmailConfigured, listUnread, readMessage } from "./gmail.js";
 import { stripSentinels } from "./untrusted.js";
+import { normalizePhone, composeUrl, openLocally, whatsappInstalled } from "./whatsapp.js";
 
 // Overridable so tests get their own scratch directory instead of appending to
 // the real reminder/note/action history.
@@ -63,7 +64,10 @@ async function appendAction(entry) {
   await writeJson("action-log.json", log);
 }
 
-export const skillCtx = { readJson, writeJson, resolveContact, appendAction, mutate };
+// openWhatsApp is part of the context rather than imported directly by the
+// skill so tests can swap in a stub — otherwise running the suite would launch
+// WhatsApp on the developer's machine.
+export const skillCtx = { readJson, writeJson, resolveContact, appendAction, mutate, openWhatsApp: openLocally };
 
 // last check_email listing, so "read number 2" can resolve an id (per-process)
 let lastEmailList = [];
@@ -281,8 +285,22 @@ const SKILLS = [
       required: ["alias"]
     },
     async execute(p, ctx) {
+      // Normalise at save time. A number that can't be dialled should fail here,
+      // while the user is still talking about it — not weeks later at the moment
+      // they're trying to tell someone they're running late.
+      let phone = p.phone || "";
+      if (phone) {
+        const digits = normalizePhone(phone);
+        if (!digits) {
+          return {
+            ok: false,
+            summary: `That number doesn't look right — I need it with the country code, like +359 88 123 4567.`
+          };
+        }
+        phone = digits;
+      }
       const c = await ctx.readJson("contacts.json", {});
-      c[p.alias.toLowerCase().trim()] = { name: p.name || p.alias, phone: p.phone || "", email: p.email || "" };
+      c[p.alias.toLowerCase().trim()] = { name: p.name || p.alias, phone, email: p.email || "" };
       await ctx.writeJson("contacts.json", c);
       return { ok: true, summary: "Saved " + (p.name || p.alias) + " to your contacts." };
     }
@@ -395,7 +413,9 @@ const SKILLS = [
   {
     name: "send_message",
     description:
-      "Send an SMS/text message to one of the user's contacts. Use ONLY when the user clearly wants to SEND a message. This is always confirmed with the user before it actually sends.",
+      "Message one of the user's saved contacts on WhatsApp ('text my wife I'll be late', " +
+      "'message Mom that I landed'). Opens their WhatsApp chat with the message typed in, ready " +
+      "for the user to send. Always confirmed with the user first.",
     requiresConfirmation: true, // <-- consequential: cannot fire without an explicit yes
     paramSchema: {
       type: "object",
@@ -406,18 +426,42 @@ const SKILLS = [
       required: ["to", "body"]
     },
     confirmPrompt(p) {
-      return `You want me to text ${p.to}: “${p.body}”. Should I send it?`;
+      // Honest about what will happen: she opens the chat, the user sends it.
+      return `You want to message ${p.to}: “${p.body}”. Want me to open WhatsApp with that ready?`;
     },
     async execute(p, ctx) {
       const contact = await ctx.resolveContact(p.to);
-      const dest = contact ? contact.phone || contact.name : p.to;
-      // No Twilio connected yet — record the intent, don't actually send.
+      if (!contact) {
+        return {
+          ok: false,
+          summary: `I don't have a number saved for ${p.to}. Tell me the number and I'll remember it.`
+        };
+      }
+      const digits = normalizePhone(contact.phone);
+      if (!digits) {
+        return {
+          ok: false,
+          summary: contact.phone
+            ? `The number I have for ${contact.name} doesn't look right — it needs the country code.`
+            : `I have ${contact.name} saved, but without a phone number.`
+        };
+      }
+      if (!whatsappInstalled()) {
+        return { ok: false, summary: "WhatsApp isn't installed on this Mac, so I can't open a chat." };
+      }
+      try {
+        await (ctx.openWhatsApp || openLocally)(composeUrl(digits, p.body));
+      } catch (e) {
+        return { ok: false, summary: `I couldn't open WhatsApp: ${e.message}` };
+      }
+      // Never says "sent" — it isn't sent until the user presses Enter, and a
+      // claim that outruns reality is the exact failure the rest of this
+      // codebase spent the day removing.
       return {
         ok: true,
-        simulated: true,
-        to: dest,
+        to: contact.name,
         body: p.body,
-        summary: `(Simulated) I would text ${contact ? contact.name : p.to}, but SMS isn't connected yet — add Twilio keys to actually send.`
+        summary: `WhatsApp is open with your message to ${contact.name} — press Enter to send it.`
       };
     }
   }
