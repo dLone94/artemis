@@ -31,8 +31,9 @@ import { stripSentinels, wrapUntrusted, dropTaintedOpens, UNTRUSTED_SKILLS } fro
   assert.equal(kept.length, 1, "tainted turn drops the open action");
   assert.equal(kept[0].type, "panel", "tainted turn keeps the panel card");
 
-  // 6) the tainting skill set is exactly the email readers
+  // 6) every skill that can return another person's text taints the turn
   assert.ok(UNTRUSTED_SKILLS.has("check_email") && UNTRUSTED_SKILLS.has("read_email"));
+  assert.ok(UNTRUSTED_SKILLS.has("check_messages"), "WhatsApp previews are attacker-controlled too");
   assert.ok(!UNTRUSTED_SKILLS.has("web_search"), "web_search does not taint (would break the maps/search flow)");
 
   console.log("PASS ✅  untrusted: sentinel break-out, title smuggling, and exfil-open guard all hold");

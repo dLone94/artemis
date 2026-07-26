@@ -51,3 +51,39 @@ No longer finding *wrong* things — demanding tighter implementation specs and 
 Made all three decisions (scope→NVIDIA; route handleOpenIntent through shared policy; local-only spike) and folded in the architectural backbone: `availableTools()` registry, `intent_pending` SSE, three-way intent, buffer-until-resolved, `requiredActionSatisfied`, validate-before-record, AbortSignal composition, pure TTS-policy module, `wakeProfile` + hashed bundles + rollback, hermetic Part 2. 
 
 **Arbiter judgment:** R1→R3 moved from structural bugs → deep implementation specs. The hard design decisions are now settled; remaining Codex asks are increasingly implementation-detail that TDD surfaces naturally. Pausing the loop at R3 (of MAX 5) to return to the user rather than spend more limited Codex quota chasing spec-completeness. Not faking APPROVED — this is a deliberate arbiter call to ship-review.
+
+## Act 3 — Build (2026-07-26)
+
+Codex built; Claude specified and verified. Thread `019f9b1f-378b-79d1-a695-2c50a46f014d`.
+
+### Round 1 — Codex build
+Implemented `docs/superpowers/specs/2026-07-26-whatsapp-unread-design.md` in full:
+`macMessages.js`, `check_messages`, registry `messages` family, untrusted
+wrapping, `test/messages.test.mjs`. Reported `npm test` fully green, no deviations.
+
+### Claude's verdict — REJECTED
+The report was accurate and the feature was broken. Every shell command sits
+behind an injected runner, so the suite passed while `recentNotifications()`
+failed on every input. Measured against the real Notification Centre DB:
+`.backup` produced a 3,551,232-byte file that plain sqlite3 could not reopen
+(`unable to open database file (14)`); `VACUUM INTO` produced 1,138,688 bytes
+and queried fine. The `plutil` extraction had therefore never executed at all.
+Dock badge reading was correct throughout, and honest degradation held — it
+reported "count available, details unreadable" rather than "no messages".
+
+### Round 2 — Codex fix
+Switched the snapshot to `VACUUM INTO`, verified the plist extraction against
+real rows, and added a live-system integration test that skips cleanly without
+Full Disk Access and asserts the privacy boundary on the real database.
+
+### Claude's verdict — ACCEPTED
+Verified independently, not from the report: 7 Mail rows and 1 Viber row parse
+with sender/preview/date; WhatsApp correctly reports 0; distinct bundle ids
+return distinct results. Full suite 9/9, including
+`live Notification Centre snapshot parsed 7 filtered row(s); 28 other-app
+row(s) stayed private`. One deviation from the spec (`VACUUM INTO` rather than a
+plain copy) is an improvement over what was specified.
+
+Lesson recorded: a test suite that stubs every side effect proves the logic and
+nothing about the integration. Real-system checks that skip cleanly are worth
+their weight.
