@@ -937,6 +937,10 @@ function currentCaps() {
   return { search: webSearchEnabled, gmail: gmailConfigured() };
 }
 
+// The research skill needs web search, but skills.js cannot import it from here
+// without a cycle — so the capability is handed over at startup instead.
+skillCtx.webSearch = (query) => webSearch(query, 5);
+
 // OpenAI-format tool defs for NVIDIA, straight from the registry.
 function nvidiaTools(caps = currentCaps()) {
   return openaiToolDefs(caps);

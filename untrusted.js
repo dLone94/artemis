@@ -23,7 +23,7 @@ export function wrapUntrusted(tag, attrs, body) {
 
 // Skills whose output feeds text controlled by somebody outside this process
 // into model context. A turn that ran fetch_page or one of these is "tainted".
-export const UNTRUSTED_SKILLS = new Set(["check_email", "read_email", "check_messages"]);
+export const UNTRUSTED_SKILLS = new Set(["check_email", "read_email", "check_messages", "research_investment"]);
 
 // Browser-open actions produced in a tainted turn are a prompt-injection
 // exfiltration risk (a poisoned page/email telling the model to open
