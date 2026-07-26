@@ -1312,6 +1312,57 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
     // question, never a guessed action.
     if (state.intent.intent === "needs_clarification") toolChoice = "none";
 
+    // The forced round runs NON-streaming, and costs nothing to do so.
+    //
+    // Models differ sharply here: openai/gpt-oss-120b emits tool calls
+    // correctly in a normal request but, when streaming, ignores tool_choice
+    // entirely and just talks — measured 0 tool-call deltas across every
+    // variant, including pinning it to one function. That silently turns every
+    // action turn into chatter.
+    //
+    // Streaming buys nothing on this round anyway: an action turn withholds
+    // every token until a tool has actually succeeded (see mayStreamNarration),
+    // so there is no partial output to show. Asking for a plain response makes
+    // the forced round work on both models instead of one.
+    if (forcing) {
+      try {
+        const data = await nvidiaChat(
+          { messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3 },
+          signal, 60000
+        );
+        const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
+        const forced = normalizeToolCalls(msg.tool_calls);
+        if (forced.length) {
+          const confirm = forced.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
+          if (confirm) {
+            let params = {};
+            try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
+            const pre = await precheckSkill(confirm.name, params, skillCtx);
+            if (!pre.ok) {
+              state.rejected.push({ name: confirm.name, error: "precondition failed" });
+              onText(pre.summary);
+              return finishTurn({ preconditionFailed: confirm.name });
+            }
+            const confirmId = createPending(confirm.name, params);
+            logTurn(state, { awaitingConfirm: confirm.name });
+            return {
+              reply: confirmPromptFor(confirm.name, params),
+              sources: dedupeSources(sources),
+              clientActions,
+              intent: state.intent.intent,
+              pendingAction: { confirmId, name: confirm.name, params }
+            };
+          }
+          convo.push({ role: "assistant", content: msg.content || null, tool_calls: forced.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })) });
+          await runToolCalls(forced, convo, sources, clientActions, state, toolOpts);
+          continue;   // the answer round streams normally
+        }
+        // no tool call: fall through to the streaming path, then the backstop
+      } catch (e) {
+        console.warn("[turn " + state.id + "] forced round failed, falling back to streaming:", e.message);
+      }
+    }
+
     const res = await fetchWithTimeout(
       NVIDIA_BASE + "/chat/completions",
       {
