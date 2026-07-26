@@ -1074,19 +1074,40 @@ function isSatisfyingCall(name, state) {
 // ---- the backstop -----------------------------------------------------------
 // One POST to the brain. Everything that talks to NVIDIA goes through here so
 // the endpoint stays injectable and cancellation is threaded consistently.
-async function nvidiaChat(body, signal, ms = 30000) {
-  const res = await fetchWithTimeout(
-    NVIDIA_BASE + "/chat/completions",
-    {
-      method: "POST",
-      headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
-      body: JSON.stringify(Object.assign({ model: NVIDIA_MODEL }, body))
-    },
-    ms,
-    signal
-  );
-  if (!res.ok) throw new Error("NVIDIA HTTP " + res.status + ": " + (await res.text()).slice(0, 300));
-  return res.json();
+// One POST to the brain, with a short timeout and a retry.
+//
+// The endpoint is intermittently flaky: measured on identical request shapes
+// minutes apart, the same call returned in 2s, in 4s, and not at all in 45s.
+// Payload size was not the factor — the SMALLEST request was the one that hung.
+// Against that, waiting longer is the wrong move; a stalled connection rarely
+// recovers, while a fresh one usually answers in a couple of seconds. So this
+// gives up early and tries again instead of leaving the user in silence.
+async function nvidiaChat(body, signal, ms = 30000, attempts = 2) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    if (signal && signal.aborted) throw new Error("cancelled");
+    try {
+      const res = await fetchWithTimeout(
+        NVIDIA_BASE + "/chat/completions",
+        {
+          method: "POST",
+          headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
+          body: JSON.stringify(Object.assign({ model: NVIDIA_MODEL }, body))
+        },
+        ms,
+        signal
+      );
+      if (!res.ok) throw new Error("NVIDIA HTTP " + res.status + ": " + (await res.text()).slice(0, 300));
+      return await res.json();
+    } catch (e) {
+      lastErr = e;
+      // A real HTTP error (bad key, bad model) will fail identically on retry —
+      // only a timeout is worth a second attempt.
+      if (!/timed out/i.test(String(e.message)) || i === attempts - 1) throw e;
+      console.warn("[nvidia] attempt " + (i + 1) + " timed out after " + ms + "ms, retrying once");
+    }
+  }
+  throw lastErr;
 }
 
 // Normalize an OpenAI-shaped tool_calls array into our internal form.
@@ -1326,9 +1347,13 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
     // the forced round work on both models instead of one.
     if (forcing) {
       try {
+        // Deliberately short. This round is an optimisation, not the only
+        // path: if it doesn't answer quickly we fall through to streaming and
+        // then the backstop. Waiting the full 60s here meant a stalled model
+        // cost 60s AND the fallback — which is how a turn reached 65 seconds.
         const data = await nvidiaChat(
           { messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3 },
-          signal, 60000
+          signal, 12000, 2
         );
         const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
         const forced = normalizeToolCalls(msg.tool_calls);
@@ -1370,7 +1395,10 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
         body: JSON.stringify({ model: NVIDIA_MODEL, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true })
       },
-      60000,
+      // 60s was far too long to leave someone waiting in silence. An honest
+      // "I couldn't do that" at 35s beats a correct answer at 65s that they
+      // already assumed had failed.
+      35000,
       signal
     );
     if (!res.ok) {

@@ -7,8 +7,20 @@
 // enforced.  Run: node test/finance.test.mjs
 import assert from "node:assert";
 import { fxRate, worldBankIndicator, usYieldCurve, formatFigure, ALLOWED_HOSTS } from "../finance.js";
-import { getSkill } from "../skills.js";
 import { UNTRUSTED_SKILLS } from "../untrusted.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Briefs are written to disk, so the suite must never touch the real store — a
+// test run was overwriting the user's actual evidence packs with fixtures.
+// This has to happen BEFORE skills.js is loaded, because it reads DATA_DIR at
+// module scope and ESM import statements are hoisted above ordinary code — the
+// obvious fix (assigning process.env at the top of the file) silently does
+// nothing for exactly that reason.
+process.env.ARTEMIS_DATA_DIR = process.env.ARTEMIS_DATA_DIR ||
+  mkdtempSync(join(tmpdir(), "artemis-finance-test-"));
+const { getSkill } = await import("../skills.js");
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
