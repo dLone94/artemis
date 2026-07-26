@@ -708,6 +708,31 @@ const SKILLS = [
       // Honest about what will happen: she opens the chat, the user sends it.
       return `You want to message ${p.to}: “${p.body}”. Want me to open WhatsApp with that ready?`;
     },
+    // Runs BEFORE the confirmation gate. Without it, a missing number costs a
+    // full read-back-and-confirm round before failing.
+    async precheck(p, ctx) {
+      if (p.phone) return { ok: true };            // a supplied number is enough
+      const contact = await ctx.resolveContact(p.to);
+      if (!contact) {
+        return {
+          ok: false,
+          summary: `I don't have a number saved for ${p.to}. What's the number?`,
+          content:
+            `No contact saved under "${p.to}", so there is nothing to confirm yet. Ask the user for ` +
+            `the number, then call send_message again with the phone argument.`
+        };
+      }
+      if (!normalizePhone(contact.phone)) {
+        return {
+          ok: false,
+          summary: contact.phone
+            ? `The number I have for ${contact.name} needs the country code — what is it?`
+            : `I have ${contact.name} saved, but without a phone number. What is it?`,
+          content: `The stored number for "${p.to}" is unusable. Ask for it, then retry with the phone argument.`
+        };
+      }
+      return { ok: true };
+    },
     async execute(p, ctx) {
       const contact = await ctx.resolveContact(p.to);
 
@@ -797,6 +822,28 @@ export function confirmPromptFor(name, params) {
   const s = BY_NAME.get(name);
   if (s && typeof s.confirmPrompt === "function") return s.confirmPrompt(params);
   return `You want me to run "${name}" with ${JSON.stringify(params)}. Confirm?`;
+}
+
+/**
+ * Can this action possibly succeed, before we ask the user to approve it?
+ *
+ * Asking "shall I send this?" and then, after a yes, discovering there was never
+ * a phone number is a wasted round — and it was exactly the loop the user hit:
+ * message read back, yes, "I don't have her number", repeat. Preconditions
+ * belong BEFORE the gate, not after it.
+ *
+ * @returns {Promise<{ok: true} | {ok: false, summary: string, content?: string}>}
+ */
+export async function precheckSkill(name, params, ctx = skillCtx) {
+  const s = BY_NAME.get(name);
+  if (!s || typeof s.precheck !== "function") return { ok: true };
+  try {
+    const r = await s.precheck(params || {}, ctx);
+    return r && r.ok === false ? r : { ok: true };
+  } catch (e) {
+    // A broken precheck must not block a legitimate action.
+    return { ok: true };
+  }
 }
 
 // ---- confirm-before-act pending store (5-min TTL) --------------------------

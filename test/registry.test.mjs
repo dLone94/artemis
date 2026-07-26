@@ -94,6 +94,40 @@ const NO_MAIL = { search: true, gmail: false };
   console.log("  ✓ chat / needs_clarification / executable_action split correctly");
 }
 
+// ---- research must not swallow ordinary research ----------------------------
+// Regression: the research family originally matched bare "research" and "look
+// into", so "research what's on Hacker News" forced the INVESTMENT brief. An
+// investment brief about Hacker News is a worse answer than no answer.
+{
+  const notFinance = [
+    "research what is on Hacker News about rust",
+    "look into GitHub projects for onnx",
+    "research the best coffee in Sofia",
+    "dig into that error message",
+    "look into why the build is slow"
+  ];
+  for (const q of notFinance) {
+    assert.notEqual(classifyIntent(q, ALL).family, "research", `"${q}" is not an investment question`);
+  }
+
+  const finance = [
+    "research Kenyan treasury bills",
+    "look into Nigerian eurobonds",
+    "is a global index fund a good investment",
+    "should I invest in gold",
+    "worth investing in South African property",
+    "analyse emerging market bond yields",
+    "dig into MSCI world ETF",
+    "research REITs in Kenya"
+  ];
+  for (const q of finance) {
+    const c = classifyIntent(q, ALL);
+    assert.equal(c.family, "research", `"${q}" is an investment question`);
+    assert.ok(c.expected.includes("research_investment"), "and forces the research skill");
+  }
+  console.log("  ✓ investment research is recognised without swallowing ordinary research");
+}
+
 // ---- family filtering -------------------------------------------------------
 {
   const nav = toolDefsForFamily(ALL, "navigate").map((d) => d.function.name);

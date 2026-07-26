@@ -178,3 +178,32 @@ import { getSkill } from "../skills.js";
 }
 
 console.log("PASS ✅  whatsapp: right recipient, encoded body, and an honest summary");
+
+// ---- preconditions are checked BEFORE the confirmation gate -----------------
+// The reported loop: message read back, "yes", "I don't have her number",
+// repeat. Confirming an action whose preconditions already fail costs the user a
+// whole round and then tells them no.
+{
+  const { precheckSkill } = await import("../skills.js");
+  const ctx = (c) => ({ resolveContact: async () => c });
+
+  const noContact = await precheckSkill("send_message", { to: "wife", body: "hi" }, ctx(null));
+  assert.equal(noContact.ok, false, "an unknown contact never reaches the confirmation");
+  assert.match(noContact.summary, /what's the number/i, "it asks for the missing piece instead");
+  assert.match(String(noContact.content), /phone argument/, "and tells the model how to recover");
+
+  const noPhone = await precheckSkill("send_message", { to: "wife", body: "hi" }, ctx({ name: "Maria", phone: "" }));
+  assert.equal(noPhone.ok, false);
+  const badPhone = await precheckSkill("send_message", { to: "wife", body: "hi" }, ctx({ name: "Maria", phone: "12345" }));
+  assert.equal(badPhone.ok, false, "an undiallable stored number is caught before asking");
+
+  // and the cases that CAN succeed still get their confirmation, unchanged
+  assert.equal((await precheckSkill("send_message", { to: "wife", body: "hi", phone: "+359881234567" }, ctx(null))).ok, true,
+    "a number supplied inline is enough to proceed");
+  assert.equal((await precheckSkill("send_message", { to: "mom", body: "hi" }, ctx({ name: "Maria", phone: "+359881234567" }))).ok, true,
+    "a good contact still goes through the gate");
+
+  // skills with no precheck are unaffected
+  assert.equal((await precheckSkill("open_url", { url: "https://x.dev" }, {})).ok, true);
+  console.log("  ✓ an impossible send asks for what's missing instead of confirming first");
+}

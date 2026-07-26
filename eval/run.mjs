@@ -93,6 +93,12 @@ function turn(port, text) {
 async function bootServer({ baseUrl, model, gmail }) {
   const port = await freePort();
   const dataDir = mkdtempSync(join(tmpdir(), "artemis-eval-"));
+  // Seed a contact. send_message now checks preconditions BEFORE asking for
+  // confirmation, so with an empty store "text Mom" correctly asks for her
+  // number instead of confirming — which is right, but means the confirmation
+  // path itself can only be exercised with a contact that exists.
+  writeFileSync(join(dataDir, "contacts.json"),
+    JSON.stringify({ mom: { name: "Mom", phone: "359881234567", email: "" } }));
   const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
     env: {

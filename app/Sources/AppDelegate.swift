@@ -135,6 +135,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                        "Expected server.js in:\n\(path)\n\n" +
                        "If you moved the project, rebuild with app/build.sh, " +
                        "or set ARTEMIS_ROOT to the new location.")
+        case ServerError.staleServer:
+            fatalAlert("Artemis is running old code.",
+                       "A server on port \(config.port) started before the current files were saved, " +
+                       "so it is still serving the previous behaviour.\n\nStop it and reopen Artemis:\n" +
+                       "  kill $(lsof -nP -iTCP:\(config.port) -sTCP:LISTEN -t)\n\n" +
+                       "Artemis won't attach to it, because doing so would silently give you stale behaviour.")
         case ServerError.foreignServer:
             fatalAlert("Port \(config.port) is already in use.",
                        "Something is answering on that port, but it isn't Artemis. " +

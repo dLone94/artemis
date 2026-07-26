@@ -82,5 +82,30 @@ done
 kill "$(cat "$DATA/tlspid")" 2>/dev/null
 rm -rf "$DATA"
 
+# 6) a server running code older than the files on disk is refused, not attached
+#    to. This bit the user twice: a long-lived process serves old behaviour while
+#    the files look right, so every "it's fixed now" was wrong.
+PORT=$(free_port); sleep 0.2
+DATA2=$(mktemp -d)
+( cd "$ROOT" && PORT=$PORT ARTEMIS_HOST=127.0.0.1 ARTEMIS_HTTPS= ARTEMIS_ACCESS_TOKEN= \
+    STRIPE_SECRET_KEY= ARTEMIS_DATA_DIR="$DATA2" "$NODE" server.js >"$DATA2/out.log" 2>&1 &
+  echo $! > "$DATA2/pid" )
+for _ in $(seq 1 60); do
+  [ "$("$BIN" --probe "http://127.0.0.1:$PORT/api/status")" = "artemis" ] && break
+  sleep 0.5
+done
+if [ "$("$BIN" --probe "http://127.0.0.1:$PORT/api/status")" = "artemis" ]; then
+  sleep 1
+  touch "$ROOT/skills.js"          # an edit made after the server started
+  if [ "$("$BIN" --probe "http://127.0.0.1:$PORT/api/status")" = "stale" ]; then
+    ok "a server predating the code on disk probes as stale"
+  else
+    bad "a stale server must not read as usable"
+  fi
+else
+  bad "could not start a server for the staleness check"
+fi
+kill "$(cat "$DATA2/pid")" 2>/dev/null; rm -rf "$DATA2"
+
 [ $fails -eq 0 ] && echo "PASS ✅  app: node discovery, transport, and server probing" \
   || { echo "FAIL ❌  $fails check(s)"; exit 1; }

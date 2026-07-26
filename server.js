@@ -4,7 +4,7 @@
 
 import { createServer } from "http";
 import { createServer as createHttpsServer } from "https";
-import { promises as fs, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { promises as fs, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "fs";
 import { extname, join, normalize } from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
@@ -18,6 +18,7 @@ import {
   skillToolDefs,
   isSkill,
   confirmPromptFor,
+  precheckSkill,
   createPending,
   getPending,
   dropPending
@@ -1168,6 +1169,35 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
   }
 }
 
+// A fingerprint of the code this process actually loaded.
+//
+// Twice in one session a stale server served old code while the files on disk
+// were current, and every "it's fixed now" was wrong. A long-lived process holds
+// its modules in memory, so the only honest way to know what is running is to
+// have the running process say so. The app compares this against disk and
+// refuses to attach to a server that is behind.
+const CODE_FILES = ["server.js", "skills.js", "toolRegistry.js", "whatsapp.js", "finance.js", "macMessages.js", "untrusted.js"];
+const PROCESS_STARTED_MS = Date.now();
+
+// Newest mtime among the code files, read LIVE on every call.
+//
+// The first version of this captured the mtime at startup, which cannot work: a
+// snapshot taken at boot is never newer than the boot itself, so an edit made
+// afterwards was invisible. The whole point is to notice edits that happened
+// AFTER this process loaded its modules, so the disk has to be re-read now.
+function codeFingerprint() {
+  const h = createHash("sha256");
+  let newest = 0;
+  for (const f of CODE_FILES) {
+    try {
+      const st = statSync(join(__dirname, f));
+      h.update(f + ":" + st.size + ":" + Math.floor(st.mtimeMs));
+      newest = Math.max(newest, st.mtimeMs);
+    } catch (e) { h.update(f + ":missing"); }
+  }
+  return { hash: h.digest("hex").slice(0, 12), newestFileMs: Math.round(newest), startedMs: PROCESS_STARTED_MS };
+}
+
 // ---- wake profile -----------------------------------------------------------
 // Server-side validation of the wake manifest. The browser verifies asset hashes
 // itself before loading anything; this exists so /api/status reports the profile
@@ -1372,6 +1402,15 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       if (confirm) {
         let params = {};
         try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
+        // Ask only about things that could actually happen. Confirming an action
+        // whose preconditions already fail costs a whole round and then says no —
+        // which is precisely the loop this exists to prevent.
+        const pre = await precheckSkill(confirm.name, params, skillCtx);
+        if (!pre.ok) {
+          state.rejected.push({ name: confirm.name, error: "precondition failed" });
+          onText(pre.summary);
+          return finishTurn({ preconditionFailed: confirm.name });
+        }
         const confirmId = createPending(confirm.name, params);
         logTurn(state, { awaitingConfirm: confirm.name });
         return {
@@ -1455,6 +1494,11 @@ async function callNvidia(messages, tone, opts = {}) {
       if (confirm) {
         let params = {};
         try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
+        const pre = await precheckSkill(confirm.name, params, skillCtx);
+        if (!pre.ok) {
+          state.rejected.push({ name: confirm.name, error: "precondition failed" });
+          return finishTurn(pre.summary, { preconditionFailed: confirm.name });
+        }
         const confirmId = createPending(confirm.name, params);
         logTurn(state, { awaitingConfirm: confirm.name });
         return {
@@ -1942,6 +1986,7 @@ async function handleRequest(req, res) {
         // profile — never hardcoded, or the UI can advertise one wake word while
         // the engine listens for another.
         localWake: activeWakeStatus(),
+        code: codeFingerprint(),
         serverTime: Date.now()
       })
     );

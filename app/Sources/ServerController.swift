@@ -3,6 +3,7 @@ import Foundation
 enum ProbeResult: String {
     case artemis
     case foreign
+    case stale      // it IS Artemis, but running code older than what's on disk
     case none
 }
 
@@ -10,6 +11,7 @@ enum ServerError: Error {
     case nodeMissing
     case rootMissing(String)
     case foreignServer
+    case staleServer
     case timeout(String)
 }
 
@@ -58,7 +60,21 @@ final class ServerController {
                   let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { return }
-            result = (json["chatEnabled"] != nil && json["localWake"] != nil) ? .artemis : .foreign
+            guard json["chatEnabled"] != nil && json["localWake"] != nil else { result = .foreign; return }
+            // Attaching to a running Artemis is only safe if it is running the
+            // CURRENT code. A long-lived process keeps its modules in memory, so
+            // a server started before an edit serves the old behaviour while the
+            // files on disk look right — which made "it's fixed now" wrong twice
+            // in one session. The server reports when it started and how new its
+            // files were; if it predates them, treat it as unusable.
+            if let code = json["code"] as? [String: Any],
+               let started = code["startedMs"] as? Double,
+               let newest = code["newestFileMs"] as? Double,
+               started < newest {
+                result = .stale
+                return
+            }
+            result = .artemis
         }.resume()
         _ = sem.wait(timeout: .now() + timeout + 1.0)
         return result
@@ -71,6 +87,7 @@ final class ServerController {
         switch Self.probe(statusURL: config.statusURL) {
         case .artemis: ownsServer = false; return false
         case .foreign: throw ServerError.foreignServer
+        case .stale: throw ServerError.staleServer
         case .none: break
         }
 
