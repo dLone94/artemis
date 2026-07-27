@@ -16,6 +16,7 @@ const DOT_TONE_BUCKETS = 5;
 const DOT_ALPHA_BUCKETS = 10;
 const DOT_STYLE_GROUPS = DOT_TONE_BUCKETS * DOT_ALPHA_BUCKETS;
 const STYLE_ALPHA_BUCKETS = 16;
+const WORDMARK_LETTERS = ["A","R","T","E","M","I","S"];
 const RIPPLE_POOL_SIZE = 16;
 const HALO_LIFE = 1.25;
 const BASE_SPIN_RATE = TAU / 28;
@@ -637,6 +638,8 @@ export class VoiceOrb {
     };
     window.addEventListener("scroll", this._onScroll, { passive: true });
 
+    this._wordmarkSize = 0;
+    this._wordmarkX = new Float32Array(WORDMARK_LETTERS.length);
     this.resize();
     this._t0 = performance.now();
     this._lastFrameAt = this._t0;
@@ -652,10 +655,22 @@ export class VoiceOrb {
     this.cv.height = Math.max(1, height * this.dpr);
     this.narrow = width < 820;
     const base = Math.min(width, height) * 0.4;
+    this._wordmarkSize = Math.round(base * 0.082);
     this._wordmarkFont =
-      "600 " +
-      Math.round(base * 0.082) +
-      'px "JetBrains Mono", monospace';
+      "600 " + this._wordmarkSize + 'px "JetBrains Mono", monospace';
+    // Per-letter x offsets, measured once here so the frame loop never calls
+    // measureText. Monospace: every glyph advance is equal, gap = one space.
+    {
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.font = this._wordmarkFont;
+      const adv = ctx.measureText("A").width + ctx.measureText(" ").width;
+      const left = -adv * (WORDMARK_LETTERS.length - 1) / 2;
+      for (let i = 0; i < WORDMARK_LETTERS.length; i++) {
+        this._wordmarkX[i] = left + adv * i;
+      }
+      ctx.restore();
+    }
     this._moonTailInitialized = 0;
   }
 
@@ -1557,22 +1572,40 @@ export class VoiceOrb {
     ctx.scale(recede, recede);
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = hudAlpha;
-    const wordmarkAlpha =
-      0.82 + 0.18 * Math.sin((this.reduced ? 0 : time) * 2.6);
-    const wordmarkBucket = Math.max(
-      0,
-      Math.min(
-        STYLE_ALPHA_BUCKETS - 1,
-        Math.round(wordmarkAlpha * (STYLE_ALPHA_BUCKETS - 1))
-      )
-    );
-    ctx.fillStyle = HL_STYLES[wordmarkBucket];
+    // Per-letter animation: a wave of lift and shimmer runs through the word,
+    // her voice amplifies the bob, and thinking scatters the letters outward
+    // so the wordmark dissolves with the globe. All precomputed offsets — no
+    // measureText, no allocation.
+    const wt = this.reduced ? 0 : time;
+    const size = this._wordmarkSize;
+    const bob = size * (0.1 + this.cur.amp * 0.34);
+    const scatter = this._thinkingMix;
     ctx.font = this._wordmarkFont;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.shadowColor = O_STYLES[13];
     ctx.shadowBlur = 14;
-    ctx.fillText("A R T E M I S", 0, 0);
+    const mid = (WORDMARK_LETTERS.length - 1) / 2;
+    for (let i = 0; i < WORDMARK_LETTERS.length; i++) {
+      const phase = wt * 1.9 - i * 0.62;
+      const a = 0.66 + 0.34 * Math.sin(wt * 2.6 + i * 0.9);
+      const bucket = Math.max(
+        0,
+        Math.min(
+          STYLE_ALPHA_BUCKETS - 1,
+          Math.round(a * (1 - scatter * 0.5) * (STYLE_ALPHA_BUCKETS - 1))
+        )
+      );
+      ctx.fillStyle = HL_STYLES[bucket];
+      const x =
+        this._wordmarkX[i] +
+        scatter * (i - mid) * size * 0.5 +
+        (this.reduced ? 0 : Math.sin(wt * 0.7 + i * 1.7) * size * 0.04);
+      const y =
+        Math.sin(phase) * bob -
+        scatter * Math.sin(i * 2.4) * size * 0.55;
+      ctx.fillText(WORDMARK_LETTERS[i], x, y);
+    }
     ctx.shadowBlur = 0;
     ctx.restore();
   }

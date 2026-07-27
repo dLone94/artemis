@@ -226,9 +226,11 @@ const ambient = (() => {
     filter.frequency.value = 120;
     filter.Q.value = 0.6;
     filter.connect(master);
+    // sines, not saws: saw harmonics through small speakers read as BUZZING,
+    // which is exactly the complaint that made this opt-in.
     for (const f of [55, 55.6]) {
       const o = ctx.createOscillator();
-      o.type = "sawtooth";
+      o.type = "sine";
       o.frequency.value = f;
       const g = ctx.createGain();
       g.gain.value = 0.5;
@@ -309,7 +311,7 @@ const ambient = (() => {
       if (ok) localStorage.setItem(AMBIENT_KEY, "1");
       return ok;
     },
-    wanted: () => localStorage.getItem(AMBIENT_KEY) !== "0", // default ON
+    wanted: () => localStorage.getItem(AMBIENT_KEY) === "1", // opt-in — the hum annoyed in practice
   };
 })();
 window.__ambient = ambient; // debug/test handle
