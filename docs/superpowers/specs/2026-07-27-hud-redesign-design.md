@@ -203,3 +203,45 @@ reads CSS tokens. Amber is hardcoded as `rgba(...)` strings in:
 
 Everything else in this spec stands: the tool orb, density styling, and the
 two tests remain the outstanding work.
+
+## Revision 2 — 2026-07-27: the main orb becomes an arc-reactor core
+
+The first pass re-tinted the orb but kept its shape; the user expected the
+centrepiece itself to change. Decision (user-picked from three options): an
+**arc-reactor core** — concentric segmented rotating rings, tick scales, a
+hard bright core — the closest match to the original reference image.
+
+### Shape
+
+Replace the soft wobbling sphere at the centre of `voiceOrb.js` with:
+
+1. **Core**: a hard, small bright disc (white centre falling to `PAL.B`),
+   with a thin inner reticle ring around it. No blob wobble.
+2. **Ring bands**: 3–4 concentric segmented arcs (dash-pattern strokes at
+   different radii), rotating at different speeds, at least one
+   counter-rotating. Segment gaps make the rotation visible.
+3. **Tick scale**: a fine outer tick ring (the existing `ticks` primitive
+   from `orbShared.js`).
+4. **Depth stays**: the existing 3D-projected orbital rings and satellites
+   *outside* the reactor remain as-is — the reactor replaces only the
+   central sphere, so the scene keeps its parallax and the cursor-follow.
+
+### State choreography (must keep exactly these behaviours)
+
+| status | behaviour |
+|---|---|
+| idle | slow rotation, gentle core breathing |
+| listening | rings contract toward the core and brighten; rotation speeds up |
+| thinking | one dashed scanner arc sweeps continuously |
+| speaking | core radius and glow pulse with `this.cur.amp` |
+
+### Constraints
+
+- Public surface unchanged: `constructor(container, {center})`, `resize()`,
+  `setStatus("idle"|"listening"|"thinking"|"speaking")`, `feed(a)`,
+  `connectMic`, `connectMediaElement`, `stopAudio`, `dispose`, and the
+  `cur`/`reduced`/`_ensureAudio` internals main.js touches.
+- Canvas 2D only, `PAL` colours only, reduced-motion renders one static frame.
+- Draw cost must not exceed the current orb's (no per-frame allocations in
+  the hot loop; reuse the existing ring/arc/ticks helpers).
+- The DOM "ARTEMIS" wordmark overlay is untouched.
