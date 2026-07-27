@@ -656,6 +656,7 @@ async function ask(text) {
           hud("log", "status", "intent: " + intentClass);
         } else if (event === "tool") {
           hud("tool", data);
+          orb.toolEvent(data);
         } else if (event === "token") {
           if (!gotToken) {
             gotToken = true;

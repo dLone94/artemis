@@ -10,6 +10,13 @@ export const PAL = {
   B: "rgba(140,236,255,",   // bright cyan (satellites, scanner)
   Hl: "rgba(214,248,255,",  // highlight ice (labels, inner reticle)
   D: "rgba(64,150,170,",    // dim cyan (background ticks)
+  V: "rgba(183,166,255,",        // Artemis globe violet (#b7a6ff)
+  MAIL: "rgba(45,212,191,",      // teal-green agent moon
+  MESSAGES: "rgba(74,222,128,",  // green agent moon
+  ICE: "rgba(214,248,255,",      // memory agent moon
+  GOLD: "rgba(251,191,36,",      // sanctioned finance amber
+  OK: "rgba(74,222,128,",        // successful tool settle
+  ERR: "rgba(251,113,133,",      // failed tool settle
   GLOW: "rgba(34,200,238,0.55)"
 };
 

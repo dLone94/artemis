@@ -132,3 +132,18 @@ allocation-free; public API surface unchanged; node --check clean; 11 suites
 + 19/19 eval green. Motion empirically confirmed: orb-region hashes of three
 frames 1.5 s apart all differ. Awaiting user verdict on the look before
 commit.
+
+### Round 4 — Codex build: The Artemis System (full hero redesign)
+1,404-dot two-tone particle globe (7 lat / 11 long wires, 28 s tilted spin,
+twinkle, halo pool), voice surface waves, thinking dissolve/reform, six
+agent moons with idle orbits and tool-event-driven ignite/tether/settle.
+Reactor and legacy rings/satellites removed. main.js: one forwarding line.
+
+### Claude's verdict
+main.js diff is exactly the one authorized line; orbShared adds V + moon
+tones only; API surface intact with additive toolEvent() carrying full
+input guards; hot loop allocation-free (verified by scan). Proof re-run:
+both syntax checks + 11 suites + 19/19 eval green. Motion confirmed by
+frame differencing. Visual verified in-app: globe + 6 labelled moons
+(FINANCE gold, MESSAGES green, MEMORY ice, MEDIA lavender) all present.
+Awaiting user verdict before commit.
