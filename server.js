@@ -297,8 +297,15 @@ const GROQ_CHAIN_MODELS = (process.env.GROQ_CHAIN ||
   .map((m) => m.trim())
   .filter((m, i, a) => m && a.indexOf(m) === i);
 
+// gpt-oss models are reasoning models: without this flag they put the whole
+// answer in a reasoning channel our stream loop never reads (she would say
+// NOTHING), and with it they answer in ~250ms like everything else.
+function brainExtras(model) {
+  return /gpt-oss/.test(model) ? { reasoning_effort: "low" } : {};
+}
+
 const BRAIN_CHAIN = (LLM_PROVIDER === "groq" && groqApiKey
-  ? GROQ_CHAIN_MODELS.map((m) => ({ name: "groq:" + m, base: GROQ_BASE, key: groqApiKey, model: m }))
+  ? GROQ_CHAIN_MODELS.map((m) => ({ name: "groq:" + m, base: GROQ_BASE, key: groqApiKey, model: m, extra: brainExtras(m) }))
   : []
 ).concat(nvidiaApiKey && LLM_PROVIDER !== "groq" ? [NVIDIA_BRAIN] : []);
 
@@ -1208,7 +1215,7 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
         {
           method: "POST",
           headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-          body: JSON.stringify(Object.assign({ model: brain.model }, body))
+          body: JSON.stringify(Object.assign({ model: brain.model }, brain.extra || {}, body))
         },
         ms,
         signal
@@ -1538,7 +1545,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       {
         method: "POST",
         headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true })
+        body: JSON.stringify(Object.assign({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true }, brain.extra || {}))
       },
       // 60s was far too long to leave someone waiting in silence. An honest
       // "I couldn't do that" at 35s beats a correct answer at 65s that they
@@ -1553,7 +1560,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         {
           method: "POST",
           headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true })
+          body: JSON.stringify(Object.assign({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true }, brain.extra || {}))
         },
         35000,
         signal
