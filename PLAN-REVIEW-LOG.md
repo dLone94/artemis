@@ -103,3 +103,18 @@ from the registry. Orb diffs are colour-only. Client tool ring is race-safe and
 visibility-aware. Sweep grep clean. Two out-of-spec scaffolding files
 (PRODUCT.md, .impeccable/) from Codex's UI plugin were removed. Proof re-run by
 Claude: 11 suites + 19/19 eval, all green. PASSED — one round, no fixes needed.
+
+### Round 2 — Codex build: arc-reactor orb (single file, voiceOrb.js)
+Replaced the soft sphere with the user-chosen arc-reactor core: hard bright
+disc + reticle, four precomputed segmented bands (two counter-rotating),
+72-tick scale, thinking scanner, eased state mixes, frame-rate-independent
+phases. Outer 3D rings/satellites and the public API untouched.
+
+### Claude's verdict
+Diff read in full: helper signatures match orbShared exports; no per-frame
+allocations (bands precomputed at module scope); old equalizer/wireframe
+globe removed with the blob as intended; one sensible deviation — the old
+always-on flat scanner was removed in favour of the thinking-only scanner,
+which matches the spec's state table better than keeping both. Proof re-run:
+node --check clean, 11 suites + 19/19 eval green. Verified visually in the
+app. PASSED — one round.

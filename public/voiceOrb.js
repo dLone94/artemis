@@ -1,12 +1,43 @@
 // Artemis VoiceOrb — the cyan orbital-HUD (Canvas 2D), ported verbatim from the
-// locked prototype: soft cyan core, tilted orbital rings with depth-shaded
-// satellites + constellation links, tick ring, hex/triangle reticle, ARTEMIS label.
+// locked prototype: arc-reactor core, tilted orbital rings with depth-shaded
+// satellites + constellation links, tick ring, inner reticle, ARTEMIS label.
 // Backend-agnostic API kept identical to the old WebGL orb so main.js / celebration.js
 // work unchanged: setStatus(), connectMic(), connectMediaElement(), feed(), _ensureAudio(),
 // stopAudio(), dispose(), and `cur.amp` / `reduced`. Reacts to mic (LISTENING) and TTS
 // (SPEAKING) amplitude — rings spin faster, core brightens, scanner accelerates.
 
-import { PAL, prefersReducedMotion } from "./orbShared.js";
+import {
+  PAL,
+  arcs as drawHudArcs,
+  prefersReducedMotion,
+  ring as drawHudRing,
+  ticks as drawHudTicks
+} from "./orbShared.js";
+
+// Reactor geometry is immutable and shared by every frame. Keeping the segment
+// tables here avoids rebuilding dash arrays in the render loop.
+const REACTOR_BANDS = [
+  {
+    radius: 0.32, width: 0.032, speed: 0.72, phase: 0.08, alpha: 0.72, blur: 5, color: PAL.B,
+    segments: [[0.02, 0.54], [0.72, 1.48], [1.72, 2.28], [2.52, 3.34], [3.56, 4.12], [4.38, 5.14], [5.4, 6.12]]
+  },
+  {
+    radius: 0.44, width: 0.022, speed: -0.48, phase: 0.86, alpha: 0.54, blur: 3, color: PAL.O,
+    segments: [[0.1, 0.84], [1.04, 1.3], [1.5, 2.44], [2.68, 3.08], [3.28, 4.2], [4.44, 5.02], [5.26, 6.02]]
+  },
+  {
+    radius: 0.57, width: 0.027, speed: 0.94, phase: 1.72, alpha: 0.62, blur: 4, color: PAL.B,
+    segments: [[0, 0.3], [0.46, 0.92], [1.08, 1.72], [1.9, 2.2], [2.4, 3.04], [3.2, 3.66], [3.84, 4.54], [4.74, 5.08], [5.3, 5.94], [6.1, 6.24]]
+  },
+  {
+    radius: 0.7, width: 0.018, speed: -0.31, phase: 2.56, alpha: 0.48, blur: 2, color: PAL.O,
+    segments: [[0.06, 0.62], [0.8, 1.1], [1.28, 1.94], [2.14, 2.72], [2.92, 3.54], [3.72, 4.04], [4.24, 4.84], [5.04, 5.54], [5.76, 6.18]]
+  }
+];
+const THINKING_SCANNER_SEGMENTS = [
+  [0, 0.12], [0.23, 0.38], [0.5, 0.68], [0.81, 1.02], [1.16, 1.4], [1.55, 1.82]
+];
+const OUTER_BEZEL_SEGMENTS = [[0.1, 1.5], [2.2, 3], [3.6, 5.2]];
 
 export class VoiceOrb {
   constructor(container, opts = {}) {
@@ -24,6 +55,12 @@ export class VoiceOrb {
     this._audioActive = false;
     this._raf = 0;
     this._disposed = false;
+    this._listeningMix = 0;
+    this._thinkingMix = 0;
+    this._speakingMix = 0;
+    this._reactorPhase = 0;
+    this._scannerPhase = 0;
+    this._lastFrameAt = 0;
 
     // ---- 3D geometry (unit sphere; projected each frame in _draw) ----
     // Particle shell — a Fibonacci sphere so points are evenly scattered, each
@@ -72,7 +109,9 @@ export class VoiceOrb {
         cancelAnimationFrame(this._raf);
         this._raf = 0;
       } else if (!this._disposed) {
-        this._t0 = performance.now() - this._elapsed * 1000;
+        const resumedAt = performance.now();
+        this._t0 = resumedAt - this._elapsed * 1000;
+        this._lastFrameAt = resumedAt;
         this._loop();
       }
     };
@@ -87,6 +126,7 @@ export class VoiceOrb {
 
     this.resize();
     this._t0 = performance.now();
+    this._lastFrameAt = this._t0;
     this._elapsed = 0;
     this._loop();
   }
@@ -184,8 +224,24 @@ export class VoiceOrb {
     // (t is pinned to 0 below); resize/status changes re-invoke it once.
     if (!this.reduced) this._raf = requestAnimationFrame(() => this._loop());
     const now = performance.now();
+    const dt = this.reduced ? 0 : Math.max(0, Math.min(0.05, (now - this._lastFrameAt) / 1000));
+    this._lastFrameAt = now;
     this._elapsed = (now - this._t0) / 1000;
     const t = this.reduced ? 0 : this._elapsed;
+
+    // State visuals are blended independently so status changes ease instead
+    // of snapping. Reduced motion resolves directly to one deterministic frame.
+    const stateEase = this.reduced ? 1 : 1 - Math.exp(-dt * 7);
+    const listeningTarget = this.status === "listening" ? 1 : 0;
+    const thinkingTarget = this.status === "thinking" ? 1 : 0;
+    const speakingTarget = this.status === "speaking" ? 1 : 0;
+    this._listeningMix += (listeningTarget - this._listeningMix) * stateEase;
+    this._thinkingMix += (thinkingTarget - this._thinkingMix) * stateEase;
+    this._speakingMix += (speakingTarget - this._speakingMix) * stateEase;
+    if (!this.reduced) {
+      this._reactorPhase += dt * (0.42 + this._listeningMix * 1.05);
+      this._scannerPhase += dt * (1.15 + this._thinkingMix * 1.35);
+    }
 
     // spectrum: peak-per-band → drives the talking waveform; also overall amplitude
     let raw = this._manualAmp;
@@ -338,95 +394,61 @@ export class VoiceOrb {
     };
     for (const cfg of this._rings) drawRing(cfg, false); // far halves
 
-    // ---- (3) the glowing core: soft body + voice-reactive corona + equalizer ----
-    const pulse = 0.55 + 0.16 * Math.sin(t * 1.5) + amp * 0.8;
-    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.85);
-    g.addColorStop(0, PAL.Hl + (0.42 * pulse) + ")");
-    g.addColorStop(0.4, PAL.O + (0.24 * pulse) + ")");
-    g.addColorStop(1, PAL.D + "0)");
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R * 0.85, 0, Math.PI * 2); ctx.fill();
-    {
-      const NB = this.NB, q3 = Math.max(1, Math.floor(NB / 3));
-      let bass = 0, mid = 0, treb = 0;
-      for (let b = 0; b < q3; b++) bass += this.bins[b];
-      for (let b = q3; b < 2 * q3; b++) mid += this.bins[b];
-      for (let b = 2 * q3; b < NB; b++) treb += this.bins[b];
-      bass /= q3; mid /= q3; treb /= (NB - 2 * q3);
-      const pts = 96, rb = R * 0.42;
-      ctx.beginPath();
-      for (let i = 0; i <= pts; i++) {
-        const ang = (i / pts) * Math.PI * 2;
-        const idle = 0.04 * Math.sin(ang * 3 + t * 1.2) + 0.03 * Math.sin(ang * 5 - t * 0.9);
-        const voice = bass * 0.55 * Math.sin(2 * ang + t * 0.9) + mid * 0.45 * Math.sin(3 * ang - t * 1.3) +
-          treb * 0.38 * Math.sin(5 * ang + t * 1.7) + bass * 0.3 * Math.sin(ang - t * 0.6);
-        const rr = rb * (1 + idle + voice), x = Math.cos(ang) * rr, y = Math.sin(ang) * rr;
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      }
-      ctx.closePath();
-      const bg = ctx.createRadialGradient(0, 0, 0, 0, 0, rb * 1.8);
-      bg.addColorStop(0, PAL.Hl + (0.5 + amp * 0.45) + ")");
-      bg.addColorStop(0.55, PAL.O + (0.3 + amp * 0.4) + ")");
-      bg.addColorStop(1, PAL.O + "0)");
-      ctx.fillStyle = bg; ctx.shadowColor = PAL.O + "0.7)"; ctx.shadowBlur = 20; ctx.fill(); ctx.shadowBlur = 0;
-      ctx.lineWidth = 1.4; ctx.strokeStyle = PAL.B + (0.4 + amp * 0.5) + ")"; ctx.stroke();
+    // ---- (3) arc-reactor core: hard disc, reticle, segmented bands + scale ----
+    const activeMix = Math.min(1, this._listeningMix + this._thinkingMix + this._speakingMix);
+    const idleMix = 1 - activeMix;
+    const idleWave = Math.sin(t * 1.45);
+    const speakingPulse = this._speakingMix * amp;
+    const coreR = R * 0.16 * (1 + idleMix * idleWave * 0.028 + speakingPulse * 0.34);
+    const contraction = 1 - this._listeningMix * 0.11;
+    const bandBoost = this._listeningMix * 0.28;
 
-      const bars = NB * 2, r0 = R * 0.56, bl = R * 0.34;
-      ctx.lineCap = "round"; ctx.lineWidth = 2;
-      for (let j = 0; j < bars; j++) {
-        const ang = (j / bars) * Math.PI * 2;
-        const bidx = (((j / bars) * NB + t * 3.0) % NB + NB) % NB;
-        const b0 = Math.floor(bidx) % NB, b1 = (b0 + 1) % NB, fr = bidx - Math.floor(bidx);
-        const bv = this.bins[b0] * (1 - fr) + this.bins[b1] * fr, co = Math.cos(ang), si = Math.sin(ang);
-        const len = bl * (0.08 + bv * (1.0 + amp * 0.6));
-        ctx.strokeStyle = PAL.B + (0.22 + 0.6 * bv) + ")";
-        ctx.beginPath(); ctx.moveTo(co * r0, si * r0); ctx.lineTo(co * (r0 + len), si * (r0 + len)); ctx.stroke();
-      }
-      ctx.lineCap = "butt";
+    drawHudTicks(ctx, R * 0.86, 72, R * 0.034, -this._reactorPhase * 0.13, PAL.D, 0.46 + bandBoost * 0.7);
+    for (let i = 0; i < REACTOR_BANDS.length; i++) {
+      const band = REACTOR_BANDS[i];
+      drawHudArcs(
+        ctx,
+        R * band.radius * contraction,
+        band.segments,
+        Math.max(1, R * band.width),
+        band.phase + this._reactorPhase * band.speed,
+        band.color,
+        Math.min(1, band.alpha + bandBoost),
+        band.blur + this._listeningMix * 5
+      );
     }
 
-    // ---- (4) wireframe sphere over the core — the 3D globe (self-shading by
-    // depth: near segments bright, far segments dim, so rotation reads) ----
-    const drawLine = (pfn, seg) => {
-      let prev = pfn(0);
-      for (let i = 1; i <= seg; i++) {
-        const q = pfn(i / seg);
-        const zc = (prev.z + q.z) / 2;
-        ctx.strokeStyle = PAL.O + dA(zc, 0.04, 0.28 + amp * 0.22).toFixed(3) + ")";
-        ctx.lineWidth = (0.5 + 0.7 * q.s);
-        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(q.x, q.y); ctx.stroke();
-        prev = q;
-      }
-    };
-    const globe = 1 + amp * 0.1;        // breathes with her voice
-    for (let li = 0; li < 5; li++) {    // latitude circles
-      const lat = (li / 4 - 0.5) * Math.PI * 0.82, cyl = Math.cos(lat) * globe, yl = Math.sin(lat) * globe;
-      drawLine((u) => { const a = u * Math.PI * 2; return P(Math.cos(a) * cyl, yl, Math.sin(a) * cyl); }, 44);
-    }
-    for (let mi = 0; mi < 6; mi++) {    // longitude half-circles
-      const lon = (mi / 6) * Math.PI;
-      drawLine((u) => { const a = (u - 0.5) * Math.PI; const r2 = Math.cos(a) * globe, yy = Math.sin(a) * globe;
-        return P(r2 * Math.cos(lon), yy, r2 * Math.sin(lon)); }, 40);
-    }
+    drawHudArcs(
+      ctx,
+      R * 0.78,
+      THINKING_SCANNER_SEGMENTS,
+      Math.max(2, R * 0.024),
+      this._scannerPhase,
+      PAL.B,
+      0.9 * this._thinkingMix,
+      10 * this._thinkingMix
+    );
+
+    drawHudRing(ctx, coreR * 1.52, Math.max(1, R * 0.009), PAL.Hl, 0.78, 4);
+    ctx.shadowColor = PAL.GLOW;
+    ctx.shadowBlur = R * (0.1 + idleMix * (0.018 + idleWave * 0.012) + speakingPulse * 0.28);
+    ctx.fillStyle = PAL.B + (0.9 + speakingPulse * 0.1) + ")";
+    ctx.beginPath(); ctx.arc(0, 0, coreR, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = PAL.B + "1)";
+    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.76, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAL.Hl + "0.96)";
+    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAL.Hl + "1)";
+    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.24, 0, Math.PI * 2); ctx.fill();
 
     // ---- (5) front-hemisphere rings + particles (drawn last → in front) ----
     for (const cfg of this._rings) drawRing(cfg, true);
     drawParticles(true);
 
     // ---- (6) outer flat HUD bezel (the instrument frame around the 3D orb) ----
-    const arcs = (r, segs, w, rot, c, a, blur) => {
-      ctx.lineWidth = w; ctx.strokeStyle = c + a + ")"; ctx.lineCap = "round";
-      ctx.shadowColor = PAL.GLOW; ctx.shadowBlur = blur || 0;
-      for (let i = 0; i < segs.length; i++) { ctx.beginPath(); ctx.arc(0, 0, r, rot + segs[i][0], rot + segs[i][1]); ctx.stroke(); }
-      ctx.shadowBlur = 0; ctx.lineCap = "butt";
-    };
-    arcs(base * 0.98, [[0.1, 1.5], [2.2, 3.0], [3.6, 5.2]], 2, t * 0.09 * spin, PAL.O, 0.4 + amp * 0.45, 6 + amp * 10);
-    ctx.strokeStyle = PAL.D + (0.4 + amp * 0.45) + ")"; ctx.lineWidth = 1; // tick ring
-    for (let i = 0; i < 42; i++) {
-      const ang = -t * 0.05 * spin + (i / 42) * Math.PI * 2, co = Math.cos(ang), si = Math.sin(ang);
-      const rr = base * 0.90, len = base * 0.035 * (1 + amp * 0.6);
-      ctx.beginPath(); ctx.moveTo(co * rr, si * rr); ctx.lineTo(co * (rr - len), si * (rr - len)); ctx.stroke();
-    }
-    arcs(base * 0.6, [[0.5, 2.4]], 4 + amp * 3, t * 0.5 * spin, PAL.B, 0.7 + amp * 0.4, 12); // scanner sweep
+    drawHudArcs(ctx, base * 0.98, OUTER_BEZEL_SEGMENTS, 2, t * 0.09 * spin, PAL.O, 0.4 + amp * 0.45, 6 + amp * 10);
+    drawHudTicks(ctx, base * 0.9, 42, base * 0.035 * (1 + amp * 0.6), -t * 0.05 * spin, PAL.D, 0.4 + amp * 0.45);
 
     // sound-wave ripples on speech peaks
     for (let i = 0; i < this._ripples.length; i++) {
