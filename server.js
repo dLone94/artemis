@@ -280,13 +280,25 @@ const NVIDIA_BRAIN = { name: "nvidia:" + NVIDIA_MODEL, base: NVIDIA_BASE, key: n
 // returning "410 Gone — the model has reached its end of life", so falling back
 // to it turned every throttled Groq turn into a dead one. A fallback that is
 // itself broken is worse than no fallback, because it hides the real cause.
+// Groq's free-tier daily token pools are PER MODEL, so every extra
+// tool-capable model in the chain is a fresh 100k-class budget on the same
+// key. All entries below passed the streaming-tool-call probe on 2026-07-28
+// (the exact capability that disqualified NVIDIA's gpt-oss hosting).
+// Order: quality first, small models last.
+const GROQ_CHAIN_MODELS = (process.env.GROQ_CHAIN ||
+  [
+    GROQ_MODEL,
+    "openai/gpt-oss-120b",
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-20b",
+    GROQ_FALLBACK_MODEL
+  ].join(","))
+  .split(",")
+  .map((m) => m.trim())
+  .filter((m, i, a) => m && a.indexOf(m) === i);
+
 const BRAIN_CHAIN = (LLM_PROVIDER === "groq" && groqApiKey
-  ? [
-      { name: "groq:" + GROQ_MODEL, base: GROQ_BASE, key: groqApiKey, model: GROQ_MODEL },
-      ...(GROQ_FALLBACK_MODEL && GROQ_FALLBACK_MODEL !== GROQ_MODEL
-        ? [{ name: "groq:" + GROQ_FALLBACK_MODEL, base: GROQ_BASE, key: groqApiKey, model: GROQ_FALLBACK_MODEL }]
-        : [])
-    ]
+  ? GROQ_CHAIN_MODELS.map((m) => ({ name: "groq:" + m, base: GROQ_BASE, key: groqApiKey, model: m }))
   : []
 ).concat(nvidiaApiKey && LLM_PROVIDER !== "groq" ? [NVIDIA_BRAIN] : []);
 
