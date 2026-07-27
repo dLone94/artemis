@@ -290,16 +290,30 @@ const BRAIN_CHAIN = (LLM_PROVIDER === "groq" && groqApiKey
 
 const BRAIN = BRAIN_CHAIN[0] || NVIDIA_BRAIN;
 
-// Cooldowns are per entry and time-boxed to Groq's one-minute window: a
-// throttled model steps aside, it is not exiled.
-const RATE_LIMIT_COOLDOWN_MS = 60000;
+// Cooldowns are per entry, and as SHORT as the provider says they need to be.
+//
+// A blanket 60s guess was worse than no cooldown: it kept benching models long
+// after the limit had already reset, turning a two-second throttle into a
+// minute of self-inflicted silence. Groq returns `retry-after` (and a
+// reset-tokens hint) on a 429 — believe it, and fall back to a small default
+// only when it says nothing.
+const RATE_LIMIT_COOLDOWN_MS = 5000;
+function cooldownFrom(res) {
+  const ra = res && res.headers && (res.headers.get("retry-after") || res.headers.get("x-ratelimit-reset-tokens"));
+  if (!ra) return RATE_LIMIT_COOLDOWN_MS;
+  const m = String(ra).trim().match(/^([\d.]+)\s*(ms|s)?$/i);
+  if (!m) return RATE_LIMIT_COOLDOWN_MS;
+  const n = parseFloat(m[1]);
+  const ms = /ms/i.test(m[2] || "") ? n : n * 1000;
+  return Math.max(500, Math.min(ms + 250, 60000));
+}
 const brainCooldown = new Map();
 function currentBrain() {
   const now = Date.now();
   return BRAIN_CHAIN.find((b) => (brainCooldown.get(b.name) || 0) <= now) || BRAIN;
 }
-function benchBrain(brain) {
-  brainCooldown.set(brain.name, Date.now() + RATE_LIMIT_COOLDOWN_MS);
+function benchBrain(brain, res) {
+  brainCooldown.set(brain.name, Date.now() + cooldownFrom(res));
   const next = currentBrain();
   if (next === brain) {
     // Everything in the chain is throttled. Say so plainly rather than logging
@@ -1157,13 +1171,17 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
         ms,
         signal
       );
-      if (!res.ok) throw new Error("NVIDIA HTTP " + res.status + ": " + (await res.text()).slice(0, 300));
+      if (!res.ok) {
+        const err = new Error("NVIDIA HTTP " + res.status + ": " + (await res.text()).slice(0, 300));
+        err.res = res;   // so the cooldown can honour retry-after
+        throw err;
+      }
       return await res.json();
     } catch (e) {
       lastErr = e;
       // Rate limited: switch brains for the rest of this process rather than
       // burning the user's turn. The answer still comes, from the slower one.
-      if (isRateLimit(e) && benchBrain(currentBrain())) continue;
+      if (isRateLimit(e) && benchBrain(currentBrain(), e.res)) continue;
       // A real HTTP error (bad key, bad model) will fail identically on retry —
       // only a timeout is worth a second attempt.
       if (!/timed out/i.test(String(e.message)) || i === attempts - 1) throw e;
@@ -1480,7 +1498,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       35000,
       signal
     );
-    if (res.status === 429 && benchBrain(brain)) {
+    if (res.status === 429 && benchBrain(brain, res)) {
       brain = currentBrain();
       res = await fetchWithTimeout(
         brain.base + "/chat/completions",
