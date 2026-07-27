@@ -914,15 +914,15 @@ addLine("status", "systems online — say “Artemis”, tap the mic, or ask “
 import { createRingRow } from "./hudRing.js";
 
 (function mountGauges() {
-  const host = document.getElementById("hudTelemetry");
+  const host = document.getElementById("hudGauges");
   if (!host) return;
 
   const row = createRingRow([
-    { key: "cpu",     label: "CPU",    size: 84, max: 100, unit: "%" },
-    { key: "mem",     label: "MEM",    size: 84, max: 100, unit: "%" },
-    { key: "budget",  label: "TOKENS", size: 84, max: 100, unit: "%" },
-    { key: "latency", label: "TTFW",   size: 84, max: 3000, unit: "ms" },
-    { key: "due",     label: "DUE",    size: 84 }
+    { key: "cpu",     label: "CPU",    size: 64, max: 100, unit: "%" },
+    { key: "mem",     label: "MEM",    size: 64, max: 100, unit: "%" },
+    { key: "budget",  label: "TOKENS", size: 64, max: 100, unit: "%" },
+    { key: "latency", label: "TTFW",   size: 64, max: 3000, unit: "ms" },
+    { key: "due",     label: "DUE",    size: 64 }
   ]);
   host.appendChild(row);
   const g = row.rings;

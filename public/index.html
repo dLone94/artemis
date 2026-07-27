@@ -74,6 +74,9 @@
   <aside class="hud-panel hud-left" aria-label="Command log">
     <div class="hud-panel-title">COMMAND LOG</div>
     <div class="hud-log" id="cmdLog" aria-live="polite"></div>
+    <!-- instrument cluster: its own strip so the footer's space-between flex
+         can never crush the rings -->
+    <div class="hud-gauges" id="hudGauges" aria-label="Live gauges"></div>
     <div class="hud-telemetry" id="hudTelemetry" aria-label="Live telemetry">
       <span id="telMic">MIC −∞ dB</span>
       <span id="telWake">WAKE OFF</span>

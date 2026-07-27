@@ -137,7 +137,8 @@
 .hud-panel {
   position: fixed;
   top: 64px;
-  bottom: 148px;
+  /* must clear the full-width dock (bottom:14px + ~230px of content) */
+  bottom: 258px;
   z-index: 15;
   width: min(300px, 26vw);
   display: flex;
@@ -393,16 +394,7 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   .cockpit .dock, .cockpit .dock[data-state="idle"] { left: 0; right: 0; bottom: 0; border-radius: 14px 14px 0 0; }
 }
 
-/* ---- annotation ring + state caption around the orb ---- */
-.hud-gauge {
-  position: fixed;
-  left: 50%; top: 50%;
-  width: min(620px, 78vmin); height: min(620px, 78vmin);
-  margin-left: calc(min(620px, 78vmin) / -2);
-  margin-top: calc(min(620px, 78vmin) / -2);
-  z-index: 4;
-  pointer-events: none;
-}
+/* ---- state caption around the orb ---- */
 .hud-state {
   position: fixed;
   left: 50%; top: calc(50% + min(310px, 39vmin) + 6px);
@@ -643,9 +635,18 @@ html.hud-paused .hud-tool-sweep { animation-play-state: paused; }
 .hud-gauge[data-state="bad"]  .hud-gauge-arc { stroke: var(--ring-tone); }
 
 .hud-gauge-row {
-  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
-  padding: 10px 2px 2px;
+  display: flex; gap: 10px; align-items: center; justify-content: center;
+  flex-wrap: wrap;
 }
+/* The instrument cluster strip in the left panel, between log and footer.
+   flex:none — only the log above it is allowed to give up height. */
+.hud-gauges {
+  flex: none;
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid rgba(34, 211, 238, 0.18);
+}
+.hud-gauges .hud-gauge { flex: 0 0 auto; }
 
 /* An invisible animation is just heat, and some people ask for stillness. */
 @media (prefers-reduced-motion: reduce) {
