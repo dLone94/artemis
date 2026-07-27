@@ -264,29 +264,52 @@ const LLM_PROVIDER = (process.env.LLM_PROVIDER ||
 // loop. Groq is preferred when its key is present: measured 2026-07-26, it
 // answers with a streamed tool call in ~300ms against these exact schemas,
 // where NVIDIA ranged from 2s to not-at-all on identical requests.
-const GROQ_BRAIN = { name: "groq", base: GROQ_BASE, key: groqApiKey, model: GROQ_MODEL };
-const NVIDIA_BRAIN = { name: "nvidia", base: NVIDIA_BASE, key: nvidiaApiKey, model: NVIDIA_MODEL };
-const BRAIN = LLM_PROVIDER === "groq" && groqApiKey ? GROQ_BRAIN : NVIDIA_BRAIN;
+const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || "llama-3.1-8b-instant";
+const NVIDIA_BRAIN = { name: "nvidia:" + NVIDIA_MODEL, base: NVIDIA_BASE, key: nvidiaApiKey, model: NVIDIA_MODEL };
 
-// Groq's free tier caps TOKENS per minute, and a turn here is expensive: the
-// system prompt plus every tool schema is a few thousand tokens before the user
-// has said anything. So a busy minute returns 429 rather than an answer.
+// A chain, tried in order, rather than one brain and one spare.
 //
-// Falling back to the other provider is better than failing, and better than
-// silently retrying forever: the reply still arrives, just from the slower
-// brain. Only 429 falls back — a bad key or bad model would fail identically.
-const FALLBACK_BRAIN = BRAIN.name === "groq" && nvidiaApiKey ? NVIDIA_BRAIN
-  : BRAIN.name === "nvidia" && groqApiKey ? GROQ_BRAIN : null;
-// The fallback is TEMPORARY. A first version latched permanently on the first
-// 429 and never came back, which meant one throttled minute exiled the fast
-// brain for the rest of the process — and if the fallback was also unwell,
-// every turn failed from then on. Groq's window is per-minute, so step aside
-// for that long and then try the good brain again.
-let brainCooldownUntil = 0;
+// Groq's rate limit is per MODEL — the 70b has its own 12k tokens/minute and
+// the 8b its own 6k — so the useful fallback when the good model is throttled
+// is a different Groq model, not a different provider. Measured: both call
+// tools correctly and the 8b answers in ~130ms.
+//
+// NVIDIA is deliberately last and usually absent: on 2026-07-27 it began
+// returning "410 Gone — the model has reached its end of life", so falling back
+// to it turned every throttled Groq turn into a dead one. A fallback that is
+// itself broken is worse than no fallback, because it hides the real cause.
+const BRAIN_CHAIN = (LLM_PROVIDER === "groq" && groqApiKey
+  ? [
+      { name: "groq:" + GROQ_MODEL, base: GROQ_BASE, key: groqApiKey, model: GROQ_MODEL },
+      ...(GROQ_FALLBACK_MODEL && GROQ_FALLBACK_MODEL !== GROQ_MODEL
+        ? [{ name: "groq:" + GROQ_FALLBACK_MODEL, base: GROQ_BASE, key: groqApiKey, model: GROQ_FALLBACK_MODEL }]
+        : [])
+    ]
+  : []
+).concat(nvidiaApiKey && LLM_PROVIDER !== "groq" ? [NVIDIA_BRAIN] : []);
+
+const BRAIN = BRAIN_CHAIN[0] || NVIDIA_BRAIN;
+
+// Cooldowns are per entry and time-boxed to Groq's one-minute window: a
+// throttled model steps aside, it is not exiled.
 const RATE_LIMIT_COOLDOWN_MS = 60000;
+const brainCooldown = new Map();
 function currentBrain() {
-  if (Date.now() < brainCooldownUntil && FALLBACK_BRAIN) return FALLBACK_BRAIN;
-  return BRAIN;
+  const now = Date.now();
+  return BRAIN_CHAIN.find((b) => (brainCooldown.get(b.name) || 0) <= now) || BRAIN;
+}
+function benchBrain(brain) {
+  brainCooldown.set(brain.name, Date.now() + RATE_LIMIT_COOLDOWN_MS);
+  const next = currentBrain();
+  if (next === brain) {
+    // Everything in the chain is throttled. Say so plainly rather than logging
+    // "falling back to itself", and return false so the caller stops retrying
+    // and tells the user the truth instead of spinning.
+    console.warn("[brain] every brain is rate limited — no fallback left this minute");
+    return false;
+  }
+  console.warn("[brain] " + brain.name + " rate limited — using " + next.name + " for the next minute");
+  return true;
 }
 const isRateLimit = (e) => /HTTP 429/.test(String(e && e.message));
 /** Is an OpenAI-compatible brain (Groq or NVIDIA) configured and selected? */
@@ -1140,11 +1163,7 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
       lastErr = e;
       // Rate limited: switch brains for the rest of this process rather than
       // burning the user's turn. The answer still comes, from the slower one.
-      if (isRateLimit(e) && FALLBACK_BRAIN && Date.now() >= brainCooldownUntil) {
-        brainCooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
-        console.warn("[brain] rate limited — using " + FALLBACK_BRAIN.name + " for the next minute");
-        continue;
-      }
+      if (isRateLimit(e) && benchBrain(currentBrain())) continue;
       // A real HTTP error (bad key, bad model) will fail identically on retry —
       // only a timeout is worth a second attempt.
       if (!/timed out/i.test(String(e.message)) || i === attempts - 1) throw e;
@@ -1324,6 +1343,14 @@ function logTurn(state, extra = {}) {
   );
 }
 
+// The family the user asked about, plus the two web tools — enough to answer a
+// follow-up without shipping the entire registry on every round.
+const WEB_TOOL_NAMES = new Set(["web_search", "fetch_page"]);
+function narrowTools(allTools, familyTools) {
+  const keep = new Set(familyTools.map((t) => t.function.name));
+  return allTools.filter((t) => keep.has(t.function.name) || WEB_TOOL_NAMES.has(t.function.name));
+}
+
 /** The text of the most recent user message. */
 export function lastUserText(messages) {
   const m = [...(messages || [])].reverse().find((x) => x && x.role === "user");
@@ -1370,7 +1397,14 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
     // plain tool_choice:"required" was satisfiable with any unrelated call.
     const familyTools = isAction && state.intent.family ? toolDefsForFamily(caps, state.intent.family) : [];
     const forcing = round === 0 && isAction && familyTools.length > 0;
-    const roundTools = forcing ? familyTools : tools;
+    // Every schema sent costs input tokens on every round, and Groq's free tier
+    // caps TOKENS per minute — so shipping all fourteen tools on a two-round
+    // action turn is what was getting the user throttled into silence. An action
+    // turn needs the family it asked for, plus the web tools in case she has to
+    // look something up to answer. Chat turns still see everything, because
+    // that is where breadth actually matters and they are only one round.
+    const roundTools = forcing ? familyTools
+      : (isAction && familyTools.length ? narrowTools(tools, familyTools) : tools);
     let toolChoice = "auto";
     if (forcing) toolChoice = familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].function.name } } : "required";
     // An unresolvable request ("open it" with no referent) must produce a
@@ -1446,11 +1480,8 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       35000,
       signal
     );
-    if (res.status === 429 && FALLBACK_BRAIN && brain !== FALLBACK_BRAIN) {
-      // Same reasoning as the non-streaming path, and equally time-boxed.
-      brainCooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
-      console.warn("[brain] rate limited mid-stream — using " + FALLBACK_BRAIN.name + " for the next minute");
-      brain = FALLBACK_BRAIN;
+    if (res.status === 429 && benchBrain(brain)) {
+      brain = currentBrain();
       res = await fetchWithTimeout(
         brain.base + "/chat/completions",
         {
@@ -2304,7 +2335,21 @@ async function handleRequest(req, res) {
       }
     } catch (error) {
       console.error("/api/chat/stream error:", error.message);
-      send("error", { error: "Chat failed. Check the server log / API key." });
+      // Say something. A failed turn used to write to the log and go silent,
+      // which from the user's side is indistinguishable from not being heard —
+      // they repeat themselves into a void. Whatever went wrong, she owes them
+      // a sentence. `spoken` is what the client reads aloud; `error` stays the
+      // technical detail for the HUD.
+      const why = String(error && error.message || "");
+      const spoken =
+        /429|rate limit/i.test(why)
+          ? "I'm being rate limited right now — give me a few seconds and ask again."
+          : /timed out|abort/i.test(why)
+          ? "That took too long and I gave up — say it again?"
+          : /HTTP 4|HTTP 5|brain HTTP/i.test(why)
+          ? "My brain isn't answering just now. Try me again in a moment."
+          : "Something went wrong on my end — say that again?";
+      send("error", { error: "Chat failed. Check the server log / API key.", spoken });
     }
     res.end();
     return;

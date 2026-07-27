@@ -677,6 +677,9 @@ async function ask(text) {
           setLiveStatus(data.error || "Chat failed.");
           hud("state", "error");
           hud("log", "error", data.error || "chat failed");
+          // Speak it. Silence reads as "she didn't hear me", so the user
+          // repeats themselves at a machine that already gave up.
+          if (data.spoken) { out.append(data.spoken); feedTts(data.spoken); gotToken = true; }
         }
       }
     }
