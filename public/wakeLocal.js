@@ -22,6 +22,7 @@ import { resolveWakeProfile, FALLBACK_PROFILE } from "./wakeProfile.js";
 let ort = null;
 let melSess = null, embSess = null, wwSess = null;
 let ctx = null, node = null, micStream = null;
+let keepAlive = null;   // silent sink — see openMic
 let running = false, loading = null;
 let mode = "detect"; // "detect" | "capture" | "idle" (idle: her speech — keep mic, don't listen)
 let onDetectCb = null;
@@ -252,7 +253,15 @@ async function openMic() {
     n = new AudioWorkletNode(c, "mic-downsampler");
     n.port.onmessage = (e) => pushFrame(e.data);
     src.connect(n);
-    const sink = c.createGain(); sink.gain.value = 0; n.connect(sink).connect(c.destination); // silent keep-alive
+    // Keep-alive: a worklet with nothing downstream can stop being pulled, so it
+    // needs a destination. It must NOT be c.destination — that is the speakers,
+    // and routing the mic there (even at zero gain) keeps the output device and
+    // its DAC powered for as long as the wake word is listening, which on Apple
+    // silicon is audible as a constant faint buzz. A MediaStreamDestination
+    // pulls the graph just the same and never touches the speakers.
+    const sink = c.createGain(); sink.gain.value = 0;
+    keepAlive = c.createMediaStreamDestination();
+    n.connect(sink).connect(keepAlive);
   } catch (e) {
     try { stream.getTracks().forEach((t) => t.stop()); } catch (e2) {}
     try { if (c.state !== "closed") c.close(); } catch (e2) {}
@@ -267,7 +276,7 @@ async function closeMic() {
   // detach the globals SYNCHRONOUSLY, then tear down the captured locals —
   // nothing this function awaits can touch state a concurrent openMic commits
   const n = node, s = micStream, c = ctx;
-  node = null; micStream = null; ctx = null; filled = 0;
+  node = null; micStream = null; ctx = null; keepAlive = null; filled = 0;
   try { n && (n.port.onmessage = null); n && n.disconnect(); } catch (e) {}
   try { s && s.getTracks().forEach((t) => t.stop()); } catch (e) {}
   try { if (c && c.state !== "closed") await c.close(); } catch (e) {}
