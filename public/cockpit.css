@@ -100,13 +100,13 @@
   transition: border-color 0.4s, box-shadow 0.4s, opacity 0.4s;
 }
 /* assemble-in: hidden until cockpit.js flags body.hud-in after the boot */
-.hud-panel, .hud-top, .cockpit .dock, .hud-state, .hud-ring {
+.hud-panel, .hud-top, .cockpit .dock, .hud-state, .hud-gauge {
   opacity: 0;
   transform: translateY(10px);
   transition: opacity 0.5s ease, transform 0.5s ease;
 }
 .hud-in .hud-panel, .hud-in .hud-top, .hud-in .cockpit .dock,
-body.hud-in .hud-panel, body.hud-in .hud-top, body.hud-in .dock, body.hud-in .hud-state, body.hud-in .hud-ring {
+body.hud-in .hud-panel, body.hud-in .hud-top, body.hud-in .dock, body.hud-in .hud-state, body.hud-in .hud-gauge {
   opacity: 1;
   transform: none;
 }
@@ -114,7 +114,7 @@ body.hud-in .hud-top { transition-delay: 0.05s; }
 body.hud-in .hud-left { transition-delay: 0.15s; }
 body.hud-in .hud-right { transition-delay: 0.3s; }
 body.hud-in .dock { transition-delay: 0.4s; }
-body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
+body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
 .hud-left { left: 18px; }
 .hud-right { right: 18px; }
 .hud-panel-title {
@@ -319,7 +319,7 @@ body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
 }
 
 /* ---- annotation ring + state caption around the orb ---- */
-.hud-ring {
+.hud-gauge {
   position: fixed;
   left: 50%; top: 50%;
   width: min(620px, 78vmin); height: min(620px, 78vmin);
@@ -399,7 +399,69 @@ body.hud-in .hud-state, body.hud-in .hud-ring { transition-delay: 0.5s; }
   .hud-line, .hud-card { transition: none; transform: none; }
   .hud-card.shown { animation: none; }
   .hud-dot.pulse { animation: none; }
-  .hud-panel, .hud-top, .cockpit .dock, .hud-state, .hud-ring { opacity: 1; transform: none; transition: none; }
+  .hud-panel, .hud-top, .cockpit .dock, .hud-state, .hud-gauge { opacity: 1; transform: none; transition: none; }
   .hud-particles { display: none; }
   .boot { display: none; }
 }
+
+/* ── HUD rings ────────────────────────────────────────────────────────────
+   Motion is always-on by choice, so it has to be cheap: only `transform` is
+   animated, which the compositor handles without touching the main thread.
+   Nothing here animates layout or paint properties. */
+.hud-gauge {
+  position: relative;
+  width: var(--ring-size);
+  height: var(--ring-size);
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+}
+.hud-gauge svg { position: absolute; inset: 0; }
+
+.hud-gauge-arc {
+  transition: stroke-dashoffset 600ms var(--ease-out), opacity 300ms linear;
+  filter: drop-shadow(0 0 4px var(--ring-tone));
+}
+
+.hud-gauge-sweep {
+  animation: hud-sweep var(--ring-spin) linear infinite;
+  opacity: 0.9;
+}
+.hud-gauge[data-reverse="1"] .hud-gauge-sweep { animation-direction: reverse; }
+@keyframes hud-sweep { to { transform: rotate(360deg); } }
+
+.hud-gauge-readout {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  line-height: 1; pointer-events: none;
+}
+.hud-gauge-value {
+  font-family: var(--font-mono);
+  font-size: calc(var(--ring-size) * 0.21);
+  color: var(--text-bright);
+  letter-spacing: -0.02em;
+}
+.hud-gauge-label {
+  font-family: var(--font-mono);
+  font-size: calc(var(--ring-size) * 0.11);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+}
+
+/* State is carried by colour, and warm now means WARNING rather than decoration. */
+.hud-gauge[data-state="warn"] { --ring-tone: var(--amber); }
+.hud-gauge[data-state="bad"]  { --ring-tone: var(--red); }
+.hud-gauge[data-state="busy"] .hud-gauge-sweep { animation-duration: 1.1s; opacity: 1; }
+.hud-gauge[data-state="warn"] .hud-gauge-arc,
+.hud-gauge[data-state="bad"]  .hud-gauge-arc { stroke: var(--ring-tone); }
+
+.hud-gauge-row {
+  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  padding: 10px 2px 2px;
+}
+
+/* An invisible animation is just heat, and some people ask for stillness. */
+@media (prefers-reduced-motion: reduce) {
+  .hud-gauge-sweep { animation: none; }
+}
+html.hud-paused .hud-gauge-sweep { animation-play-state: paused; }

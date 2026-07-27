@@ -1,26 +1,28 @@
 /* Artemis design tokens — single source of truth. Retune the whole look here. */
 :root {
-  /* palette — warm "orbital HUD" amber/orange (soft, easy on the eyes) */
-  --bg: #0a0805;
-  --text-bright: #f6efe7;
-  --text-muted: #b39e8a;
-  --accent-grad: linear-gradient(100deg, #ffd2a0, #ff9e48, #ff7a3c);
-  --bg-navy-1: rgba(78, 44, 18, 0.32);
-  --bg-navy-2: rgba(82, 40, 16, 0.20);
-  /* --teal/--teal-deep kept as the names existing CSS references, now amber */
-  --teal: #ff9e48;
-  --teal-deep: #e0782a;
-  --lavender: #ffc98a;
-  --amber: #ffb24d;
-  --pink: #ff8a5c;
+  /* palette — cyan "reactor HUD". Cool, high-contrast, Stark-adjacent.
+     Amber is retained ONLY as a warning tone, so a warm colour anywhere on
+     screen now means something is wrong rather than being decoration. */
+  --bg: #04070b;
+  --text-bright: #dff6fb;
+  --text-muted: #6f97a4;
+  --accent-grad: linear-gradient(100deg, #a8f4ff, #22d3ee, #0aa6c7);
+  --bg-navy-1: rgba(10, 62, 82, 0.34);
+  --bg-navy-2: rgba(8, 48, 66, 0.22);
+  /* these names were always teal; the values had been retuned to amber */
+  --teal: #22d3ee;
+  --teal-deep: #0e7490;
+  --lavender: #7dd3fc;
+  --amber: #fbbf24;      /* WARNING ONLY */
+  --pink: #38bdf8;
   --red: #fb7185;
   --white: #ffffff;
-  --gray: #9a8b7a;
+  --gray: #587c88;
 
   /* surfaces */
-  --card: rgba(14, 16, 20, 0.6);
-  --card-border: #1a1d23;
-  --hairline: rgba(138, 143, 152, 0.16);
+  --card: rgba(6, 18, 26, 0.62);
+  --card-border: #0d2b36;
+  --hairline: rgba(34, 211, 238, 0.18);
 
   /* type */
   --font-display: "Bricolage Grotesque", "Hanken Grotesk", system-ui, sans-serif;
@@ -35,13 +37,19 @@
   --maxw: 1200px;
 
   /* orb accents (read by the WebGL component) */
-  --orb-core: #c2632a;
-  --orb-hi: #ffb86b;
-  --orb-speak: #ffe6c2;
-  --orb-think: #ffcf8a;
+  --orb-core: #0e7490;
+  --orb-hi: #67e8f9;
+  --orb-speak: #cffafe;
+  --orb-think: #38bdf8;
 
   /* easing curves — a small set instead of one generic ease */
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);      /* entrances, reveals */
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);   /* loops, drifts */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* hover lift / pop */
+
+  /* HUD ring geometry — shared so every ring stays on the same rhythm */
+  --ring-track: rgba(34, 211, 238, 0.16);
+  --ring-tick: rgba(34, 211, 238, 0.38);
+  --ring-sweep: rgba(167, 243, 255, 0.85);
+  --hud-glow: 0 0 12px rgba(34, 211, 238, 0.35);
 }

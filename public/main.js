@@ -660,7 +660,11 @@ async function ask(text) {
             stopThinking();
             setLiveStatus("");
             clearTimeout(execTimer);
-            hud("ttfw", performance.now() - t0); // real, measured, this turn
+            const ttfw = performance.now() - t0;
+            hud("ttfw", ttfw); // real, measured, this turn
+            // Share it with the server so the HUD gauge and the logs quote the
+            // same number instead of each keeping a private one.
+            fetch("/api/telemetry/ttfw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ms: ttfw }) }).catch(() => {});
           }
           out.append(data.t);
           feedTts(data.t);
@@ -1772,3 +1776,9 @@ fetch("/api/status")
     // transparently falls back to Deepgram, so nothing to toggle here.
   })
   .catch(() => {});
+
+// Pause every HUD animation when the window isn't visible. Always-on motion was
+// asked for; burning a laptop battery animating a hidden tab was not.
+document.addEventListener("visibilitychange", () => {
+  document.documentElement.classList.toggle("hud-paused", document.hidden);
+});

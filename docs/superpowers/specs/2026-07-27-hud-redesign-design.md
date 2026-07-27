@@ -159,5 +159,47 @@ sections, tighter monospace type, small-caps labels. Cosmetic only.
 ## Out of scope
 
 - Weather, calendar, media player, file manager — the reference's Windows widgets
-- Replacing the main Three.js orb
+- Replacing the main orb (retinting it is IN scope — see revision below)
 - Mobile layout (the cockpit is a desktop surface)
+
+## Revision — 2026-07-27, after the first build pass
+
+A screenshot of the built app showed the flip half-landed: status dots,
+gauges and prompts turned cyan, but the centre orb, command log and context
+panels stayed amber. Two findings correct this spec:
+
+**1. The main orb is not Three.js.** It is a hand-written Canvas-2D 3D
+projection (`voiceOrb.js`), sharing primitives with `brainOrb.js` via
+`orbShared.js`. Retinting it is safe and cheap — no 3D library involved.
+
+**2. "The flip is mostly changing hexes" was wrong.** The canvas layer never
+reads CSS tokens. Amber is hardcoded as `rgba(...)` strings in:
+
+| file | what |
+|---|---|
+| `orbShared.js` | `PAL` — the shared palette the orbs *should* all use |
+| `voiceOrb.js` | duplicates `O/B/D/GLOW` inline instead of importing `PAL`; ~10 more literals |
+| `brainOrb.js` | ~7 literals despite importing `PAL` |
+| `miniOrb.js` | default accent `#ffb86b` |
+| `cockpit.js` | starfield/grid/particle draws, ~5 literals |
+| `main.js` | waveform gradient, ~3 literals |
+| `brainPage.js` | `SEG_COLORS` amber ramp |
+| `brain.css` | ~10 amber rgba literals |
+
+### Added component: palette sweep
+
+- `orbShared.js` `PAL` becomes the **single source of truth** for canvas
+  colour, flipped to cyan to match `tokens.css` (`--teal #22d3ee`):
+  - `O: "rgba(34,211,238,"` `B: "rgba(140,236,255,"` `Hl: "rgba(214,248,255,"`
+    `D: "rgba(64,150,170,"` `GLOW: "rgba(34,200,238,0.55)"`
+- `voiceOrb.js` drops its inline copy and imports `PAL`; every other literal
+  above is replaced with `PAL`-derived values (append the alpha, as the
+  existing `"rgba(...," + a + ")"` idiom already does).
+- `brain.css` amber literals move to the cyan tokens.
+- `celebration.js` confetti keeps its multi-colour set (amber there is one of
+  six party colours, not UI chrome). `--amber` stays warning-only.
+- Proof: `grep -rn "255,158,72\|255,150,70\|255,178\|255,190,120\|ffb86b" public/ --include='*.js' --include='*.css'`
+  returns nothing outside `celebration.js` and `tokens.css`'s warning token.
+
+Everything else in this spec stands: the tool orb, density styling, and the
+two tests remain the outstanding work.

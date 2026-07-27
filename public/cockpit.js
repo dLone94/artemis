@@ -828,3 +828,60 @@ function announceWhenQuiet(text, tries = 24) {
 
 /* ---------------- opening line in the log ---------------- */
 addLine("status", "systems online — say “Artemis”, tap the mic, or ask “what can I do?”");
+
+// ── HUD gauges ────────────────────────────────────────────────────────────
+// Bound to /api/telemetry. Everything shown here is something she actually
+// knows; a value that can't be read renders "—" rather than 0, because
+// "couldn't measure" and "is zero" are different facts and only one of them
+// is reassuring.
+import { createRingRow } from "./hudRing.js";
+
+(function mountGauges() {
+  const host = document.getElementById("hudTelemetry");
+  if (!host) return;
+
+  const row = createRingRow([
+    { key: "cpu",     label: "CPU",    size: 84, max: 100, unit: "%" },
+    { key: "mem",     label: "MEM",    size: 84, max: 100, unit: "%" },
+    { key: "budget",  label: "TOKENS", size: 84, max: 100, unit: "%" },
+    { key: "latency", label: "TTFW",   size: 84, max: 3000, unit: "ms" },
+    { key: "due",     label: "DUE",    size: 84 }
+  ]);
+  host.appendChild(row);
+  const g = row.rings;
+
+  const pct = (used, total) => (total ? Math.round((used / total) * 100) : null);
+
+  async function poll() {
+    let t = null;
+    try {
+      const r = await fetch("/api/telemetry", { cache: "no-store" });
+      if (r.ok) t = await r.json();
+    } catch (e) { /* keep the last values and dim, rather than zeroing them */ }
+    if (!t) { for (const k in g) g[k].set({ state: "warn" }); return; }
+
+    const cpuPct = t.cpu ? Math.min(100, Math.round((t.cpu.load1 / (t.cpu.cores || 1)) * 100)) : null;
+    g.cpu.set({ value: cpuPct, state: cpuPct > 85 ? "warn" : "" });
+
+    const memPct = t.memory ? pct(t.memory.usedBytes, t.memory.totalBytes) : null;
+    g.mem.set({ value: memPct, state: memPct > 90 ? "warn" : "" });
+
+    // Remaining share of the daily allowance. Worth a gauge of its own: a day's
+    // budget was exhausted in one evening of testing, and it was invisible.
+    const b = t.budget;
+    const left = b && b.limitTokens ? Math.round((b.remainingTokens / b.limitTokens) * 100) : null;
+    g.budget.set({ value: left, state: left != null && left < 15 ? "bad" : left != null && left < 35 ? "warn" : "" });
+
+    const ms = t.latency ? t.latency.lastFirstWordMs : null;
+    g.latency.set({ value: ms, state: ms > 2500 ? "warn" : "" });
+
+    const due = t.counts ? t.counts.reminders : null;
+    g.due.set({ value: due, max: Math.max(5, due || 0), text: due == null ? "—" : String(due) });
+
+    // A benched brain is worth seeing before it surprises you mid-sentence.
+    if (t.brain && t.brain.benched) g.budget.set({ state: "bad" });
+  }
+
+  poll();
+  setInterval(() => { if (!document.hidden) poll(); }, 2500);
+})();

@@ -2,6 +2,7 @@
 // Node built-in http/fs only. No Express, no Stripe SDK, no dotenv.
 // Run with:  node server.js   (Stripe key optional; the app + Test button work without it.)
 
+import os from "os";
 import { createServer } from "http";
 import { createServer as createHttpsServer } from "https";
 import { promises as fs, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "fs";
@@ -326,6 +327,20 @@ function benchBrain(brain, res) {
   return true;
 }
 const isRateLimit = (e) => /HTTP 429/.test(String(e && e.message));
+
+// The provider already tells us what is left on every response; reading the
+// headers costs nothing and makes the remaining daily budget visible, which
+// after burning a whole day's allowance in one evening is worth seeing.
+function recordBudget(res) {
+  try {
+    const rem = res.headers.get("x-ratelimit-remaining-tokens");
+    const lim = res.headers.get("x-ratelimit-limit-tokens");
+    if (rem != null) lastBudget.remainingTokens = Number(rem);
+    if (lim != null) lastBudget.limitTokens = Number(lim);
+    const reset = res.headers.get("x-ratelimit-reset-tokens");
+    if (reset) lastBudget.resetsIn = String(reset);
+  } catch (e) {}
+}
 /** Is an OpenAI-compatible brain (Groq or NVIDIA) configured and selected? */
 const openAiCompatActive = () => Boolean(BRAIN.key) && (LLM_PROVIDER === "groq" || LLM_PROVIDER === "nvidia");
 // Web search (NVIDIA has no built-in search — bring a key for live answers).
@@ -1040,6 +1055,14 @@ function newTurnState(intent) {
 
 const MAX_TOOL_CALLS_PER_TURN = 6;
 
+// HUD state. Cached from work already being done, so the endpoint never causes
+// a request of its own — a telemetry poll that costs tokens would be absurd.
+let lastFirstWordMs = null;
+let lastUnreadMail = null;
+let cachedFx = null;
+let cachedFxAt = 0;
+const lastBudget = {};
+
 // Evaluation mode: run the real loop, execute nothing. Used to benchmark a
 // model's tool use against adversarial prompts without those prompts reaching a
 // real inbox or the real web. Loud on purpose — if this is ever on by accident,
@@ -1171,6 +1194,7 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
         ms,
         signal
       );
+      recordBudget(res);
       if (!res.ok) {
         const err = new Error("NVIDIA HTTP " + res.status + ": " + (await res.text()).slice(0, 300));
         err.res = res;   // so the cooldown can honour retry-after
@@ -2230,6 +2254,52 @@ async function handleRequest(req, res) {
         tools: openaiToolDefs(caps).map((t) => t.function.name)
       })
     );
+    return;
+  }
+
+  // Live numbers for the HUD. Read-only, cheap, polled every couple of seconds.
+  //
+  // Every field here is something she genuinely knows. A source that can't be
+  // read is OMITTED rather than reported as zero — the gauge then shows "—",
+  // because "I couldn't measure this" and "this is zero" are different facts.
+  if (url.pathname === "/api/telemetry") {
+    const out = {};
+    try {
+      const load = os.loadavg();
+      out.cpu = { load1: Math.round(load[0] * 100) / 100, cores: os.cpus().length };
+    } catch (e) {}
+    try {
+      const total = os.totalmem(), free = os.freemem();
+      if (total) out.memory = { usedBytes: total - free, totalBytes: total };
+    } catch (e) {}
+    const brain = currentBrain();
+    out.brain = {
+      name: brain.name,
+      benched: (brainCooldown.get(brain.name) || 0) > Date.now(),
+      chain: BRAIN_CHAIN.map((b) => b.name)
+    };
+    if (lastBudget.limitTokens) out.budget = lastBudget;
+    if (lastFirstWordMs != null) out.latency = { lastFirstWordMs };
+    out.counts = {};
+    try {
+      const rem = await skillCtx.readJson("reminders.json", []);
+      if (Array.isArray(rem)) out.counts.reminders = rem.length;
+    } catch (e) {}
+    if (lastUnreadMail != null) out.counts.unreadMail = lastUnreadMail;
+    if (cachedFx) out.fx = cachedFx;
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
+  // The client measures time-to-first-word; it posts it back so the HUD and the
+  // logs agree on one number rather than each keeping its own.
+  if (url.pathname === "/api/telemetry/ttfw" && req.method === "POST") {
+    try {
+      const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
+      if (Number.isFinite(body.ms) && body.ms >= 0 && body.ms < 600000) lastFirstWordMs = Math.round(body.ms);
+    } catch (e) {}
+    res.writeHead(204).end();
     return;
   }
 

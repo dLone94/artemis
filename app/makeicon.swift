@@ -11,10 +11,10 @@ import Foundation
 
 let outPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "AppIcon.icns"
 
-// Palette lifted from the cockpit UI.
-let amber = NSColor(srgbRed: 1.00, green: 0.63, blue: 0.24, alpha: 1)
-let amberDim = NSColor(srgbRed: 0.85, green: 0.44, blue: 0.13, alpha: 1)
-let ink = NSColor(srgbRed: 0.043, green: 0.039, blue: 0.055, alpha: 1)
+// Palette lifted from the cockpit UI (cyan reactor HUD).
+let amber = NSColor(srgbRed: 0.13, green: 0.83, blue: 0.93, alpha: 1)   // cyan: matches the HUD
+let amberDim = NSColor(srgbRed: 0.05, green: 0.45, blue: 0.57, alpha: 1)
+let ink = NSColor(srgbRed: 0.016, green: 0.027, blue: 0.043, alpha: 1)
 
 func drawIcon(size S: CGFloat) -> NSImage {
     let img = NSImage(size: NSSize(width: S, height: S))
@@ -37,7 +37,7 @@ func drawIcon(size S: CGFloat) -> NSImage {
     rect.fill()
     let c = CGPoint(x: rect.midX, y: rect.midY)
     if let glow = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                             colors: [NSColor(srgbRed: 0.25, green: 0.12, blue: 0.03, alpha: 1).cgColor,
+                             colors: [NSColor(srgbRed: 0.03, green: 0.20, blue: 0.26, alpha: 1).cgColor,
                                       ink.cgColor] as CFArray,
                              locations: [0, 1]) {
         ctx.drawRadialGradient(glow, startCenter: c, startRadius: 0,
