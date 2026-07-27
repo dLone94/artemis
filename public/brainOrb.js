@@ -1,4 +1,4 @@
-// BrainOrb — the EXPLANATORY orb for the #brain section. Same amber orbital-HUD
+// BrainOrb — the EXPLANATORY orb for the #brain section. Same cyan orbital-HUD
 // visual language as the hero VoiceOrb (via ./orbShared.js), but instead of being
 // audio-driven it's driven by a discrete pipeline STATE MACHINE:
 //   wake → route → tool → respond
@@ -11,11 +11,11 @@
 
 import { PAL, prefersReducedMotion, ring, arcs, ticks, poly } from "./orbShared.js";
 
-// The real sub-agents, each on its own tilted orbit. rgb picked to match the team cards.
+// The real sub-agents, each on its own tilted orbit. Colors come from the shared orb palette.
 const AGENTS = [
-  { name: "Research",     rgb: [255, 184, 107], tilt: 0.5,  rx: 0.74, ry: 0.30, phase: 0.0 },
-  { name: "Email triage", rgb: [255, 201, 138], tilt: -0.9, rx: 0.66, ry: 0.66, phase: 2.1 },
-  { name: "Messaging",    rgb: [255, 166, 77],  tilt: 1.4,  rx: 0.55, ry: 0.22, phase: 4.0 }
+  { name: "Research",     color: PAL.O, tilt: 0.5,  rx: 0.74, ry: 0.30, phase: 0.0 },
+  { name: "Email triage", color: PAL.B, tilt: -0.9, rx: 0.66, ry: 0.66, phase: 2.1 },
+  { name: "Messaging",    color: PAL.D, tilt: 1.4,  rx: 0.55, ry: 0.22, phase: 4.0 }
 ];
 
 export const BRAIN_STEPS = ["wake", "route", "tool", "respond"];
@@ -192,13 +192,13 @@ export class BrainOrb {
     const flare = wgt(3); // fades in/out with proximity to "respond"
     const corePulse = 0.5 + 0.14 * Math.sin(tt * 1.6) + flare * 0.5 + wgt(2) * 0.15 + voiceAmp * 0.45;
     const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, base * 0.4);
-    cg.addColorStop(0, "rgba(255,232,200," + (0.42 * corePulse) + ")");
-    cg.addColorStop(0.4, "rgba(255,150,70," + (0.24 * corePulse) + ")");
-    cg.addColorStop(1, "rgba(180,80,30,0)");
+    cg.addColorStop(0, PAL.Hl + (0.42 * corePulse) + ")");
+    cg.addColorStop(0.4, PAL.O + (0.24 * corePulse) + ")");
+    cg.addColorStop(1, PAL.D + "0)");
     ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, base * 0.4, 0, Math.PI * 2); ctx.fill();
     const cd = ctx.createRadialGradient(0, 0, 0, 0, 0, base * 0.13);
-    cd.addColorStop(0, "rgba(255,242,216," + (0.7 + flare * 0.3) + ")");
-    cd.addColorStop(1, "rgba(255,150,70,0)");
+    cd.addColorStop(0, PAL.Hl + (0.7 + flare * 0.3) + ")");
+    cd.addColorStop(1, PAL.O + "0)");
     ctx.fillStyle = cd; ctx.beginPath(); ctx.arc(0, 0, base * 0.13, 0, Math.PI * 2); ctx.fill();
 
     // --- HUD framing (shared primitives, same look as the hero) ---
@@ -234,7 +234,7 @@ export class BrainOrb {
       }
     } else if (wl > 0.02) {
       const lp = (tt % 1.4) / 1.4;
-      ctx.strokeStyle = "rgba(255,190,120," + (0.55 * (1 - lp) * wl) + ")"; ctx.lineWidth = 2;
+      ctx.strokeStyle = PAL.B + (0.55 * (1 - lp) * wl) + ")"; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(0, 0, base * (0.16 + lp * 0.52), 0, Math.PI * 2); ctx.stroke();
     }
 
@@ -248,23 +248,22 @@ export class BrainOrb {
     for (let i = 0; i < AGENTS.length; i++) {
       const a = AGENTS[i];
       const active = routed && i === this.agent;
-      const [r, g, b] = a.rgb;
       ctx.save(); ctx.rotate(a.tilt);
-      ctx.lineWidth = 1; ctx.strokeStyle = "rgba(255,158,72," + (active ? 0.55 * ease + 0.18 : 0.16) + ")";
+      ctx.lineWidth = 1; ctx.strokeStyle = PAL.O + (active ? 0.55 * ease + 0.18 : 0.16) + ")";
       ctx.beginPath(); ctx.ellipse(0, 0, base * a.rx, base * a.ry, 0, 0, Math.PI * 2); ctx.stroke();
 
       const ph = a.phase + (this.reduced ? 0 : tt * (active ? 0.9 : 0.4));
       const px = Math.cos(ph) * base * a.rx, py = Math.sin(ph) * base * a.ry;
       const nodeR = (active ? 5.5 : 3) * (active && !this.reduced ? 1 + 0.25 * Math.sin(tt * 4) : 1);
-      ctx.shadowColor = "rgba(" + r + "," + g + "," + b + ",0.9)"; ctx.shadowBlur = active ? 16 : 5;
-      ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + (active ? 1 : 0.5) + ")";
+      ctx.shadowColor = a.color + "0.9)"; ctx.shadowBlur = active ? 16 : 5;
+      ctx.fillStyle = a.color + (active ? 1 : 0.5) + ")";
       ctx.beginPath(); ctx.arc(px, py, nodeR, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
 
       // tool call: a little spinner sweeps around the working node (fades with
       // the tool weight so it eases in/out instead of popping)
       const wt = wgt(2);
       if (wt > 0.05 && active && !this.reduced) {
-        ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + (0.9 * wt) + ")"; ctx.lineWidth = 2; ctx.lineCap = "round";
+        ctx.strokeStyle = a.color + (0.9 * wt) + ")"; ctx.lineWidth = 2; ctx.lineCap = "round";
         ctx.beginPath(); ctx.arc(px, py, nodeR + 4, tt * 6, tt * 6 + 1.6); ctx.stroke(); ctx.lineCap = "butt";
       }
 
@@ -275,9 +274,9 @@ export class BrainOrb {
 
     // --- link from core to the active agent (glows while routing / working) ---
     if (routed && nodePos[this.agent]) {
-      const np = nodePos[this.agent], [r, g, b] = AGENTS[this.agent].rgb;
+      const np = nodePos[this.agent], color = AGENTS[this.agent].color;
       const shimmer = this.reduced ? 1 : 0.5 + 0.5 * Math.sin(tt * 3);
-      ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + ((0.3 + 0.35 * shimmer) * ease) + ")";
+      ctx.strokeStyle = color + ((0.3 + 0.35 * shimmer) * ease) + ")";
       ctx.lineWidth = 1.5 + wgt(2); // thickens smoothly while the tool works
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(np.x, np.y); ctx.stroke();
 
@@ -287,8 +286,8 @@ export class BrainOrb {
         const cyc = (tt % 1.6) / 1.6;                    // 1.6s round trip
         const k = cyc < 0.5 ? cyc * 2 : (1 - cyc) * 2;   // ping-pong 0→1→0
         const kk = k * k * (3 - 2 * k);                  // smoothstep glide
-        ctx.fillStyle = "rgba(255,240,215," + (0.9 * ease) + ")";
-        ctx.shadowColor = "rgba(" + r + "," + g + "," + b + ",0.95)";
+        ctx.fillStyle = PAL.Hl + (0.9 * ease) + ")";
+        ctx.shadowColor = color + "0.95)";
         ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(np.x * kk, np.y * kk, 2.6, 0, Math.PI * 2); ctx.fill();
         ctx.shadowBlur = 0;
@@ -300,7 +299,7 @@ export class BrainOrb {
     if (wr > 0.02 && !this.reduced) {
       for (let k = 0; k < 2; k++) {
         const rp = (tt + k * 0.5) % 1.0;
-        ctx.strokeStyle = "rgba(255,178,98," + (0.4 * (1 - rp) * wr) + ")"; ctx.lineWidth = 2 * (1 - rp) + 0.3;
+        ctx.strokeStyle = PAL.O + (0.4 * (1 - rp) * wr) + ")"; ctx.lineWidth = 2 * (1 - rp) + 0.3;
         ctx.beginPath(); ctx.arc(0, 0, base * (0.16 + rp * 0.6), 0, Math.PI * 2); ctx.stroke();
       }
     }
@@ -315,15 +314,15 @@ export class BrainOrb {
       const pa = this._px * 0.052, pc = Math.cos(pa), ps = Math.sin(pa);
       const nx = np.x * pc - np.y * ps, ny = np.x * ps + np.y * pc;
       ctx.font = "600 " + Math.max(10, Math.round(base * 0.07)) + 'px "JetBrains Mono", monospace';
-      ctx.fillStyle = "rgba(255,236,208,0.95)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.shadowColor = "rgba(255,170,90,0.8)"; ctx.shadowBlur = 8;
+      ctx.fillStyle = PAL.Hl + "0.95)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.shadowColor = PAL.O + "0.8)"; ctx.shadowBlur = 8;
       const ly = Math.max(14, cy + ny - 14);
       ctx.fillText(AGENTS[this.agent].name.toUpperCase(), cx + nx, ly);
       ctx.shadowBlur = 0;
     }
     // step label under the orb
     ctx.font = "600 " + Math.max(9, Math.round(base * 0.055)) + 'px "JetBrains Mono", monospace';
-    ctx.fillStyle = "rgba(255,220,180,0.45)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = PAL.B + "0.45)"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(BRAIN_STEPS[step].toUpperCase(), cx, Math.min(H - 10, cy + base * 0.62));
   }
 

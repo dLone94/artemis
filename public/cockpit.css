@@ -1,6 +1,6 @@
 /* ARTEMIS cockpit — full-screen JARVIS-style command center (index.html).
    Layers (back → front): #sceneStage orb · .hud-frame dressing · panels · dock.
-   Pure CSS + the existing Canvas orb; amber-on-black; red reserved for errors.
+   Pure CSS + the existing Canvas orb; cyan-on-black; warm tones flag warnings.
    Every animation is disabled under prefers-reduced-motion. */
 
 .cockpit {
@@ -8,6 +8,22 @@
   height: 100dvh;
   overflow: hidden;
   padding-bottom: 0 !important; /* no scrolling page — the dock is part of the frame */
+  --hud-dim: #5f8996;
+}
+/* A cockpit instrument surface earns a measurement grid: it aligns the real
+   panels and orb without pretending the lines are extra telemetry. */
+.cockpit::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(circle at 50% 48%, transparent 0 22%, #000 76%);
+  mask-image: radial-gradient(circle at 50% 48%, transparent 0 22%, #000 76%);
 }
 
 /* ---- HUD frame dressing ---- */
@@ -15,19 +31,43 @@
 .hud-corner {
   position: absolute;
   width: 26px; height: 26px;
-  border: 1px solid rgba(255, 178, 77, 0.55);
+  border: 1px solid rgba(34, 211, 238, 0.55);
   /* --vg is the live voice amplitude (set per-frame by cockpit.js) — the
      frame itself glows when anyone in the room is talking */
-  box-shadow: 0 0 calc(var(--vg, 0) * 1px) rgba(255, 178, 77, 0.55);
+  box-shadow: 0 0 calc(var(--vg, 0) * 1px) rgba(34, 211, 238, 0.55);
 }
 .hud-corner.tl { top: 10px; left: 10px; border-right: 0; border-bottom: 0; }
 .hud-corner.tr { top: 10px; right: 10px; border-left: 0; border-bottom: 0; }
 .hud-corner.bl { bottom: 10px; left: 10px; border-right: 0; border-top: 0; }
 .hud-corner.br { bottom: 10px; right: 10px; border-left: 0; border-top: 0; }
+/* Honest structure, not another gauge: these hairlines simply connect the
+   side instruments to the central assembly when the viewport leaves room. */
+.hud-connector {
+  position: absolute;
+  top: 48%;
+  width: max(0px, calc(50% - min(310px, 39vmin) - min(300px, 26vw) - 18px));
+  height: 1px;
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.42), rgba(34, 211, 238, 0.06));
+}
+.hud-connector::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: 0;
+  width: 5px;
+  height: 5px;
+  border: 1px solid rgba(34, 211, 238, 0.6);
+  border-radius: 50%;
+}
+.hud-connector.left { left: calc(18px + min(300px, 26vw)); }
+.hud-connector.right {
+  right: calc(18px + min(300px, 26vw));
+  transform: scaleX(-1);
+}
 /* slow radar sweep across the whole frame */
 .hud-sweep {
   position: absolute; inset: 0;
-  background: linear-gradient(100deg, transparent 46%, rgba(255, 178, 77, 0.045) 50%, transparent 54%);
+  background: linear-gradient(100deg, transparent 46%, rgba(34, 211, 238, 0.045) 50%, transparent 54%);
   background-size: 300% 100%;
   animation: hud-sweep 9s linear infinite;
 }
@@ -55,7 +95,7 @@
   font-size: 11px;
   letter-spacing: 0.14em;
   color: var(--gray);
-  background: linear-gradient(180deg, rgba(10, 8, 5, 0.85), transparent);
+  background: linear-gradient(180deg, rgba(4, 15, 22, 0.9), transparent);
 }
 .hud-brand {
   display: inline-flex; align-items: center; gap: 9px;
@@ -63,22 +103,35 @@
   font-size: 16px; font-weight: 700; letter-spacing: 0.3em;
   color: var(--text-bright);
 }
-.hud-os { color: var(--amber, #ffb24d); font-size: 10px; letter-spacing: 0.2em; align-self: flex-start; }
+.hud-os { color: var(--teal); font-size: 10px; letter-spacing: 0.2em; align-self: flex-start; }
 .hud-dots { display: flex; gap: 16px; }
-.hud-dot { color: rgba(154, 139, 122, 0.6); transition: color 0.3s; font-size: 10px; }
-.hud-dot.on { color: var(--teal); text-shadow: 0 0 8px rgba(255, 158, 72, 0.6); }
+.hud-dot { color: rgba(88, 124, 136, 0.72); transition: color 0.3s; font-size: 10px; }
+.hud-dot.on { color: var(--teal); text-shadow: 0 0 8px rgba(34, 211, 238, 0.6); }
 .hud-dot.off { color: rgba(255, 107, 94, 0.7); }
 .hud-meta { display: flex; align-items: center; gap: 18px; }
 .hud-ttfw {
   padding: 3px 10px;
-  border: 1px solid rgba(255, 178, 77, 0.35);
+  border: 1px solid rgba(34, 211, 238, 0.35);
   border-radius: var(--radius-pill);
-  color: var(--amber, #ffb24d);
+  color: var(--teal);
   font-size: 10px;
 }
 .hud-clock { color: var(--text-bright); font-size: 12px; letter-spacing: 0.18em; }
 .hud-links a { color: var(--gray); text-decoration: none; margin-left: 14px; font-size: 10px; }
 .hud-links a:hover { color: var(--teal); }
+.hud-os,
+.hud-dot,
+.hud-ttfw,
+.hud-model,
+.hud-links,
+.hud-panel-title,
+.hud-card-title,
+.hud-telemetry,
+.hud-tool-label,
+.hud-tool-phase {
+  font-variant-caps: all-small-caps;
+  text-transform: uppercase;
+}
 
 /* ---- side panels: notched HUD glass slabs that ASSEMBLE in after boot ---- */
 .hud-panel {
@@ -90,14 +143,32 @@
   display: flex;
   flex-direction: column;
   padding: 14px 16px;
-  border: 1px solid rgba(255, 178, 77, 0.16);
+  border: 1px solid rgba(34, 211, 238, 0.2);
   border-radius: 3px;
   /* 45° notched corners — instrument glass, not a web card */
   clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
-  background: rgba(12, 9, 6, 0.55);
+  background: rgba(4, 16, 24, 0.62);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   transition: border-color 0.4s, box-shadow 0.4s, opacity 0.4s;
+}
+/* Four compact target brackets give each panel a readable instrument edge. */
+.hud-panel::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.62;
+  background:
+    linear-gradient(var(--teal), var(--teal)) left top / 14px 1px no-repeat,
+    linear-gradient(var(--teal), var(--teal)) left top / 1px 14px no-repeat,
+    linear-gradient(var(--teal), var(--teal)) right top / 14px 1px no-repeat,
+    linear-gradient(var(--teal), var(--teal)) right top / 1px 14px no-repeat,
+    linear-gradient(var(--teal), var(--teal)) left bottom / 14px 1px no-repeat,
+    linear-gradient(var(--teal), var(--teal)) left bottom / 1px 14px no-repeat,
+    linear-gradient(var(--teal), var(--teal)) right bottom / 14px 1px no-repeat,
+    linear-gradient(var(--teal), var(--teal)) right bottom / 1px 14px no-repeat;
 }
 /* assemble-in: hidden until cockpit.js flags body.hud-in after the boot */
 .hud-panel, .hud-top, .cockpit .dock, .hud-state, .hud-gauge {
@@ -121,10 +192,12 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.22em;
-  color: var(--amber, #ffb24d);
+  color: var(--teal);
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255, 178, 77, 0.14);
+  border-bottom: 1px solid rgba(34, 211, 238, 0.18);
   margin-bottom: 10px;
+  font-variant-caps: all-small-caps;
+  text-transform: uppercase;
 }
 
 /* command log lines */
@@ -133,8 +206,8 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   min-height: 0;
   overflow-y: auto;
   font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: 10.5px;
+  line-height: 1.45;
 }
 .hud-line {
   display: flex;
@@ -147,21 +220,21 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   overflow-wrap: anywhere;
 }
 .hud-line.shown { opacity: 1; transform: none; }
-.hud-line .t { color: rgba(154, 139, 122, 0.55); font-size: 9px; flex: 0 0 auto; }
+.hud-line .t { color: rgba(88, 124, 136, 0.62); font-size: 9px; flex: 0 0 auto; }
 .hud-line .k { flex: 0 0 52px; font-size: 9px; letter-spacing: 0.08em; }
 .hud-line .m { color: var(--text-bright); flex: 1; }
-.hud-line[data-kind="you"] .k { color: var(--amber, #ffb24d); }
+.hud-line[data-kind="you"] .k { color: var(--teal); }
 .hud-line[data-kind="artemis"] .k { color: var(--teal); }
-.hud-line[data-kind="tool"] .k { color: #7ed98a; }
-.hud-line[data-kind="action"] .k { color: #7ed98a; }
+.hud-line[data-kind="tool"] .k { color: var(--teal); }
+.hud-line[data-kind="action"] .k { color: var(--teal); }
 .hud-line[data-kind="status"] .k, .hud-line[data-kind="status"] .m { color: var(--gray); }
 .hud-line[data-kind="error"] .k, .hud-line[data-kind="error"] .m { color: #ff6b5e; }
-.hud-line[data-kind="confirm"] .k { color: #ffd27a; }
+.hud-line[data-kind="confirm"] .k { color: var(--amber); }
 /* replayed prior-session turns: dimmed so they read as history, not live */
 .hud-line.hud-earlier { opacity: 0.5; }
 .hud-line.hud-earlier-sep .m { color: var(--hud-dim, #8a93a3); opacity: 0.6; letter-spacing: 0.2em; font-size: 9px; }
-/* live transcript line: amber text + blinking cursor while the user speaks */
-.hud-line.hud-live .m { color: var(--amber, #ffb24d); }
+/* live transcript line: cyan text + blinking cursor while the user speaks */
+.hud-line.hud-live .m { color: var(--teal); }
 .hud-line.hud-live .m::after {
   content: "▍";
   animation: hud-caret 0.9s steps(1) infinite;
@@ -173,9 +246,9 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
 .hud-cards { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .hud-card {
   padding: 10px 12px;
-  border: 1px solid rgba(255, 178, 77, 0.2);
+  border: 1px solid rgba(34, 211, 238, 0.2);
   border-radius: 10px;
-  background: rgba(255, 178, 77, 0.05);
+  background: rgba(34, 211, 238, 0.05);
   opacity: 0;
   transform: translateX(10px);
   transition: opacity 0.35s, transform 0.35s;
@@ -185,14 +258,16 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.18em;
-  color: var(--amber, #ffb24d);
+  color: var(--teal);
   margin-bottom: 6px;
+  font-variant-caps: all-small-caps;
+  text-transform: uppercase;
 }
 .hud-card a, .hud-card p {
   display: block;
   font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: 10.5px;
+  line-height: 1.45;
   color: var(--text-bright);
   text-decoration: none;
   margin: 0 0 4px;
@@ -204,15 +279,15 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
-  color: var(--amber, #ffb24d);
-  background: rgba(255, 178, 77, 0.08);
-  border: 1px solid rgba(255, 178, 77, 0.4);
+  color: var(--teal);
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.4);
   border-radius: var(--radius-pill);
   padding: 5px 14px;
   cursor: pointer;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
-.hud-card-play:hover { border-color: var(--teal); box-shadow: 0 0 12px rgba(255, 158, 72, 0.3); }
+.hud-card-play:hover { border-color: var(--teal); box-shadow: 0 0 12px rgba(34, 211, 238, 0.3); }
 .hud-confirm-row { display: flex; gap: 8px; margin-top: 6px; }
 .hud-card-play.hud-abort {
   color: #ff6b5e;
@@ -220,7 +295,7 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   background: rgba(255, 107, 94, 0.07);
 }
 .hud-card-play.hud-abort:hover { border-color: #ff6b5e; box-shadow: 0 0 12px rgba(255, 107, 94, 0.35); }
-.hud-empty { font-family: var(--font-mono); font-size: 10px; color: rgba(154, 139, 122, 0.5); letter-spacing: 0.06em; }
+.hud-empty { font-family: var(--font-mono); font-size: 10px; color: rgba(88, 124, 136, 0.65); letter-spacing: 0.06em; }
 
 /* ---- bottom dock: full-width HUD bar (overrides the floating-bubble styles) ---- */
 .cockpit .dock,
@@ -231,8 +306,8 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   max-width: none;
   padding: 10px 22px 12px;
   border-radius: 14px;
-  border-color: rgba(255, 178, 77, 0.2);
-  background: rgba(12, 9, 6, 0.6);
+  border-color: rgba(34, 211, 238, 0.2);
+  background: rgba(4, 16, 24, 0.68);
 }
 /* the cockpit dock never collapses — undo every idle-state hide */
 .cockpit .dock .dock-status,
@@ -257,12 +332,12 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
 
 /* typed command line */
 .hud-cmd { display: flex; align-items: center; gap: 10px; width: min(720px, 86vw); }
-.hud-cmd-prompt { color: var(--amber, #ffb24d); font-family: var(--font-mono); font-size: 14px; }
+.hud-cmd-prompt { color: var(--teal); font-family: var(--font-mono); font-size: 14px; }
 .hud-cmd-input {
   flex: 1;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid rgba(255, 178, 77, 0.22);
+  border-bottom: 1px solid rgba(34, 211, 238, 0.24);
   color: var(--text-bright);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -272,17 +347,17 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   transition: border-color 0.2s;
 }
 .hud-cmd-input:focus { border-bottom-color: var(--teal); }
-.hud-cmd-input::placeholder { color: var(--hud-dim, #8a93a3); opacity: 0.55; }
+.hud-cmd-input::placeholder { color: var(--text-muted); opacity: 1; }
 
 /* ---- state choreography: the WHOLE hud reacts, not just the orb ---- */
-.cockpit[data-ai-state="listening"] .hud-panel { border-color: rgba(255, 178, 77, 0.38); }
+.cockpit[data-ai-state="listening"] .hud-panel { border-color: rgba(34, 211, 238, 0.4); }
 .cockpit[data-ai-state="thinking"] .hud-sweep { animation-duration: 3.5s; }
 .cockpit[data-ai-state="thinking"] .hud-right { opacity: 0.65; }
 .cockpit[data-ai-state="executing"] .hud-left {
-  border-color: rgba(126, 217, 138, 0.45);
-  box-shadow: 0 0 24px -8px rgba(126, 217, 138, 0.35);
+  border-color: rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 24px -8px rgba(34, 211, 238, 0.35);
 }
-.cockpit[data-ai-state="speaking"] .hud-wave { filter: drop-shadow(0 0 6px rgba(255, 178, 77, 0.6)); }
+.cockpit[data-ai-state="speaking"] .hud-wave { filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.6)); }
 .cockpit[data-ai-state="error"] .hud-frame .hud-corner { border-color: rgba(255, 107, 94, 0.9); }
 .cockpit[data-ai-state="error"] .hud-panel { border-color: rgba(255, 107, 94, 0.5); }
 
@@ -290,7 +365,7 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
 .boot {
   position: fixed; inset: 0; z-index: 60;
   display: grid; place-items: center;
-  background: #0a0805;
+  background: #04070b;
   transition: opacity 0.5s;
 }
 .boot.done { opacity: 0; pointer-events: none; }
@@ -299,7 +374,7 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   font-size: 13px;
   line-height: 1.9;
   letter-spacing: 0.1em;
-  color: var(--amber, #ffb24d);
+  color: var(--teal);
   min-width: 320px;
   min-height: 160px;
   margin: 0;
@@ -348,12 +423,119 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
 }
 .cockpit[data-ai-state="listening"] .hud-state { color: var(--teal); }
 .cockpit[data-ai-state="listening"] .hud-state i { background: var(--teal); box-shadow: 0 0 10px var(--teal); }
-.cockpit[data-ai-state="speaking"] .hud-state { color: var(--amber, #ffb24d); }
-.cockpit[data-ai-state="speaking"] .hud-state i { background: var(--amber, #ffb24d); box-shadow: 0 0 10px rgba(255, 178, 77, 0.8); }
+.cockpit[data-ai-state="speaking"] .hud-state { color: var(--teal); }
+.cockpit[data-ai-state="speaking"] .hud-state i { background: var(--teal); box-shadow: 0 0 10px rgba(34, 211, 238, 0.8); }
 .cockpit[data-ai-state="thinking"] .hud-state i,
-.cockpit[data-ai-state="executing"] .hud-state i { background: #7ed98a; box-shadow: 0 0 10px rgba(126, 217, 138, 0.7); }
+.cockpit[data-ai-state="executing"] .hud-state i { background: var(--teal); box-shadow: 0 0 10px rgba(34, 211, 238, 0.7); }
 .cockpit[data-ai-state="error"] .hud-state { color: #ff6b5e; }
 .cockpit[data-ai-state="error"] .hud-state i { background: #ff6b5e; }
+
+/* ---- live tool orb: registry family colour + explicit textual state ---- */
+.hud-tool-orb {
+  --tool-tone: var(--teal);
+  position: fixed;
+  left: calc(50% + min(240px, 30vmin));
+  top: calc(50% - min(190px, 24vmin));
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 158px;
+  opacity: 0;
+  transform: translateY(5px);
+  transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out);
+  pointer-events: none;
+  color: var(--text-bright);
+}
+.hud-tool-orb.is-active { opacity: 1; transform: none; }
+.hud-tool-orb.is-fading {
+  animation: hud-tool-fade 180ms var(--ease-out) forwards;
+}
+@keyframes hud-tool-fade {
+  to { opacity: 0; transform: translateY(5px); }
+}
+.hud-tool-ring {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  overflow: visible;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--tool-tone) 58%, transparent));
+}
+.hud-tool-track,
+.hud-tool-sweep {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+.hud-tool-track {
+  stroke: color-mix(in srgb, var(--tool-tone) 30%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+.hud-tool-sweep {
+  stroke: var(--tool-tone);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 22 78;
+  transform-origin: 24px 24px;
+}
+.hud-tool-core {
+  fill: var(--tool-tone);
+  opacity: 0.9;
+}
+.hud-tool-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  line-height: 1.05;
+}
+.hud-tool-label {
+  color: var(--hud-dim);
+  font-size: 8px;
+  letter-spacing: 0.2em;
+}
+.hud-tool-name {
+  max-width: 13ch;
+  overflow: hidden;
+  color: var(--text-bright);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-tool-phase {
+  color: var(--tool-tone);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+}
+.hud-tool-orb[data-phase="running"] .hud-tool-sweep {
+  animation: hud-tool-spin 950ms linear infinite;
+}
+@keyframes hud-tool-spin { to { transform: rotate(360deg); } }
+
+/* The server supplies only the family name; this is presentation metadata,
+   never a second tool registry. Families stay within the cyan/blue spectrum. */
+.hud-tool-orb[data-family="web"]      { --tool-tone: #22d3ee; }
+.hud-tool-orb[data-family="navigate"] { --tool-tone: #67e8f9; }
+.hud-tool-orb[data-family="media"]    { --tool-tone: #38bdf8; }
+.hud-tool-orb[data-family="email"]    { --tool-tone: #7dd3fc; }
+.hud-tool-orb[data-family="messages"] { --tool-tone: #06b6d4; }
+.hud-tool-orb[data-family="message"]  { --tool-tone: #0891b2; }
+.hud-tool-orb[data-family="research"] { --tool-tone: #2dd4bf; }
+.hud-tool-orb[data-family="memory"]   { --tool-tone: #60a5fa; }
+.hud-tool-orb[data-family="reminder"] { --tool-tone: #a5f3fc; }
+.hud-tool-orb[data-family="contacts"] { --tool-tone: #0ea5e9; }
+/* Completion is semantic and therefore overrides the family hue. */
+.hud-tool-orb[data-phase="success"] { --tool-tone: #7ed98a; }
+.hud-tool-orb[data-phase="failure"] { --tool-tone: var(--red); }
+
+@media (max-width: 1100px) {
+  .hud-tool-orb {
+    left: calc(50% + 70px);
+    top: calc(50% + min(180px, 24vmin));
+  }
+}
 
 /* ---- particle field ---- */
 .hud-particles { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
@@ -365,7 +547,7 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   gap: 8px;
   padding-top: 9px;
   margin-top: 9px;
-  border-top: 1px solid rgba(255, 178, 77, 0.14);
+  border-top: 1px solid rgba(34, 211, 238, 0.18);
   font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.1em;
@@ -374,23 +556,23 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
 }
 .hud-model { color: var(--hud-dim, #8a93a3); font-size: 9px; letter-spacing: 0.12em; }
 
-/* ---- second (cool) tone for dim data — makes the amber pop ---- */
-:root { --hud-dim: #8a93a3; }
+/* ---- second (cool) tone for dim data ---- */
+:root { --hud-dim: #5f8996; }
 .hud-line .t, .hud-empty, .hud-links a, .hud-dot { color: var(--hud-dim); }
-.hud-dot.on { color: var(--teal); } /* live systems stay amber */
+.hud-dot.on { color: var(--teal); }
 
 /* ---- micro-motion: subsystem dot pulse while its tool runs ---- */
 .hud-dot.pulse { animation: dot-pulse 0.55s ease-in-out 3; }
 @keyframes dot-pulse {
-  0%, 100% { text-shadow: 0 0 8px rgba(255, 158, 72, 0.6); }
-  50% { text-shadow: 0 0 16px rgba(255, 158, 72, 1); color: var(--text-bright); }
+  0%, 100% { text-shadow: 0 0 8px rgba(34, 211, 238, 0.6); }
+  50% { text-shadow: 0 0 16px rgba(34, 211, 238, 1); color: var(--text-bright); }
 }
 
 /* ---- micro-motion: target-bracket flash on new context cards ---- */
 .hud-card.shown { animation: card-target 0.5s ease-out; }
 @keyframes card-target {
-  0% { outline: 2px solid rgba(255, 178, 77, 0.9); outline-offset: 6px; }
-  100% { outline: 2px solid rgba(255, 178, 77, 0); outline-offset: 0; }
+  0% { outline: 2px solid rgba(34, 211, 238, 0.9); outline-offset: 6px; }
+  100% { outline: 2px solid rgba(34, 211, 238, 0); outline-offset: 0; }
 }
 
 /* ---- reduced motion: static frame, no sweep, instant lines ---- */
@@ -402,7 +584,12 @@ body.hud-in .hud-state, body.hud-in .hud-gauge { transition-delay: 0.5s; }
   .hud-panel, .hud-top, .cockpit .dock, .hud-state, .hud-gauge { opacity: 1; transform: none; transition: none; }
   .hud-particles { display: none; }
   .boot { display: none; }
+  .hud-tool-orb { transition: none; }
+  .hud-tool-orb.is-fading { opacity: 0; transform: translateY(5px); animation: none; }
+  .hud-tool-sweep { animation: none !important; }
 }
+html.hud-paused .hud-tool-orb { transition: none; animation-play-state: paused; }
+html.hud-paused .hud-tool-sweep { animation-play-state: paused; }
 
 /* ── HUD rings ────────────────────────────────────────────────────────────
    Motion is always-on by choice, so it has to be cheap: only `transform` is

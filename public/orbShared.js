@@ -1,16 +1,16 @@
 // Shared Canvas-2D orb primitives + a single reduced-motion helper.
 // Used by BOTH the hero VoiceOrb and the explanatory BrainOrb so they speak one
-// visual language (amber core, tilted orbital rings, ticks, hex reticle) without
+// visual language (cyan core, tilted orbital rings, ticks, hex reticle) without
 // duplicating the drawing math. Every function is pure: it draws relative to the
 // current transform origin (0,0), so callers translate/scale first.
 
-// Amber-on-black palette shared across every orb.
+// Cyan-on-black palette shared across every orb.
 export const PAL = {
-  O: "rgba(255,158,72,",   // primary amber (rings, ticks base)
-  B: "rgba(255,202,140,",  // bright amber (satellites, scanner)
-  Hl: "rgba(255,232,205,", // highlight cream (labels, inner reticle)
-  D: "rgba(208,150,98,",   // dim amber (background ticks)
-  GLOW: "rgba(255,150,70,0.55)"
+  O: "rgba(34,211,238,",    // primary cyan (rings, ticks base)
+  B: "rgba(140,236,255,",   // bright cyan (satellites, scanner)
+  Hl: "rgba(214,248,255,",  // highlight ice (labels, inner reticle)
+  D: "rgba(64,150,170,",    // dim cyan (background ticks)
+  GLOW: "rgba(34,200,238,0.55)"
 };
 
 // One place to ask about reduced motion — every canvas honors this.
@@ -21,7 +21,7 @@ export function prefersReducedMotion() {
 // A negative radius throws IndexSizeError from ctx.arc and blanks the whole
 // frame - every primitive clamps to 0 (and skips the degenerate draw) so a
 // transient 0-sized layout can never crash the render loop.
-// A stroked circle with an amber glow.
+// A stroked circle with a cyan glow.
 export function ring(ctx, r, w, c, a, blur, glow = PAL.GLOW) {
   r = Math.max(0, r);
   if (!r) return;

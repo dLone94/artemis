@@ -1,7 +1,7 @@
 /* The Brain — standalone page (brain.html). Reuses tokens.css + app.css
    (nav, .brain-step / .brain-agent / .brain-caption); this file adds the
    page grid, the view toggle, the engineer rail, the transport bar and the
-   trace panel. Amber-on-near-black, JetBrains Mono for anything log-like. */
+   trace panel. Cyan-on-near-black, JetBrains Mono for anything log-like. */
 
 .bp-body { padding-bottom: 0; } /* no fixed dock on this page */
 
@@ -41,7 +41,7 @@
 }
 .bp-view[aria-pressed="true"] {
   color: var(--teal);
-  background: rgba(255, 158, 72, 0.1);
+  background: rgba(34, 211, 238, 0.1);
 }
 .bp-view:hover { color: var(--text-bright); }
 
@@ -72,7 +72,7 @@
   right: 28px;
   top: 66px;
   height: 2px;
-  background: linear-gradient(90deg, rgba(255, 158, 72, 0.08), rgba(255, 158, 72, 0.28), rgba(255, 158, 72, 0.08));
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.08), rgba(34, 211, 238, 0.28), rgba(34, 211, 238, 0.08));
 }
 .bp-packet {
   position: absolute;
@@ -82,8 +82,8 @@
   height: 12px;
   margin-left: -6px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #fff, var(--amber, #ffb24d) 45%, transparent 75%);
-  box-shadow: 0 0 14px 3px rgba(255, 178, 77, 0.85);
+  background: radial-gradient(circle at 35% 30%, #fff, var(--teal, #22d3ee) 45%, transparent 75%);
+  box-shadow: 0 0 14px 3px rgba(34, 211, 238, 0.85);
   will-change: transform;
 }
 .bp-node {
@@ -115,13 +115,13 @@
 }
 .bp-node.is-done .bp-node-dot {
   opacity: 1;
-  border-color: rgba(255, 158, 72, 0.55);
-  background: rgba(255, 158, 72, 0.1);
+  border-color: rgba(34, 211, 238, 0.55);
+  background: rgba(34, 211, 238, 0.1);
 }
 .bp-node.is-active .bp-node-dot {
   opacity: 1;
   border-color: var(--teal);
-  box-shadow: 0 0 18px rgba(255, 158, 72, 0.55);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.55);
 }
 .bp-node.is-gated .bp-node-dot {
   opacity: 1;
@@ -158,8 +158,8 @@
   max-width: 180px;
   padding: 7px 10px;
   border-radius: 8px;
-  background: rgba(14, 11, 8, 0.95);
-  border: 1px solid rgba(255, 158, 72, 0.3);
+  background: rgba(4, 14, 20, 0.95);
+  border: 1px solid rgba(34, 211, 238, 0.3);
   color: var(--text-bright);
   font-size: 10px;
   letter-spacing: 0.02em;
@@ -187,16 +187,16 @@
   place-items: center;
   font-size: 15px;
   color: var(--teal);
-  background: rgba(255, 158, 72, 0.08);
-  border: 1px solid rgba(255, 158, 72, 0.35);
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.35);
   border-radius: 50%;
   cursor: pointer;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
-.bp-play:hover { border-color: var(--teal); box-shadow: 0 0 14px rgba(255, 158, 72, 0.3); }
+.bp-play:hover { border-color: var(--teal); box-shadow: 0 0 14px rgba(34, 211, 238, 0.3); }
 .bp-scrub {
   flex: 1;
-  accent-color: var(--teal, #ffb24d);
+  accent-color: var(--teal, #22d3ee);
   cursor: pointer;
 }
 .bp-speeds {
@@ -214,7 +214,7 @@
   padding: 7px 12px;
   cursor: pointer;
 }
-.bp-speed[aria-pressed="true"] { color: var(--teal); background: rgba(255, 158, 72, 0.1); }
+.bp-speed[aria-pressed="true"] { color: var(--teal); background: rgba(34, 211, 238, 0.1); }
 
 /* ---- right pane: trace ---- */
 .bp-right {
@@ -250,10 +250,10 @@
   padding: 3px 10px;
   font-size: 10px;
   letter-spacing: 0.08em;
-  color: var(--amber, #ffb24d);
-  border: 1px solid rgba(255, 178, 77, 0.4);
+  color: var(--teal, #22d3ee);
+  border: 1px solid rgba(34, 211, 238, 0.4);
   border-radius: var(--radius-pill);
-  background: rgba(255, 178, 77, 0.08);
+  background: rgba(34, 211, 238, 0.08);
 }
 .bp-trace-tools { display: flex; gap: 8px; }
 .bp-tool-btn {
@@ -267,8 +267,8 @@
   cursor: pointer;
   transition: color 0.2s, border-color 0.2s;
 }
-.bp-tool-btn:hover { color: var(--text-bright); border-color: rgba(255, 158, 72, 0.4); }
-.bp-tool-btn[aria-pressed="true"] { color: var(--teal); border-color: rgba(255, 158, 72, 0.45); background: rgba(255, 158, 72, 0.07); }
+.bp-tool-btn:hover { color: var(--text-bright); border-color: rgba(34, 211, 238, 0.4); }
+.bp-tool-btn[aria-pressed="true"] { color: var(--teal); border-color: rgba(34, 211, 238, 0.45); background: rgba(34, 211, 238, 0.07); }
 
 .bp-log {
   flex: 1;
@@ -296,7 +296,7 @@
   border-radius: 50%;
   align-self: center;
 }
-.bp-line[data-status="run"] .bp-dot { background: var(--amber, #ffb24d); box-shadow: 0 0 8px var(--amber, #ffb24d); }
+.bp-line[data-status="run"] .bp-dot { background: var(--teal, #22d3ee); box-shadow: 0 0 8px var(--teal, #22d3ee); }
 .bp-line[data-status="done"] .bp-dot { background: #7ed98a; box-shadow: 0 0 8px rgba(126, 217, 138, 0.7); }
 .bp-line[data-status="gated"] .bp-dot { background: #ff6b5e; box-shadow: 0 0 8px rgba(255, 107, 94, 0.7); }
 .bp-line .bp-stage { color: var(--gray); flex: 0 0 52px; }
@@ -356,7 +356,7 @@
 .bp-thinking i {
   display: inline-block;
   font-style: normal;
-  color: var(--amber, #ffb24d);
+  color: var(--teal, #22d3ee);
   animation: bp-dotpulse 1s ease-in-out infinite;
 }
 .bp-thinking i:nth-child(2) { animation-delay: 0.2s; }
@@ -368,7 +368,7 @@
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--amber, #ffb24d);
+  background: var(--teal, #22d3ee);
   animation: bp-dotpulse 1s ease-in-out infinite;
 }
 .bp-run-dots i:nth-child(2) { animation-delay: 0.2s; }

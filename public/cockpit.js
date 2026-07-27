@@ -4,7 +4,7 @@
 // command log, context cards, status-bar telemetry, live waveform, state
 // choreography and subtle UI ticks. All motion honors prefers-reduced-motion.
 
-import { prefersReducedMotion } from "./orbShared.js";
+import { PAL, prefersReducedMotion } from "./orbShared.js";
 
 const reduced = prefersReducedMotion();
 const $ = (id) => document.getElementById(id);
@@ -436,6 +436,82 @@ function pulseDot(sys) {
   d.classList.add("pulse");
 }
 
+// The server emits this at the exact point a validated tool begins and again
+// when it settles. Family is registry metadata from the server; the client only
+// sanitizes it for a data attribute and never duplicates tool → family routing.
+const toolOrb = $("hudToolOrb");
+const toolName = $("hudToolName");
+const toolPhase = $("hudToolPhase");
+let toolFadeTimer = 0;
+let toolFadeRemaining = 0;
+let toolFadeStartedAt = 0;
+let toolEventSeq = 0;
+
+function sanitizeToolFamily(value) {
+  return String(value || "other").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32) || "other";
+}
+
+function cancelToolFade() {
+  clearTimeout(toolFadeTimer);
+  toolFadeTimer = 0;
+  toolFadeRemaining = 0;
+}
+
+function scheduleToolFade(seq, delay = 2000) {
+  clearTimeout(toolFadeTimer);
+  toolFadeTimer = 0;
+  toolFadeRemaining = Math.max(0, delay);
+  if (document.hidden || !toolFadeRemaining) return;
+  toolFadeStartedAt = performance.now();
+  toolFadeTimer = setTimeout(() => {
+    toolFadeTimer = 0;
+    toolFadeRemaining = 0;
+    if (seq !== toolEventSeq) return;
+    toolOrb.classList.add("is-fading");
+  }, toolFadeRemaining);
+}
+
+function showToolEvent(data = {}) {
+  if (!toolOrb || !toolName || !toolPhase) return;
+  const phase = data.phase === "start" || data.phase === "end" ? data.phase : "";
+  const rawName = String(data.name || "").trim();
+  if (!phase || !rawName) return;
+
+  const seq = ++toolEventSeq;
+  cancelToolFade();
+  toolOrb.classList.remove("is-fading");
+  toolOrb.classList.add("is-active");
+  toolName.textContent = rawName.replace(/_/g, " ").toUpperCase();
+
+  if (data.family != null || phase === "start") {
+    toolOrb.dataset.family = sanitizeToolFamily(data.family);
+  }
+
+  if (phase === "start") {
+    toolOrb.dataset.phase = "running";
+    toolPhase.textContent = "RUNNING";
+    toolOrb.setAttribute("aria-label", rawName + " tool running");
+    return;
+  }
+
+  const ok = data.ok === true;
+  toolOrb.dataset.phase = ok ? "success" : "failure";
+  toolPhase.textContent = ok ? "COMPLETE" : "FAILED";
+  toolOrb.setAttribute("aria-label", rawName + (ok ? " tool completed" : " tool failed"));
+  scheduleToolFade(seq);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!toolOrb) return;
+  if (document.hidden && toolFadeTimer) {
+    clearTimeout(toolFadeTimer);
+    toolFadeTimer = 0;
+    toolFadeRemaining = Math.max(0, toolFadeRemaining - (performance.now() - toolFadeStartedAt));
+  } else if (!document.hidden && toolFadeRemaining > 0) {
+    scheduleToolFade(toolEventSeq, toolFadeRemaining);
+  }
+});
+
 // live transcript line — ONE line that updates in place while the user speaks,
 // with a blinking cursor; removed when the utterance finalizes (ask() then
 // logs the final "YOU" line)
@@ -468,6 +544,7 @@ window.ArtemisHUD = {
     }
   },
   context: addCard,
+  tool: showToolEvent,
   ttfw(ms) {
     ttfwCounting(false);
     const el = $("hudTtfw");
@@ -514,7 +591,7 @@ window.ArtemisHUD = {
       const v = buf[(head + i) % N];
       const h = Math.max(1.5 * dpr, v * (H * 0.92));
       const a = 0.18 + v * 0.8;
-      ctx.fillStyle = "rgba(255,178,77," + a.toFixed(3) + ")";
+      ctx.fillStyle = PAL.O + a.toFixed(3) + ")";
       ctx.fillRect(i * bw, mid - h / 2, Math.max(1, bw - 1.2 * dpr), h);
     }
   }
@@ -564,7 +641,7 @@ window.ArtemisHUD = {
     ctx.clearRect(0, 0, W, W);
     ctx.translate(c, c);
     // outer thin ring
-    ctx.strokeStyle = "rgba(255,178,77,0.22)";
+    ctx.strokeStyle = PAL.O + "0.22)";
     ctx.lineWidth = 1 * dpr;
     ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.stroke();
     // rotating tick ring
@@ -572,7 +649,7 @@ window.ArtemisHUD = {
     for (let i = 0; i < 72; i++) {
       const maj = i % 6 === 0;
       const a = (i / 72) * Math.PI * 2;
-      ctx.strokeStyle = maj ? "rgba(255,178,77,0.5)" : "rgba(255,178,77,0.2)";
+      ctx.strokeStyle = maj ? PAL.O + "0.5)" : PAL.O + "0.2)";
       ctx.lineWidth = (maj ? 1.4 : 1) * dpr;
       ctx.beginPath();
       ctx.moveTo(Math.cos(a) * R, Math.sin(a) * R);
@@ -583,7 +660,7 @@ window.ArtemisHUD = {
     // counter-rotating degree numbers every 30°
     ctx.save(); ctx.rotate(-rot * 0.5);
     ctx.font = 8 * dpr + 'px "JetBrains Mono", monospace';
-    ctx.fillStyle = "rgba(138,147,163,0.55)"; // cool dim tone
+    ctx.fillStyle = PAL.D + "0.55)";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     for (let d = 0; d < 360; d += 30) {
       const a = (d / 180) * Math.PI;
@@ -591,7 +668,7 @@ window.ArtemisHUD = {
     }
     ctx.restore();
     // dashed inner arc segment sweeping with state
-    ctx.strokeStyle = "rgba(255,178,77,0.35)";
+    ctx.strokeStyle = PAL.O + "0.35)";
     ctx.lineWidth = 2 * dpr;
     ctx.setLineDash([3 * dpr, 6 * dpr]);
     ctx.beginPath(); ctx.arc(0, 0, R - 32 * dpr, rot * 2, rot * 2 + 1.1); ctx.stroke();
@@ -628,7 +705,7 @@ window.ArtemisHUD = {
     for (const p of ps) {
       p.x = (p.x + p.vx + 1) % 1;
       p.y = (p.y + p.vy + 1) % 1;
-      ctx.fillStyle = "rgba(255,190,120," + p.a + ")";
+      ctx.fillStyle = PAL.B + p.a + ")";
       ctx.beginPath(); ctx.arc(p.x * W, p.y * H, p.r * dpr, 0, Math.PI * 2); ctx.fill();
     }
   })();

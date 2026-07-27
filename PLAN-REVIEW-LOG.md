@@ -87,3 +87,19 @@ plain copy) is an improvement over what was specified.
 Lesson recorded: a test suite that stubs every side effect proves the logic and
 nothing about the integration. Real-system checks that skip cleanly are worth
 their weight.
+
+## Act 3 — Build (HUD completion, 2026-07-27)
+
+### Round 1 — Codex build (thread 019fa491-6cca-7892-a887-65e87ddaee98, gpt-5.6-sol)
+Implemented the spec's open items: full amber→cyan sweep with orbShared.PAL as
+the single source of truth; tool orb (SSE `tool` event, additive onToolStart/
+onToolEnd callbacks in the streaming loop); density styling; telemetry and
+tool-events test suites wired into npm test.
+
+### Claude's verdict
+Diff read in full. server.js changes are additive as required — no-op default
+callback, end event gated on state.calls advancing, family attached server-side
+from the registry. Orb diffs are colour-only. Client tool ring is race-safe and
+visibility-aware. Sweep grep clean. Two out-of-spec scaffolding files
+(PRODUCT.md, .impeccable/) from Codex's UI plugin were removed. Proof re-run by
+Claude: 11 suites + 19/19 eval, all green. PASSED — one round, no fixes needed.

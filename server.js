@@ -31,6 +31,7 @@ import { wrapUntrusted, UNTRUSTED_SKILLS, dropTaintedOpens } from "./untrusted.j
 import {
   openaiToolDefs,
   toolDefsForFamily,
+  toolByName,
   validateToolCall,
   needsConfirmation,
   classifyIntent
@@ -1082,6 +1083,7 @@ if (FAKE_TOOLS) {
 async function runNvidiaTool(name, rawArgs, sources, clientActions, state, opts = {}) {
   const caps = opts.caps || currentCaps();
   const signal = opts.signal;
+  const onToolStart = typeof opts.onToolStart === "function" ? opts.onToolStart : () => {};
 
   const v = validateToolCall(name, rawArgs, caps);
   if (!v.ok) {
@@ -1099,6 +1101,7 @@ async function runNvidiaTool(name, rawArgs, sources, clientActions, state, opts 
   }
 
   const args = v.args;
+  onToolStart(name);
   state.calls += 1;
   state.tools.push(name); // validated — safe to show in the HUD
 
@@ -1154,7 +1157,11 @@ async function runNvidiaTool(name, rawArgs, sources, clientActions, state, opts 
 // normal rounds and the backstop so success accounting can't diverge.
 async function runToolCalls(toolCalls, convo, sources, clientActions, state, opts) {
   for (const tc of toolCalls) {
+    const callsBefore = state.calls;
     const r = await runNvidiaTool(tc.name, tc.arguments, sources, clientActions, state, opts);
+    if (state.calls > callsBefore && typeof opts.onToolEnd === "function") {
+      opts.onToolEnd(tc.name, r.ok);
+    }
     if (r.ok && isSatisfyingCall(tc.name, state)) state.requiredActionSatisfied = true;
     convo.push({ role: "tool", tool_call_id: tc.id, content: String(r.content) });
   }
@@ -1415,7 +1422,12 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
   const sources = [];
   const clientActions = [];
   const state = newTurnState(opts.intent || classifyIntent(lastUserText(messages), caps, messages));
-  const toolOpts = { caps, signal };
+  const toolOpts = {
+    caps,
+    signal,
+    onToolStart: opts.onToolStart,
+    onToolEnd: opts.onToolEnd
+  };
   const isAction = state.intent.intent === "executable_action";
 
   const speakAllowed = () =>
@@ -2282,7 +2294,11 @@ async function handleRequest(req, res) {
     if (lastFirstWordMs != null) out.latency = { lastFirstWordMs };
     out.counts = {};
     try {
-      const rem = await skillCtx.readJson("reminders.json", []);
+      // Read this source directly so a missing/corrupt store remains
+      // distinguishable from a valid empty list. skillCtx.readJson deliberately
+      // falls back to [], which is right for tool execution but would turn an
+      // unavailable telemetry source into a dishonest zero.
+      const rem = JSON.parse(await fs.readFile(join(DATA_DIR, "reminders.json"), "utf8"));
       if (Array.isArray(rem)) out.counts.reminders = rem.length;
     } catch (e) {}
     if (lastUnreadMail != null) out.counts.unreadMail = lastUnreadMail;
@@ -2382,10 +2398,19 @@ async function handleRequest(req, res) {
         req.on("close", () => { if (!res.writableEnded) turnAbort.abort(new Error("client disconnected")); });
 
         let gotText = false;
+        const sendToolEvent = (name, phase, ok) => {
+          const tool = toolByName(name, caps);
+          if (!tool) return;
+          const data = { name, family: tool.family, phase };
+          if (phase === "end") data.ok = !!ok;
+          send("tool", data);
+        };
         const meta = await streamNvidia(messages, tone, (t) => { if (t) { gotText = true; send("token", { t }); } }, {
           caps,
           intent,
-          signal: turnAbort.signal
+          signal: turnAbort.signal,
+          onToolStart: (name) => sendToolEvent(name, "start"),
+          onToolEnd: (name, ok) => sendToolEvent(name, "end", ok)
         });
         if (meta.reply) {
           // the confirm-gate question must ALWAYS reach the user; if narration

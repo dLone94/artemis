@@ -227,7 +227,7 @@ function followLog() {
   logEl.scrollTo({ top: logEl.scrollHeight, behavior: reduced ? "auto" : "smooth" });
 }
 
-const SEG_COLORS = ["#8a5a2b", "#b3762f", "#d18f38", "#ff9e48", "#ffb24d", "#ffcf6a"];
+const SEG_COLORS = ["#164e63", "#0e7490", "#0891b2", "#06b6d4", "#22d3ee", "#67e8f9"];
 function eventLabel(e) {
   return maskKeys(!redactOn && e.full ? e.full : e.label);
 }

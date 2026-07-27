@@ -21,6 +21,19 @@
   <canvas class="hud-ring" id="hudRing" width="620" height="620" aria-hidden="true"></canvas>
   <!-- live state caption under the orb -->
   <div class="hud-state" id="hudState" aria-live="polite"><i></i> STANDBY</div>
+  <!-- live tool activity: SVG stays composited while the existing orb remains canvas -->
+  <div class="hud-tool-orb" id="hudToolOrb" role="status" aria-live="polite" aria-atomic="true" data-phase="idle">
+    <svg class="hud-tool-ring" viewBox="0 0 48 48" aria-hidden="true">
+      <circle class="hud-tool-track" cx="24" cy="24" r="19"></circle>
+      <circle class="hud-tool-sweep" cx="24" cy="24" r="15" pathLength="100"></circle>
+      <circle class="hud-tool-core" cx="24" cy="24" r="4"></circle>
+    </svg>
+    <span class="hud-tool-copy">
+      <span class="hud-tool-label">TOOL</span>
+      <span class="hud-tool-name" id="hudToolName">STANDBY</span>
+      <span class="hud-tool-phase" id="hudToolPhase">IDLE</span>
+    </span>
+  </div>
 
   <!-- boot sequence overlay (removed after init; skipped under reduced motion) -->
   <div class="boot" id="boot" aria-hidden="true">
@@ -31,6 +44,7 @@
   <div class="hud-frame" aria-hidden="true">
     <i class="hud-corner tl"></i><i class="hud-corner tr"></i>
     <i class="hud-corner bl"></i><i class="hud-corner br"></i>
+    <i class="hud-connector left"></i><i class="hud-connector right"></i>
     <div class="hud-sweep"></div>
   </div>
 

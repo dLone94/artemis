@@ -2,12 +2,12 @@
 // the hero HUD: a glowing core with tilted orbiting satellites, in each card's
 // --accent colour. One shared rAF; only visible orbs draw; reduced-motion → static.
 
-import { prefersReducedMotion } from "./orbShared.js";
+import { PAL, prefersReducedMotion } from "./orbShared.js";
 
 function hexToRgb(h) {
   h = (h || "").trim().replace("#", "");
   if (h.length === 3) h = h.split("").map((x) => x + x).join("");
-  const n = parseInt(h || "ffb86b", 16);
+  const n = parseInt(h || "22d3ee", 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
@@ -20,7 +20,7 @@ export function initMiniOrbs(selector = ".card-orb, .agent-orb") {
     const sz = el.getBoundingClientRect().width || 48;
     const canvasS = Math.round(sz * 1.95);
     let accent = getComputedStyle(el).getPropertyValue("--accent").trim();
-    const [r, g, b] = hexToRgb(accent || "#ffb86b");
+    const [r, g, b] = hexToRgb(accent || "#22d3ee");
 
     el.style.position = "relative";
     el.style.background = "transparent"; // the canvas is the orb now
@@ -58,7 +58,7 @@ export function initMiniOrbs(selector = ".card-orb, .agent-orb") {
     ctx.globalCompositeOperation = "lighter";
     const pulse = 0.7 + 0.3 * Math.sin(t * 1.8 + o.phase);
     const gg = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 2.6);
-    gg.addColorStop(0, "rgba(255,244,228," + (0.4 * pulse) + ")");
+    gg.addColorStop(0, PAL.Hl + (0.4 * pulse) + ")");
     gg.addColorStop(0.38, col(0.3 * pulse));
     gg.addColorStop(1, col(0));
     ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(0, 0, R * 2.6, 0, Math.PI * 2); ctx.fill();
@@ -79,10 +79,10 @@ export function initMiniOrbs(selector = ".card-orb, .agent-orb") {
     // core sphere (volume → fresnel rim → specular highlight)
     ctx.globalCompositeOperation = "source-over";
     const cs = ctx.createRadialGradient(-R * 0.3, -R * 0.34, R * 0.1, 0, 0, R);
-    cs.addColorStop(0, "rgba(255,252,246,0.98)");
+    cs.addColorStop(0, PAL.Hl + "0.98)");
     cs.addColorStop(0.4, col(0.95));
     cs.addColorStop(0.82, dim + "0.95)");
-    cs.addColorStop(1, "rgba(28,13,5,0.95)");
+    cs.addColorStop(1, "rgba(3,12,18,0.95)");
     ctx.fillStyle = cs; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
     ctx.globalCompositeOperation = "lighter";
     ctx.lineWidth = 1.4; ctx.strokeStyle = col(0.55); // fresnel rim (bright arc)
@@ -106,7 +106,7 @@ export function initMiniOrbs(selector = ".card-orb, .agent-orb") {
       ctx.lineWidth = 1.6; ctx.strokeStyle = col(0.38); // motion trail behind the satellite
       ctx.beginPath(); ctx.ellipse(0, 0, d.rx, d.ry, 0, ph - 0.75, ph); ctx.stroke();
       const px = Math.cos(ph) * d.rx, py = Math.sin(ph) * d.ry, depth = 0.5 + 0.5 * Math.sin(ph);
-      ctx.fillStyle = "rgba(255,242,224," + (0.45 + 0.55 * depth) + ")";
+      ctx.fillStyle = PAL.Hl + (0.45 + 0.55 * depth) + ")";
       ctx.shadowColor = col(0.95); ctx.shadowBlur = 7 * depth;
       ctx.beginPath(); ctx.arc(px, py, 1.0 + 1.9 * depth, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;

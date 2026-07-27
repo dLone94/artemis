@@ -1,12 +1,12 @@
-// Artemis VoiceOrb — the orange orbital-HUD (Canvas 2D), ported verbatim from the
-// locked prototype: soft amber core, tilted orbital rings with depth-shaded
+// Artemis VoiceOrb — the cyan orbital-HUD (Canvas 2D), ported verbatim from the
+// locked prototype: soft cyan core, tilted orbital rings with depth-shaded
 // satellites + constellation links, tick ring, hex/triangle reticle, ARTEMIS label.
 // Backend-agnostic API kept identical to the old WebGL orb so main.js / celebration.js
 // work unchanged: setStatus(), connectMic(), connectMediaElement(), feed(), _ensureAudio(),
 // stopAudio(), dispose(), and `cur.amp` / `reduced`. Reacts to mic (LISTENING) and TTS
 // (SPEAKING) amplitude — rings spin faster, core brightens, scanner accelerates.
 
-import { prefersReducedMotion } from "./orbShared.js";
+import { PAL, prefersReducedMotion } from "./orbShared.js";
 
 export class VoiceOrb {
   constructor(container, opts = {}) {
@@ -250,17 +250,17 @@ export class VoiceOrb {
     const recede = 1 - sp * 0.28;
     const hudAlpha = 1 - sp * 0.45;
 
-    // warm radial backdrop (follows the orb)
+    // cool blue-black radial backdrop (follows the orb)
     const bgr = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * 0.72);
-    bgr.addColorStop(0, "#140d07");
-    bgr.addColorStop(0.55, "#0b0805");
-    bgr.addColorStop(1, "#070403");
+    bgr.addColorStop(0, "#061923");
+    bgr.addColorStop(0.55, "#040b11");
+    bgr.addColorStop(1, "#020509");
     ctx.fillStyle = bgr;
     ctx.fillRect(0, 0, W, H);
 
     // faint grid
     ctx.globalCompositeOperation = "source-over";
-    ctx.strokeStyle = "rgba(150,90,40,0.05)";
+    ctx.strokeStyle = PAL.D + "0.05)";
     ctx.lineWidth = 1;
     for (let gx = 0; gx < W; gx += 38) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
     for (let gy = 0; gy < H; gy += 38) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
@@ -269,9 +269,6 @@ export class VoiceOrb {
     const spin = 1;
     const base = Math.min(W, H) * 0.40 * recede;
     const R = base * 0.52;              // sphere radius in px; rings extend to ~1.6 R
-    const O = "rgba(255,158,72,", B = "rgba(255,202,140,", D = "rgba(208,150,98,";
-    const GLOW = "rgba(255,150,70,0.55)";
-
     // ---- 3D camera: rotate the scene (auto-spin + look toward the cursor),
     // then perspective-project. P() maps unit-sphere coords → screen offset
     // from the orb centre, returning depth z (+ = toward you) and scale s. ----
@@ -302,7 +299,7 @@ export class VoiceOrb {
         if (front ? q.z < 0 : q.z >= 0) continue;
         const tw = 0.5 + 0.5 * Math.sin(t * 2.2 + p.tw * 6.28);
         const a = dA(q.z, 0.05, 0.5) * (0.5 + 0.5 * tw) * (0.7 + amp * 0.6);
-        ctx.fillStyle = B + a.toFixed(3) + ")";
+        ctx.fillStyle = PAL.B + a.toFixed(3) + ")";
         ctx.beginPath(); ctx.arc(q.x, q.y, Math.max(0.4, 1.4 * q.s * (0.8 + amp * 0.5)), 0, Math.PI * 2); ctx.fill();
       }
     };
@@ -324,17 +321,17 @@ export class VoiceOrb {
         const q0 = rp((i / SEG) * Math.PI * 2), q1 = rp(((i + 1) / SEG) * Math.PI * 2);
         const zc = (q0.z + q1.z) / 2;
         if (front ? zc < 0 : zc >= 0) continue;
-        ctx.strokeStyle = O + (dA(zc, 0.05, 0.34 + amp * 0.3)).toFixed(3) + ")";
+        ctx.strokeStyle = PAL.O + (dA(zc, 0.05, 0.34 + amp * 0.3)).toFixed(3) + ")";
         ctx.beginPath(); ctx.moveTo(q0.x, q0.y); ctx.lineTo(q1.x, q1.y); ctx.stroke();
       }
       // satellite riding the ring + constellation link back to the core
       const sat = rp(t * cfg.spd * spin + cfg.ph);
       if ((front ? sat.z >= 0 : sat.z < 0)) {
-        ctx.strokeStyle = B + (dA(sat.z, 0.05, 0.3) + amp * 0.3).toFixed(3) + ")";
+        ctx.strokeStyle = PAL.B + (dA(sat.z, 0.05, 0.3) + amp * 0.3).toFixed(3) + ")";
         ctx.lineWidth = 1 + amp * 0.5;
         ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(sat.x, sat.y); ctx.stroke();
-        ctx.fillStyle = B + Math.min(1, dA(sat.z, 0.4, 1)).toFixed(3) + ")";
-        ctx.shadowColor = "rgba(255,180,110,0.9)"; ctx.shadowBlur = (6 + amp * 14) * sat.s;
+        ctx.fillStyle = PAL.B + Math.min(1, dA(sat.z, 0.4, 1)).toFixed(3) + ")";
+        ctx.shadowColor = PAL.B + "0.9)"; ctx.shadowBlur = (6 + amp * 14) * sat.s;
         ctx.beginPath(); ctx.arc(sat.x, sat.y, (2 + 2.6 * sat.s) * (1 + amp * 0.6), 0, Math.PI * 2); ctx.fill();
         ctx.shadowBlur = 0;
       }
@@ -344,9 +341,9 @@ export class VoiceOrb {
     // ---- (3) the glowing core: soft body + voice-reactive corona + equalizer ----
     const pulse = 0.55 + 0.16 * Math.sin(t * 1.5) + amp * 0.8;
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.85);
-    g.addColorStop(0, "rgba(255,228,195," + (0.42 * pulse) + ")");
-    g.addColorStop(0.4, "rgba(255,150,70," + (0.24 * pulse) + ")");
-    g.addColorStop(1, "rgba(180,80,30,0)");
+    g.addColorStop(0, PAL.Hl + (0.42 * pulse) + ")");
+    g.addColorStop(0.4, PAL.O + (0.24 * pulse) + ")");
+    g.addColorStop(1, PAL.D + "0)");
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, R * 0.85, 0, Math.PI * 2); ctx.fill();
     {
       const NB = this.NB, q3 = Math.max(1, Math.floor(NB / 3));
@@ -367,11 +364,11 @@ export class VoiceOrb {
       }
       ctx.closePath();
       const bg = ctx.createRadialGradient(0, 0, 0, 0, 0, rb * 1.8);
-      bg.addColorStop(0, "rgba(255,234,206," + (0.5 + amp * 0.45) + ")");
-      bg.addColorStop(0.55, "rgba(255,150,70," + (0.3 + amp * 0.4) + ")");
-      bg.addColorStop(1, "rgba(255,120,50,0)");
-      ctx.fillStyle = bg; ctx.shadowColor = "rgba(255,150,70,0.7)"; ctx.shadowBlur = 20; ctx.fill(); ctx.shadowBlur = 0;
-      ctx.lineWidth = 1.4; ctx.strokeStyle = "rgba(255,216,164," + (0.4 + amp * 0.5) + ")"; ctx.stroke();
+      bg.addColorStop(0, PAL.Hl + (0.5 + amp * 0.45) + ")");
+      bg.addColorStop(0.55, PAL.O + (0.3 + amp * 0.4) + ")");
+      bg.addColorStop(1, PAL.O + "0)");
+      ctx.fillStyle = bg; ctx.shadowColor = PAL.O + "0.7)"; ctx.shadowBlur = 20; ctx.fill(); ctx.shadowBlur = 0;
+      ctx.lineWidth = 1.4; ctx.strokeStyle = PAL.B + (0.4 + amp * 0.5) + ")"; ctx.stroke();
 
       const bars = NB * 2, r0 = R * 0.56, bl = R * 0.34;
       ctx.lineCap = "round"; ctx.lineWidth = 2;
@@ -381,7 +378,7 @@ export class VoiceOrb {
         const b0 = Math.floor(bidx) % NB, b1 = (b0 + 1) % NB, fr = bidx - Math.floor(bidx);
         const bv = this.bins[b0] * (1 - fr) + this.bins[b1] * fr, co = Math.cos(ang), si = Math.sin(ang);
         const len = bl * (0.08 + bv * (1.0 + amp * 0.6));
-        ctx.strokeStyle = "rgba(255,190,120," + (0.22 + 0.6 * bv) + ")";
+        ctx.strokeStyle = PAL.B + (0.22 + 0.6 * bv) + ")";
         ctx.beginPath(); ctx.moveTo(co * r0, si * r0); ctx.lineTo(co * (r0 + len), si * (r0 + len)); ctx.stroke();
       }
       ctx.lineCap = "butt";
@@ -394,7 +391,7 @@ export class VoiceOrb {
       for (let i = 1; i <= seg; i++) {
         const q = pfn(i / seg);
         const zc = (prev.z + q.z) / 2;
-        ctx.strokeStyle = O + dA(zc, 0.04, 0.28 + amp * 0.22).toFixed(3) + ")";
+        ctx.strokeStyle = PAL.O + dA(zc, 0.04, 0.28 + amp * 0.22).toFixed(3) + ")";
         ctx.lineWidth = (0.5 + 0.7 * q.s);
         ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(q.x, q.y); ctx.stroke();
         prev = q;
@@ -418,35 +415,35 @@ export class VoiceOrb {
     // ---- (6) outer flat HUD bezel (the instrument frame around the 3D orb) ----
     const arcs = (r, segs, w, rot, c, a, blur) => {
       ctx.lineWidth = w; ctx.strokeStyle = c + a + ")"; ctx.lineCap = "round";
-      ctx.shadowColor = GLOW; ctx.shadowBlur = blur || 0;
+      ctx.shadowColor = PAL.GLOW; ctx.shadowBlur = blur || 0;
       for (let i = 0; i < segs.length; i++) { ctx.beginPath(); ctx.arc(0, 0, r, rot + segs[i][0], rot + segs[i][1]); ctx.stroke(); }
       ctx.shadowBlur = 0; ctx.lineCap = "butt";
     };
-    arcs(base * 0.98, [[0.1, 1.5], [2.2, 3.0], [3.6, 5.2]], 2, t * 0.09 * spin, O, 0.4 + amp * 0.45, 6 + amp * 10);
-    ctx.strokeStyle = D + (0.4 + amp * 0.45) + ")"; ctx.lineWidth = 1; // tick ring
+    arcs(base * 0.98, [[0.1, 1.5], [2.2, 3.0], [3.6, 5.2]], 2, t * 0.09 * spin, PAL.O, 0.4 + amp * 0.45, 6 + amp * 10);
+    ctx.strokeStyle = PAL.D + (0.4 + amp * 0.45) + ")"; ctx.lineWidth = 1; // tick ring
     for (let i = 0; i < 42; i++) {
       const ang = -t * 0.05 * spin + (i / 42) * Math.PI * 2, co = Math.cos(ang), si = Math.sin(ang);
       const rr = base * 0.90, len = base * 0.035 * (1 + amp * 0.6);
       ctx.beginPath(); ctx.moveTo(co * rr, si * rr); ctx.lineTo(co * (rr - len), si * (rr - len)); ctx.stroke();
     }
-    arcs(base * 0.6, [[0.5, 2.4]], 4 + amp * 3, t * 0.5 * spin, B, 0.7 + amp * 0.4, 12); // scanner sweep
+    arcs(base * 0.6, [[0.5, 2.4]], 4 + amp * 3, t * 0.5 * spin, PAL.B, 0.7 + amp * 0.4, 12); // scanner sweep
 
     // sound-wave ripples on speech peaks
     for (let i = 0; i < this._ripples.length; i++) {
       const rp = this._ripples[i], age = t - rp.t0, life = 1 - age / 1.1;
       if (life <= 0) continue;
       ctx.lineWidth = 1.8 * life;
-      ctx.strokeStyle = "rgba(255,178,98," + (0.42 * life * rp.e) + ")";
+      ctx.strokeStyle = PAL.O + (0.42 * life * rp.e) + ")";
       ctx.beginPath(); ctx.arc(0, 0, R * 0.5 + age * base * 0.55, 0, Math.PI * 2); ctx.stroke();
     }
     ctx.restore();
 
     // crisp ARTEMIS label
     ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = "rgba(255,232,205," + ((0.82 + 0.18 * Math.sin(t * 2.6)) * hudAlpha) + ")";
+    ctx.fillStyle = PAL.Hl + ((0.82 + 0.18 * Math.sin(t * 2.6)) * hudAlpha) + ")";
     ctx.font = "600 " + Math.round(base * 0.082) + 'px "JetBrains Mono", monospace';
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.shadowColor = "rgba(255,170,90,0.85)"; ctx.shadowBlur = 14;
+    ctx.shadowColor = PAL.O + "0.85)"; ctx.shadowBlur = 14;
     ctx.fillText("A R T E M I S", cx, cy);
     ctx.shadowBlur = 0;
   }

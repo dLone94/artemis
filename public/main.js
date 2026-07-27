@@ -7,7 +7,7 @@ import { resolveOpenIntent } from "./siteRegistry.js";
 import { matchWake } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
-import { prefersReducedMotion } from "./orbShared.js";
+import { PAL, prefersReducedMotion } from "./orbShared.js";
 import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand, activeWakeProfile } from "./wakeLocal.js";
 
 const $ = (id) => document.getElementById(id);
@@ -654,6 +654,8 @@ async function ask(text) {
         if (event === "intent_pending") {
           intentClass = data.intent || null;
           hud("log", "status", "intent: " + intentClass);
+        } else if (event === "tool") {
+          hud("tool", data);
         } else if (event === "token") {
           if (!gotToken) {
             gotToken = true;
@@ -1423,19 +1425,19 @@ if (fcOrb) {
     f.clearRect(0, 0, S, S);
     f.save(); f.translate(c, c); f.globalCompositeOperation = "lighter";
     const g = f.createRadialGradient(0, 0, 0, 0, 0, R * 2.4);
-    g.addColorStop(0, "rgba(255,238,212," + (0.7 + amp * 0.3) + ")");
-    g.addColorStop(0.5, "rgba(255,150,70,0.45)");
-    g.addColorStop(1, "rgba(255,120,50,0)");
+    g.addColorStop(0, PAL.Hl + (0.7 + amp * 0.3) + ")");
+    g.addColorStop(0.5, PAL.O + "0.45)");
+    g.addColorStop(1, PAL.O + "0)");
     f.fillStyle = g; f.beginPath(); f.arc(0, 0, R * 2.4, 0, Math.PI * 2); f.fill();
-    f.fillStyle = "rgba(255,214,158,0.95)"; f.beginPath(); f.arc(0, 0, R * 0.7, 0, Math.PI * 2); f.fill();
+    f.fillStyle = PAL.B + "0.95)"; f.beginPath(); f.arc(0, 0, R * 0.7, 0, Math.PI * 2); f.fill();
     const defs = [{ rx: 9, ry: 3.4, tilt: 0.5, sp: 1.2 }, { rx: 6.5, ry: 6.5, tilt: -0.8, sp: -0.9 }];
     for (let k = 0; k < defs.length; k++) {
       const d = defs[k];
       f.save(); f.rotate(d.tilt);
-      f.lineWidth = 1; f.strokeStyle = "rgba(255,172,92," + (0.4 + amp * 0.4) + ")";
+      f.lineWidth = 1; f.strokeStyle = PAL.O + (0.4 + amp * 0.4) + ")";
       f.beginPath(); f.ellipse(0, 0, d.rx, d.ry, 0, 0, Math.PI * 2); f.stroke();
       const ph = t * d.sp + k * 2, px = Math.cos(ph) * d.rx, py = Math.sin(ph) * d.ry, dep = 0.5 + 0.5 * Math.sin(ph);
-      f.fillStyle = "rgba(255,240,214," + (0.5 + 0.5 * dep) + ")";
+      f.fillStyle = PAL.Hl + (0.5 + 0.5 * dep) + ")";
       f.beginPath(); f.arc(px, py, 0.9 + 1.1 * dep, 0, Math.PI * 2); f.fill();
       f.restore();
     }
