@@ -254,7 +254,43 @@ const nvidiaApiKey = process.env.NVIDIA_API_KEY || "";
 const NVIDIA_BASE = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
 const NVIDIA_MODEL = process.env.NVIDIA_MODEL || "qwen/qwen3-next-80b-a3b-instruct"; // fast MoE (~3B active), good tool use
 // Which brain: explicit LLM_PROVIDER, else NVIDIA when its key is set, else Anthropic.
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || (nvidiaApiKey ? "nvidia" : "anthropic")).toLowerCase();
+const groqApiKey = process.env.GROQ_API_KEY || "";
+const GROQ_BASE = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const LLM_PROVIDER = (process.env.LLM_PROVIDER ||
+  (groqApiKey ? "groq" : nvidiaApiKey ? "nvidia" : "anthropic")).toLowerCase();
+
+// Groq and NVIDIA are both OpenAI-compatible, so one config drives the same
+// loop. Groq is preferred when its key is present: measured 2026-07-26, it
+// answers with a streamed tool call in ~300ms against these exact schemas,
+// where NVIDIA ranged from 2s to not-at-all on identical requests.
+const GROQ_BRAIN = { name: "groq", base: GROQ_BASE, key: groqApiKey, model: GROQ_MODEL };
+const NVIDIA_BRAIN = { name: "nvidia", base: NVIDIA_BASE, key: nvidiaApiKey, model: NVIDIA_MODEL };
+const BRAIN = LLM_PROVIDER === "groq" && groqApiKey ? GROQ_BRAIN : NVIDIA_BRAIN;
+
+// Groq's free tier caps TOKENS per minute, and a turn here is expensive: the
+// system prompt plus every tool schema is a few thousand tokens before the user
+// has said anything. So a busy minute returns 429 rather than an answer.
+//
+// Falling back to the other provider is better than failing, and better than
+// silently retrying forever: the reply still arrives, just from the slower
+// brain. Only 429 falls back — a bad key or bad model would fail identically.
+const FALLBACK_BRAIN = BRAIN.name === "groq" && nvidiaApiKey ? NVIDIA_BRAIN
+  : BRAIN.name === "nvidia" && groqApiKey ? GROQ_BRAIN : null;
+// The fallback is TEMPORARY. A first version latched permanently on the first
+// 429 and never came back, which meant one throttled minute exiled the fast
+// brain for the rest of the process — and if the fallback was also unwell,
+// every turn failed from then on. Groq's window is per-minute, so step aside
+// for that long and then try the good brain again.
+let brainCooldownUntil = 0;
+const RATE_LIMIT_COOLDOWN_MS = 60000;
+function currentBrain() {
+  if (Date.now() < brainCooldownUntil && FALLBACK_BRAIN) return FALLBACK_BRAIN;
+  return BRAIN;
+}
+const isRateLimit = (e) => /HTTP 429/.test(String(e && e.message));
+/** Is an OpenAI-compatible brain (Groq or NVIDIA) configured and selected? */
+const openAiCompatActive = () => Boolean(BRAIN.key) && (LLM_PROVIDER === "groq" || LLM_PROVIDER === "nvidia");
 // Web search (NVIDIA has no built-in search — bring a key for live answers).
 const tavilyKey = process.env.TAVILY_API_KEY || "";
 const braveKey = process.env.BRAVE_API_KEY || "";
@@ -1082,17 +1118,18 @@ function isSatisfyingCall(name, state) {
 // Against that, waiting longer is the wrong move; a stalled connection rarely
 // recovers, while a fresh one usually answers in a couple of seconds. So this
 // gives up early and tries again instead of leaving the user in silence.
-async function nvidiaChat(body, signal, ms = 30000, attempts = 2) {
+async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     if (signal && signal.aborted) throw new Error("cancelled");
     try {
+      const brain = currentBrain();
       const res = await fetchWithTimeout(
-        NVIDIA_BASE + "/chat/completions",
+        brain.base + "/chat/completions",
         {
           method: "POST",
-          headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
-          body: JSON.stringify(Object.assign({ model: NVIDIA_MODEL }, body))
+          headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
+          body: JSON.stringify(Object.assign({ model: brain.model }, body))
         },
         ms,
         signal
@@ -1101,6 +1138,13 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 2) {
       return await res.json();
     } catch (e) {
       lastErr = e;
+      // Rate limited: switch brains for the rest of this process rather than
+      // burning the user's turn. The answer still comes, from the slower one.
+      if (isRateLimit(e) && FALLBACK_BRAIN && Date.now() >= brainCooldownUntil) {
+        brainCooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+        console.warn("[brain] rate limited — using " + FALLBACK_BRAIN.name + " for the next minute");
+        continue;
+      }
       // A real HTTP error (bad key, bad model) will fail identically on retry —
       // only a timeout is worth a second attempt.
       if (!/timed out/i.test(String(e.message)) || i === attempts - 1) throw e;
@@ -1388,12 +1432,13 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       }
     }
 
-    const res = await fetchWithTimeout(
-      NVIDIA_BASE + "/chat/completions",
+    let brain = currentBrain();
+    let res = await fetchWithTimeout(
+      brain.base + "/chat/completions",
       {
         method: "POST",
-        headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: NVIDIA_MODEL, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true })
+        headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true })
       },
       // 60s was far too long to leave someone waiting in silence. An honest
       // "I couldn't do that" at 35s beats a correct answer at 65s that they
@@ -1401,9 +1446,25 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       35000,
       signal
     );
+    if (res.status === 429 && FALLBACK_BRAIN && brain !== FALLBACK_BRAIN) {
+      // Same reasoning as the non-streaming path, and equally time-boxed.
+      brainCooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+      console.warn("[brain] rate limited mid-stream — using " + FALLBACK_BRAIN.name + " for the next minute");
+      brain = FALLBACK_BRAIN;
+      res = await fetchWithTimeout(
+        brain.base + "/chat/completions",
+        {
+          method: "POST",
+          headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true })
+        },
+        35000,
+        signal
+      );
+    }
     if (!res.ok) {
       const body = await res.text();
-      throw new Error("NVIDIA HTTP " + res.status + ": " + body.slice(0, 300));
+      throw new Error("brain HTTP " + res.status + " (" + brain.name + "): " + body.slice(0, 300));
     }
 
     const reader = res.body.getReader();
@@ -1607,7 +1668,7 @@ async function callNvidia(messages, tone, opts = {}) {
 
 // the active brain
 function callLLM(messages, tone) {
-  return LLM_PROVIDER === "nvidia" && nvidiaApiKey ? callNvidia(messages, tone) : callClaude(messages, tone);
+  return openAiCompatActive() ? callNvidia(messages, tone) : callClaude(messages, tone);
 }
 
 // simple per-IP rate limit for /api/chat
@@ -1728,17 +1789,17 @@ function timeGreeting() {
 // offer are separate, so she can ASK before reading (and only spend the
 // listener's time on a yes).
 async function composeBriefing() {
-  if (!(LLM_PROVIDER === "nvidia" && nvidiaApiKey) || !webSearchEnabled) return "";
+  if (!openAiCompatActive() || !webSearchEnabled) return "";
   const sr = await webSearch("top world news headlines today", 6);
   if (sr.error || !sr.results || !sr.results.length) return "";
   const headlines = sr.results.map((r, i) => `${i + 1}. ${r.title} — ${(r.content || "").slice(0, 160)}`).join("\n");
   const res = await fetchWithTimeout(
-    NVIDIA_BASE + "/chat/completions",
+    BRAIN.base + "/chat/completions",
     {
       method: "POST",
-      headers: { Authorization: "Bearer " + nvidiaApiKey, "Content-Type": "application/json" },
+      headers: { Authorization: "Bearer " + BRAIN.key, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: NVIDIA_MODEL,
+        model: BRAIN.model,
         messages: [
           {
             role: "system",
@@ -2050,15 +2111,15 @@ async function handleRequest(req, res) {
         notesCount,
         usage: { llm: usage.llm, stt: usage.stt, search: usage.search, ttsChars: usage.ttsChars, day: usage.day },
         elevenUsage: eleven ? { used: eleven.used, limit: eleven.limit } : null,
-        chatEnabled: Boolean(anthropicApiKey) || Boolean(nvidiaApiKey),
-        llmProvider: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? "nvidia" : Boolean(anthropicApiKey) ? "anthropic" : "none",
-        llmModel: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? NVIDIA_MODEL : ANTHROPIC_MODEL,
+        chatEnabled: Boolean(anthropicApiKey) || openAiCompatActive(),
+        llmProvider: openAiCompatActive() ? BRAIN.name : Boolean(anthropicApiKey) ? "anthropic" : "none",
+        llmModel: openAiCompatActive() ? BRAIN.model : ANTHROPIC_MODEL,
         voiceEnabled: Boolean(deepgramApiKey) || elevenEnabled,
         sttEnabled: Boolean(deepgramApiKey),
         elevenEnabled: elevenEnabled,
         ttsProvider: elevenEnabled ? "elevenlabs" : Boolean(deepgramApiKey) ? "deepgram" : "none",
         // Anthropic has built-in search; NVIDIA needs Tavily/Brave for live web answers.
-        webEnabled: LLM_PROVIDER === "nvidia" && nvidiaApiKey ? webSearchEnabled : Boolean(anthropicApiKey),
+        webEnabled: openAiCompatActive() ? webSearchEnabled : Boolean(anthropicApiKey),
         gmailEnabled: gmailConfigured(),
         // local openWakeWord engine: on-device detection (ONNX/WASM), works on
         // any browser incl. iPhone. The phrase is read from the active wake
@@ -2075,9 +2136,9 @@ async function handleRequest(req, res) {
   // Conversation with the active LLM (+ web search)
   if (url.pathname === "/api/chat" && req.method === "POST") {
     // same gate as /api/chat/stream: EITHER provider being configured is enough
-    if (!anthropicApiKey && !(LLM_PROVIDER === "nvidia" && nvidiaApiKey)) {
+    if (!anthropicApiKey && !openAiCompatActive()) {
       res.writeHead(503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No LLM key set — add NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env" }));
+      res.end(JSON.stringify({ error: "No LLM key set — add GROQ_API_KEY, NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env" }));
       return;
     }
     const ip = (req.socket && req.socket.remoteAddress) || "unknown";
@@ -2111,8 +2172,8 @@ async function handleRequest(req, res) {
     res.end(
       JSON.stringify({
         provider: LLM_PROVIDER,
-        model: NVIDIA_MODEL,
-        endpoint: NVIDIA_BASE,
+        model: BRAIN.model,
+        endpoint: BRAIN.base,
         temperature: 0.3,
         systemPromptHash: sha(ARTEMIS_SYSTEM_PROMPT),
         toolRegistryHash: sha(JSON.stringify(openaiToolDefs(caps))),
@@ -2156,10 +2217,10 @@ async function handleRequest(req, res) {
   // Streaming chat (SSE): forwards Claude text deltas token-by-token; on a custom
   // fetch_page tool turn it resets and falls back to the full non-streamed answer.
   if (url.pathname === "/api/chat/stream" && req.method === "POST") {
-    const nvidiaActive = LLM_PROVIDER === "nvidia" && nvidiaApiKey;
+    const nvidiaActive = openAiCompatActive();
     if (!anthropicApiKey && !nvidiaActive) {
       res.writeHead(503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No LLM key set — add NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env" }));
+      res.end(JSON.stringify({ error: "No LLM key set — add GROQ_API_KEY, NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env" }));
       return;
     }
     const ip = (req.socket && req.socket.remoteAddress) || "unknown";
