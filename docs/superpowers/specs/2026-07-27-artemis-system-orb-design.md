@@ -118,3 +118,41 @@ small SVG tool chip stays (textual redundancy is fine).
   full `npm test`.
 - Motion: three frames captured seconds apart must differ in the orb
   region (verified by the reviewer, not the builder).
+
+## Cinematic pass — 2026-07-27 (round 2)
+
+User verdict on round 1: right idea, execution not striking enough. The
+scene reads as a diagram (flat uniform dots), not as light. Six upgrades,
+all Canvas 2D:
+
+1. **Additive compositing.** Draw the globe dots, wires, arcs, halos and
+   moons with `globalCompositeOperation = "lighter"` (restore for text/
+   labels) so overlapping light accumulates — the bloom look. Dot sizes
+   vary (1–2.5 px, weighted small); brightest dots get a soft 4× radius
+   glow sprite. Pre-render glow sprites to small offscreen canvases in the
+   constructor — never gradient-per-dot per frame.
+2. **Atmosphere.** Limb glow: a radial-gradient annulus hugging the
+   sphere silhouette (cyan, brightest at the edge, transparent inward and
+   outward) — planet backlight. Behind everything, a soft violet nebula
+   haze (two big pre-rendered radial gradients, slowly drifting).
+3. **Data arcs.** A pool of ~10 arcs: each picks two lattice points,
+   lifts a quadratic control point above the surface, then animates a
+   bright head travelling the curve with a fading tail over ~1.2 s;
+   2–4 launches/s in idle, more while thinking/speaking. Depth-clipped
+   like everything else (arcs on the far side dim).
+4. **Wire pulses.** 4–6 light packets at a time racing along latitude or
+   longitude wires (parametric position along the dot chain, brightening
+   dots within a short window as they pass).
+5. **Scan plane.** Every ~10 s a horizontal ring sweeps pole-to-pole over
+   ~2.5 s: dots within its band brighten and lift slightly; the ring
+   itself is a thin bright ellipse with additive glow.
+6. **Moon polish.** Each moon gets: a faint static orbit path (thin
+   ellipse, ~0.08 alpha), a short comet tail (5-sample position history,
+   fading), and a 1 px leader line from moon to its label. Active moons'
+   filaments gain a slow dash-flow animation (line-dash offset).
+
+State hooks: thinking raises arc launch rate ~3× and tints arcs violet;
+speaking launches arcs on amp peaks; listening tightens the atmosphere
+(brighter limb, smaller nebula). Constraints unchanged: same files only,
+PAL colours, no hot-loop allocations (pools + offscreen sprites built in
+the constructor), reduced-motion = one static formed frame, API unchanged.
