@@ -33,9 +33,12 @@ const NATIVE_DEFS = [
 
 // Per-tool metadata the schemas never carried.
 //   family   — the capability group a user request maps onto
-//   effect   — read (no side effects) | client (browser does something) | mutate (writes state)
+//   effect   — read (no side effects) | client (browser does something) |
+//              mutate/mutation (writes state; mutation is the current spelling)
 //   requires — capability flag that must be true for this tool to be offered
 //   external — the effect leaves this machine and can't be undone (always confirmed)
+//   confirm  — "always" for an action that must never execute without a spoken yes
+//   forceFamilies — routing keys that may force-select the tool; defaults to family
 const META = {
   web_search:      { family: "web",      effect: "read",   requires: "search" },
   fetch_page:      { family: "web",      effect: "read",   requires: "search" },
@@ -44,6 +47,13 @@ const META = {
   play_media:      { family: "media",    effect: "client" },
   check_email:     { family: "email",    effect: "read",   requires: "gmail" },
   read_email:      { family: "email",    effect: "read",   requires: "gmail" },
+  delete_email:    {
+    family: "email",
+    effect: "mutation",
+    requires: "gmail",
+    confirm: "always",
+    forceFamilies: ["email_delete"]
+  },
   check_messages:  { family: "messages", effect: "read" },
   research_investment: { family: "research", effect: "read", requires: "search" },
   set_reminder:    { family: "reminder", effect: "mutate" },
@@ -59,7 +69,27 @@ const META = {
 // A request in one of these families must produce a real tool call. Plain
 // information questions (family "web") stay conversational — forcing a search on
 // every "what do you think about…" would break normal talking.
-export const ACTIONABLE_FAMILIES = new Set(["navigate", "media", "email", "messages", "reminder", "memory", "contacts", "message", "research"]);
+export const ACTIONABLE_FAMILIES = new Set([
+  "navigate",
+  "media",
+  "email",
+  "email_delete",
+  "messages",
+  "reminder",
+  "memory",
+  "contacts",
+  "message",
+  "research"
+]);
+
+const EMAIL_LIST_POSITION =
+  String.raw`(?:\d+|numbers?\s+(?:one|two|three|four|five|six|seven|eight|nine|ten)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last)`;
+const EMAIL_DELETE_PATTERN = new RegExp(
+  String.raw`\b(?:delete|trash)\b(?=[^.?!]{0,60}\b(?:e-?mails?|mail)\b)(?=[^.?!]{0,60}\b${EMAIL_LIST_POSITION}\b)[^.?!]{0,60}` +
+    "|" +
+    String.raw`\bmove\b(?=[^.?!]{0,60}\b(?:e-?mails?|mail)\b)(?=[^.?!]{0,60}\b${EMAIL_LIST_POSITION}\b)[^.?!]{0,60}\b(?:to\s+)?trash\b`,
+  "i"
+);
 
 // Phrases that map a user's words onto a family. Recall-biased: it is much worse
 // to miss a real request (she narrates and does nothing — the bug) than to force
@@ -74,6 +104,9 @@ const FAMILY_PATTERNS = {
   // to be finance-shaped: either an explicit money verb, or a research verb whose
   // object is a financial instrument.
   research: /\b(invest(?:ing|ment)?s?\s+in|worth\s+investing|good\s+investment|should\s+i\s+(?:buy|invest)|portfolio|asset\s+class)\b|\b(?:research|look\s+into|dig\s+into|analy[sz]e)\b[^.?!]{0,60}\b(bond|bonds|t-?bill|t-?bills|treasury|treasuries|equit(?:y|ies)|stock|stocks|share|shares|etfs?|fund|funds|yield|yields|currency|forex|fx|inflation|interest\s+rate|eurobonds?|sovereign|reits?|commodit(?:y|ies)|gold|crypto|bitcoin|savings|pension|annuit(?:y|ies))\b/i,
+  // Deletion gets a narrower force route than ordinary email reads. It must
+  // include a spoken list position; query-shaped "delete mail from X" stays out.
+  email_delete: EMAIL_DELETE_PATTERN,
   email:    /\b(e-?mails?|inbox|unread|my\s+mail|check\s+my\s+mail)\b/i,
   reminder: /\b(remind\s+me|set\s+a\s+reminder|cancel\s+(the|my)\s+reminder|my\s+reminders|wake\s+me)\b/i,
   memory:   /\b(remember\s+that|note\s+that|make\s+a\s+note|my\s+notes|what\s+did\s+i\s+(save|note))\b/i,
@@ -92,7 +125,7 @@ const PRONOUN_ONLY_RE =
 // edge: "don't open anything" contains "open". An explicitly negated action is
 // conversation, and forcing a tool there would be acting against instruction.
 const NEGATED_ACTION_RE =
-  /\b(don'?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|send|text|message|remind|remember|check|save|add|cancel)\w*\b/i;
+  /\b(don'?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|send|text|message|remind|remember|check|save|add|cancel|delete|trash|move)\w*\b/i;
 
 function capOk(entry, caps) {
   return !entry.requires || !!caps[entry.requires];
@@ -112,8 +145,10 @@ function allEntries() {
       effect: meta.effect,
       requires: meta.requires || null,
       external: !!meta.external,
+      confirm: meta.confirm || null,
+      forceFamilies: Array.isArray(meta.forceFamilies) ? meta.forceFamilies : [meta.family],
       // a skill's own requiresConfirmation is a floor, never lowered here
-      alwaysConfirm: !!(skill && skill.requiresConfirmation) || !!meta.external,
+      alwaysConfirm: !!(skill && skill.requiresConfirmation) || !!meta.external || meta.confirm === "always",
       isSkill: !!skill
     };
   });
@@ -142,7 +177,7 @@ export function anthropicToolDefs(caps = {}) {
 
 /** The tools that could satisfy a given family, as OpenAI defs. */
 export function toolDefsForFamily(caps, family) {
-  return openaiToolDefs(caps, (e) => e.family === family);
+  return openaiToolDefs(caps, (e) => e.forceFamilies.includes(family));
 }
 
 // ---- argument validation ----------------------------------------------------
@@ -157,6 +192,30 @@ function typeOk(value, type) {
   if (type === "array") return Array.isArray(value);
   if (type === "object") return value && typeof value === "object" && !Array.isArray(value);
   return true; // unconstrained
+}
+
+function constraintError(value, spec, path) {
+  if (typeof value === "number") {
+    if (spec.minimum !== undefined && value < spec.minimum) return `${path} must be at least ${spec.minimum}`;
+    if (spec.maximum !== undefined && value > spec.maximum) return `${path} must be at most ${spec.maximum}`;
+  }
+  if (Array.isArray(value)) {
+    if (spec.minItems !== undefined && value.length < spec.minItems) {
+      return `${path} must contain at least ${spec.minItems} item${spec.minItems === 1 ? "" : "s"}`;
+    }
+    if (spec.maxItems !== undefined && value.length > spec.maxItems) {
+      return `${path} must contain at most ${spec.maxItems} items`;
+    }
+    if (spec.items) {
+      for (const [index, item] of value.entries()) {
+        const itemPath = `${path}[${index}]`;
+        if (!typeOk(item, spec.items.type)) return `${itemPath} should be ${spec.items.type}`;
+        const nested = constraintError(item, spec.items, itemPath);
+        if (nested) return nested;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -179,6 +238,7 @@ export function validateToolCall(name, rawArgs, caps = {}) {
   }
   if (args == null) args = {};
   if (typeof args !== "object" || Array.isArray(args)) return { ok: false, error: `arguments for ${name} must be an object`, tool };
+  args = { ...args };
 
   const schema = tool.parameters || {};
   const props = schema.properties || {};
@@ -193,6 +253,11 @@ export function validateToolCall(name, rawArgs, caps = {}) {
     if (value === undefined || value === null) continue;
     if (!typeOk(value, spec.type)) return { ok: false, error: `${name} argument "${key}" should be ${spec.type}`, tool };
     if (spec.enum && !spec.enum.includes(value)) return { ok: false, error: `${name} argument "${key}" must be one of ${spec.enum.join(", ")}`, tool };
+    const constrained = constraintError(value, spec, `${name} argument "${key}"`);
+    if (constrained) return { ok: false, error: constrained, tool };
+    // Speech recognition can repeat a list number. Normalize it here so one
+    // validated request can never invoke the same mutation twice.
+    if (spec.uniqueItems && Array.isArray(value)) args[key] = [...new Set(value)];
   }
   return { ok: true, tool, args };
 }
@@ -212,7 +277,7 @@ export function needsConfirmation(name, { tainted = false } = {}, caps = {}) {
   const tool = toolByName(name, caps);
   if (!tool) return false;
   if (tool.alwaysConfirm) return true;
-  return tool.effect === "mutate" && tainted;
+  return (tool.effect === "mutate" || tool.effect === "mutation") && tainted;
 }
 
 // ---- intent classification --------------------------------------------------
@@ -239,7 +304,7 @@ export function classifyIntent(text, caps = {}, history = []) {
   if (NEGATED_ACTION_RE.test(s)) return { intent: "chat", family: null, expected: [], reason: "action is negated" };
 
   const tools = availableTools(caps);
-  const families = new Set(tools.map((t) => t.family));
+  const families = new Set(tools.flatMap((t) => t.forceFamilies));
 
   let matched = null;
   for (const family of Object.keys(FAMILY_PATTERNS)) {
@@ -250,7 +315,7 @@ export function classifyIntent(text, caps = {}, history = []) {
 
   if (!matched) return { intent: "chat", family: null, expected: [], reason: "no actionable family matched" };
 
-  const expected = tools.filter((t) => t.family === matched).map((t) => t.name);
+  const expected = tools.filter((t) => t.forceFamilies.includes(matched)).map((t) => t.name);
 
   if (PRONOUN_ONLY_RE.test(s) && !historyHasReferent(history)) {
     return { intent: "needs_clarification", family: matched, expected, reason: "pronoun with no referent in context" };

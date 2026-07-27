@@ -1,6 +1,6 @@
 // Gmail for Artemis — zero-dependency, via the Gmail REST API with an OAuth
-// refresh token (Desktop-app loopback flow). READ + DRAFT scope only: Artemis
-// can check and read email but can NEVER send from here.
+// refresh token (Desktop-app loopback flow). Artemis implements read and
+// recoverable Trash operations here; it implements no draft/send operation.
 //
 // One-time setup (see .env.example):
 //   1. Google Cloud console → create an OAuth client, type "Desktop app".
@@ -10,9 +10,9 @@
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
-// readonly = check/read. That's all Artemis does with Gmail; no draft/send scope
-// is requested, so a compromised token can never send or alter mail.
-const SCOPES = "https://www.googleapis.com/auth/gmail.readonly";
+// gmail.modify authorizes read + labels/trash and Google also accepts it for
+// compose/send. Artemis deliberately exposes no draft/send endpoint here.
+const SCOPES = "https://www.googleapis.com/auth/gmail.modify";
 
 const env = (k) => process.env[k] || "";
 export function gmailConfigured() {
@@ -51,11 +51,15 @@ export async function gmailExchangeCode(code, port) {
   if (!res.ok || !data.refresh_token) {
     throw new Error(data.error_description || data.error || "Token exchange failed (no refresh_token).");
   }
+  clearAccessTokenCache();
   return data.refresh_token;
 }
 
 // ---- access token (cached until ~1 min before expiry) -----------------------
 let cache = { token: "", exp: 0 };
+function clearAccessTokenCache() {
+  cache = { token: "", exp: 0 };
+}
 async function accessToken() {
   if (cache.token && Date.now() < cache.exp) return cache.token;
   const res = await fetch(TOKEN_URL, {
@@ -140,4 +144,20 @@ export async function readMessage(id) {
     date: header(msg, "Date"),
     body: (extractBody(msg.payload) || msg.snippet || "").slice(0, 6000),
   };
+}
+
+// Move one message to Gmail's recoverable Trash. A refresh token granted under
+// the old readonly scope gets a 403 until the user completes consent again.
+export async function trashMessage(id) {
+  const token = await accessToken();
+  const res = await fetch(`${API}/messages/${encodeURIComponent(id)}/trash`, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (res.status === 403) {
+    clearAccessTokenCache();
+    return { ok: false, status: res.status, needsReauth: true };
+  }
+  return { ok: res.ok, status: res.status };
 }

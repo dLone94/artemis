@@ -147,3 +147,14 @@ both syntax checks + 11 suites + 19/19 eval green. Motion confirmed by
 frame differencing. Visual verified in-app: globe + 6 labelled moons
 (FINANCE gold, MESSAGES green, MEMORY ice, MEDIA lavender) all present.
 Awaiting user verdict before commit.
+
+### Round 5 — Codex build: delete_email (trash-only, confirm-always)
+gmail.modify scope + trashMessage (403→needsReauth), numbered-list-only
+deletion with named confirmation, per-email honest results, registry
+mutation entry, 6-case suite. Bonus: selection pinned at confirm time
+(TOCTOU guard — list changes between confirm and yes → refuse and re-ask).
+
+### Claude's verdict
+Banned APIs verified absent (no batchDelete, no DELETE method); trash
+endpoint only; scope comment honest; confirm:"always" in registry; suite +
+full chain green (12 suites + 19/19 eval). PASSED — one round.
