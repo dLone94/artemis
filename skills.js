@@ -35,6 +35,11 @@ async function writeJson(name, data) {
   await fs.writeFile(tmp, JSON.stringify(data, null, 2));
   await fs.rename(tmp, dest);
 }
+async function readBriefReminders() {
+  const parsed = JSON.parse(await fs.readFile(join(DATA_DIR, "reminders.json"), "utf8"));
+  if (!Array.isArray(parsed)) throw new Error("reminders store is not a list");
+  return parsed;
+}
 // Serialize read-modify-write on a JSON file so overlapping mutations (e.g. the
 // reminders /due poll racing set_reminder/cancel_reminder) can't double-fire,
 // drop, or resurrect entries. One promise chain per filename.
@@ -79,7 +84,8 @@ export const skillCtx = {
   gmailConfigured,
   listUnread,
   readMessage,
-  trashMessage
+  trashMessage,
+  readBriefReminders
 };
 
 // last check_email listing, so "read number 2" can resolve an id (per-process)
@@ -151,6 +157,185 @@ function joinedEmailSenders(items) {
   return labels.slice(0, -1).join(", ") + ", and " + labels.at(-1);
 }
 
+function briefText(value, fallback = "") {
+  return stripSentinels(value).replace(/\s+/g, " ").trim() || fallback;
+}
+
+function briefSender(from) {
+  const raw = briefText(from, "an unknown sender");
+  return raw.replace(/\s*<[^>]*>\s*$/, "").replace(/^["']|["']$/g, "").trim() ||
+    raw.split("@")[0] || "an unknown sender";
+}
+
+function hasListUnsubscribe(message) {
+  if (message && (message.listUnsubscribe || message["list-unsubscribe"])) return true;
+  const headers = message && Array.isArray(message.headers) ? message.headers : [];
+  return headers.some((header) =>
+    String(header && header.name || "").toLowerCase() === "list-unsubscribe" &&
+    briefText(header && header.value)
+  );
+}
+
+function briefSenderPriority(message) {
+  const from = String(message && message.from || "");
+  return /^\s*[^<@]+\s+<[^>]+>\s*$/.test(from) ? 0 : 1;
+}
+
+function spokenFigure(figure) {
+  // formatFigure is deliberately the only path from a Figure to speech. Removing
+  // its terminal URL keeps TTS natural while preserving its source/date checks.
+  return formatFigure(figure).replace(/\s+\[[^\]]+\]$/, "");
+}
+
+function localDayBounds(now) {
+  return {
+    start: new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(),
+    end: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime()
+  };
+}
+
+function localDateKey(now) {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function isDailyBriefOfferTime(now = new Date()) {
+  const localNow = new Date(now);
+  const hour = localNow.getHours();
+  return Number.isFinite(localNow.getTime()) && hour >= 5 && hour < 12;
+}
+
+export async function claimDailyBriefOffer(now = new Date(), ctx = skillCtx) {
+  const localNow = new Date(now);
+  if (!isDailyBriefOfferTime(localNow)) return false;
+
+  const date = localDateKey(localNow);
+  let claimed = false;
+  await ctx.mutate("brief.json", { lastOffered: "" }, (stored) => {
+    const current = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    if (current.lastOffered === date) return undefined;
+    claimed = true;
+    return { ...current, lastOffered: date };
+  });
+  return claimed;
+}
+
+async function briefSource(producer, fallback, timeoutMs = 4000) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(producer),
+      new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("brief source timed out")), timeoutMs);
+      })
+    ]);
+  } catch (e) {
+    return fallback;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Assemble the read-only daily brief. Server-only sources are injected through
+ * skillCtx so the HTTP endpoint and daily_brief skill execute this exact path.
+ */
+export async function assembleDailyBrief(ctx = skillCtx) {
+  const now = new Date(typeof ctx.now === "function" ? ctx.now() : Date.now());
+  const fetchUnread = ctx.listUnread || listUnread;
+  const fetchReminders = ctx.readBriefReminders || readBriefReminders;
+  const fetchFx = ctx.fxRate || fxRate;
+  const fetchYieldCurve = ctx.usYieldCurve || usYieldCurve;
+  const fetchNews = ctx.getNewsBriefing;
+
+  const sections = await Promise.all([
+    briefSource(async () => {
+      const mails = await fetchUnread(10);
+      if (!Array.isArray(mails)) throw new Error("mail source did not return a list");
+      const important = mails
+        .filter((message) =>
+          !/no-?reply|newsletter|notification/i.test(String(message && message.from || "")) &&
+          !hasListUnsubscribe(message)
+        )
+        .sort((a, b) => briefSenderPriority(a) - briefSenderPriority(b))
+        .slice(0, 3);
+      const mailCount = mails.length >= 10
+        ? "at least 10 unread emails"
+        : `${mails.length} unread email${mails.length === 1 ? "" : "s"}`;
+      const spoken = mails.length
+        ? `Mail first: you have ${mailCount}. ` +
+          (important.length
+            ? `The ones that look important are ${important.map((message) =>
+                `${briefSender(message.from)} about ${briefText(message.subject, "no subject")}`).join("; ")}.`
+            : "None of them look personal.")
+        : "Mail first: your inbox is clear.";
+      return { key: "mail", spoken, items: important };
+    }, { key: "mail", spoken: "Mail is unreachable right now." }),
+
+    briefSource(async () => {
+      const reminders = await fetchReminders();
+      if (!Array.isArray(reminders)) throw new Error("reminders source did not return a list");
+      const { start, end } = localDayBounds(now);
+      const today = reminders
+        .filter((reminder) =>
+          reminder && !reminder.fired && Number.isFinite(reminder.at) &&
+          reminder.at >= start && reminder.at < end
+        )
+        .sort((a, b) => a.at - b.at);
+      const spoken = today.length
+        ? "For today, " + today.map((reminder) =>
+            `${new Date(reminder.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}: ` +
+            briefText(reminder.text, "untitled reminder")
+          ).join("; ") + "."
+        : "For today, you have no reminders due.";
+      return { key: "today", spoken, items: today };
+    }, { key: "today", spoken: "Reminders are unreachable right now." }),
+
+    (async () => {
+      const [fxPart, yieldPart] = await Promise.all([
+        briefSource(async () => {
+          const rate = await fetchFx("USD", "KES", { timeoutMs: 4000 });
+          if (!rate) throw new Error("exchange rate is unavailable");
+          return {
+            spoken: `USD to Kenyan shilling is ${spokenFigure(rate)}.`,
+            item: { key: "fx", figure: rate }
+          };
+        }, { spoken: "The exchange rate is unreachable right now.", item: null }),
+        briefSource(async () => {
+          const curve = await fetchYieldCurve({ timeoutMs: 4000 });
+          const tenYear = Array.isArray(curve)
+            ? curve.find((figure) => /\b10 Yr\b/i.test(String(figure && figure.unit || "")))
+            : null;
+          if (!tenYear) throw new Error("US 10-year yield is unavailable");
+          return {
+            spoken: `The US 10-year yield is ${spokenFigure(tenYear)}.`,
+            item: { key: "us10y", figure: tenYear }
+          };
+        }, { spoken: "The Treasury yield is unreachable right now.", item: null })
+      ]);
+      return {
+        key: "money",
+        spoken: `Money minute: ${fxPart.spoken} ${yieldPart.spoken}`,
+        items: [fxPart.item, yieldPart.item].filter(Boolean)
+      };
+    })(),
+
+    briefSource(async () => {
+      if (typeof fetchNews !== "function") throw new Error("news source is unavailable");
+      const newsText = briefText(await fetchNews());
+      if (!newsText) throw new Error("news source is empty");
+      return { key: "world", spoken: `And around the world, ${newsText}` };
+    }, { key: "world", spoken: "World news is unreachable right now." })
+  ]);
+
+  return {
+    sections,
+    generatedAt: now.toISOString()
+  };
+}
+
 // Find the top YouTube video for a query by scraping the search page's initial
 // data (zero-dep; the CONSENT/SOCS cookies skip the EU consent interstitial).
 // Returns { id, title } or null — callers fall back to the search page.
@@ -181,6 +366,18 @@ async function findYouTubeVideo(query) {
 
 // ---- skills ----------------------------------------------------------------
 const SKILLS = [
+  {
+    name: "daily_brief",
+    description:
+      "Give the user's Chief-of-Staff daily brief as one flowing spoken response: important unread mail, today's reminders, a sourced money minute, then world news. Use for 'give me my brief', 'my brief', 'what's my day', or 'morning brief'. Read-only.",
+    requiresConfirmation: false,
+    paramSchema: { type: "object", properties: {}, additionalProperties: false },
+    async execute(p, ctx = skillCtx) {
+      const brief = await assembleDailyBrief(ctx);
+      const spoken = brief.sections.map((section) => section.spoken).filter(Boolean).join(" ");
+      return { ok: true, summary: spoken, content: spoken, brief };
+    }
+  },
   {
     name: "web_research",
     description:

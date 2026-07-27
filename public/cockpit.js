@@ -16,13 +16,25 @@ const $ = (id) => document.getElementById(id);
 // motion: no boot, briefing lands silently in the log + context panel.
 const briefingP = fetch("/api/briefing").then((r) => r.json()).catch(() => null);
 
-// She greets you and ASKS first — the news only plays on your "yes" (spoken
-// into the mic / wake word, handled in main.js via window.__pendingBriefing)
-// or a ▶ tap on the card. No unprompted monologue.
+// She greets you and ASKS first. The spoken boot interaction atomically claims
+// the once-daily Chief-of-Staff offer; the eager page-load fetch never does.
+// A yes (or ▶ tap) routes through daily_brief. No unprompted monologue.
 function deliverBriefing(spoken) {
-  briefingP.then((b) => {
+  const responseP = spoken
+    ? fetch("/api/briefing?claimDaily=1", { cache: "no-store" })
+        .then((r) => r.json())
+        .catch(() => briefingP)
+    : briefingP;
+  responseP.then((b) => {
     if (!b) return;
-    if (spoken && b.news && window.ArtemisSpeak) {
+    if (spoken && b.offerSkill === "daily_brief" && b.offer && window.ArtemisSpeak) {
+      const command = "give me my brief";
+      const ask = b.greeting + " " + b.offer;
+      window.__pendingBriefing = { command };
+      addLine("artemis", ask);
+      addCard({ title: "BRIEFING READY", lines: ["say “yes” — or tap play"], playCommand: command });
+      window.ArtemisSpeak(ask);
+    } else if (spoken && b.news && window.ArtemisSpeak) {
       const ask = b.greeting + " " + b.offer;
       window.__pendingBriefing = b.news; // a bare "yes" within the next turn plays it
       addLine("artemis", ask);
@@ -179,16 +191,22 @@ function addCard(card) {
     row.appendChild(mk("✕ ABORT", false));
     div.appendChild(row);
   }
-  if (card.playText) {
-    // ▶ plays the held text aloud (the click IS the audio-unlock gesture)
+  if (card.playCommand || card.playText) {
+    // A command re-enters the normal skill path; legacy news cards still play
+    // their held text directly. Either click is the audio-unlock gesture.
     const b = document.createElement("button");
     b.className = "hud-card-play";
     b.type = "button";
     b.textContent = "▶ PLAY";
     b.addEventListener("click", () => {
       window.__pendingBriefing = null; // answered by tap instead of voice
-      addLine("artemis", card.playText.length > 120 ? card.playText.slice(0, 117) + "…" : card.playText);
-      if (window.ArtemisSpeak) window.ArtemisSpeak(card.playText);
+      if (card.playCommand) {
+        if (window.__orb && window.__orb._ensureAudio) window.__orb._ensureAudio();
+        if (window.__ask) window.__ask(card.playCommand);
+      } else {
+        addLine("artemis", card.playText.length > 120 ? card.playText.slice(0, 117) + "…" : card.playText);
+        if (window.ArtemisSpeak) window.ArtemisSpeak(card.playText);
+      }
       b.remove();
     });
     div.appendChild(b);

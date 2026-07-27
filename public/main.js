@@ -567,19 +567,24 @@ if (cmdForm && cmdInput) {
 async function ask(text) {
   text = (text || "").trim();
   if (!text || busy) return;
+  const shownText = text;
 
-  // A pending spoken OFFER (the welcome briefing: "would you like the news?")
-  // is answered locally — a bare yes plays the held text, a no dismisses it,
-  // anything else supersedes the offer and proceeds as a normal command.
+  // A pending welcome offer is answered locally. The daily-brief marker turns a
+  // bare yes into the normal executable command; legacy news text still plays
+  // directly. A no dismisses either, and any other command supersedes the offer.
   if (window.__pendingBriefing) {
     const held = window.__pendingBriefing;
     if (/^(yes|yeah|yep|sure|ok(ay)?|please( do)?|go ahead|do it|absolutely|why not|let'?s hear( it)?|tell me)\b/i.test(text)) {
       window.__pendingBriefing = null;
-      hud("log", "you", text);
-      hud("log", "artemis", held.length > 120 ? held.slice(0, 117) + "…" : held);
-      orb._ensureAudio();
-      speak(held);
-      return;
+      if (held && typeof held === "object" && held.command) {
+        text = String(held.command).trim();
+      } else {
+        hud("log", "you", text);
+        hud("log", "artemis", held.length > 120 ? held.slice(0, 117) + "…" : held);
+        orb._ensureAudio();
+        speak(held);
+        return;
+      }
     }
     if (/^(no( thanks| thank you)?|nope|nah|not now|later|skip|maybe later)\b/i.test(text)) {
       window.__pendingBriefing = null;
@@ -593,8 +598,8 @@ async function ask(text) {
 
   busy = true;
   if (wakeOn) pauseWakeForSpeech();
-  addMsg("user", text);
-  hud("log", "you", text);
+  addMsg("user", shownText);
+  hud("log", "you", shownText);
   conversation.push({ role: "user", content: text });
   if (conversation.length > 20) conversation.splice(0, conversation.length - 20);
   saveConversation();

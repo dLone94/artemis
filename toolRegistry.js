@@ -43,6 +43,7 @@ const META = {
   web_search:      { family: "web",      effect: "read",   requires: "search" },
   fetch_page:      { family: "web",      effect: "read",   requires: "search" },
   web_research:    { family: "web",      effect: "read",   requires: "search" },
+  daily_brief:     { family: "briefing", effect: "read" },
   open_url:        { family: "navigate", effect: "client" },
   play_media:      { family: "media",    effect: "client" },
   check_email:     { family: "email",    effect: "read",   requires: "gmail" },
@@ -70,6 +71,7 @@ const META = {
 // information questions (family "web") stay conversational — forcing a search on
 // every "what do you think about…" would break normal talking.
 export const ACTIONABLE_FAMILIES = new Set([
+  "briefing",
   "navigate",
   "media",
   "email",
@@ -95,6 +97,7 @@ const EMAIL_DELETE_PATTERN = new RegExp(
 // to miss a real request (she narrates and does nothing — the bug) than to force
 // a tool on a borderline turn (she does the thing).
 const FAMILY_PATTERNS = {
+  briefing: /\b(?:my\s+(?:morning\s+)?brief|morning\s+brief|what(?:['’]s|\s+is)\s+my\s+day)\b/i,
   navigate: /\b(open|pull\s+up|show\s+me|take\s+me\s+to|navigate\s+to|launch|bring\s+up|go\s+to|visit)\b/i,
   media:    /\b(play|put\s+on|queue\s+up|youtube|spotify|some\s+music|a\s+song|the\s+video)\b/i,
   messages: /\b(any(?:\s+(?:new|unread))?\s+(?:whatsapp\s+)?messages?|unread\s+(?:whatsapp\s+)?messages?|new\s+whatsapp\s+messages?|check\s+(?:my\s+)?whatsapp|any\s+whatsapp|did\s+anyone\s+message\s+me)\b/i,

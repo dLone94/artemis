@@ -158,3 +158,15 @@ mutation entry, 6-case suite. Bonus: selection pinned at confirm time
 Banned APIs verified absent (no batchDelete, no DELETE method); trash
 endpoint only; scope comment honest; confirm:"always" in registry; suite +
 full chain green (12 suites + 19/19 eval). PASSED — one round.
+
+### Round 6 — Codex build: daily_brief (Chief-of-Staff brief)
+/api/brief with parallel 4s-bounded sources and honest omissions,
+daily_brief skill + briefing intent routing, once-per-day offer riding the
+existing briefing card, 5-case suite. Three reported deviations, all
+reasonable: offer ties to the boot gesture; sender-cap honesty ("at least
+10"); brief length bounded by the news summary's existing 70-word cap.
+
+### Claude's verdict
+13 suites + 19/19 eval green on my re-run. Live endpoint verified: 4
+ordered sections, sourced+dated FX figure, cold news cache → honest
+clause. PASSED — one round.

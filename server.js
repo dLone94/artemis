@@ -22,7 +22,10 @@ import {
   precheckSkill,
   createPending,
   getPending,
-  dropPending
+  dropPending,
+  assembleDailyBrief,
+  claimDailyBriefOffer,
+  isDailyBriefOfferTime
 } from "./skills.js";
 import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, listUnread } from "./gmail.js";
 import { wsConnect } from "./wsClient.js";
@@ -1932,6 +1935,22 @@ async function composeBriefing() {
   return (data.choices?.[0]?.message?.content || "").trim();
 }
 
+async function getCachedBriefingText() {
+  if (!briefingCache.text || Date.now() - briefingCache.at > BRIEFING_TTL_MS) {
+    if (!briefingInflight) {
+      briefingInflight = composeBriefing()
+        .then((text) => { briefingCache = { at: Date.now(), text }; })
+        .finally(() => { briefingInflight = null; });
+    }
+    await briefingInflight;
+  }
+  return briefingCache.text;
+}
+
+// skills.js cannot import this cache without creating a cycle. Hand the server-
+// owned getter into the shared brief assembler, matching the webSearch pattern.
+skillCtx.getNewsBriefing = getCachedBriefingText;
+
 // --- request router ----------------------------------------------------------
 // The async handler is wrapped so ANY throw (malformed URL, fs error, provider
 // crash) answers 500 instead of becoming an unhandled rejection that kills the
@@ -2182,30 +2201,50 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (url.pathname === "/api/brief" && req.method === "GET") {
+    const brief = await assembleDailyBrief(skillCtx);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(brief));
+    return;
+  }
+
   // startup news briefing (cached 30 min; concurrent requests share one compose).
   // greeting/offer are computed fresh (time of day drifts); only the news is cached.
   if (url.pathname === "/api/briefing") {
     const greeting = `Good ${timeGreeting()}, ${ADDRESS}. Welcome back.`;
-    try {
-      if (!briefingCache.text || Date.now() - briefingCache.at > BRIEFING_TTL_MS) {
-        if (!briefingInflight) {
-          briefingInflight = composeBriefing()
-            .then((text) => { briefingCache = { at: Date.now(), text }; })
-            .finally(() => { briefingInflight = null; });
-        }
-        await briefingInflight;
+    const claimDaily = url.searchParams.get("claimDaily") === "1";
+    const now = new Date();
+    if (claimDaily && isDailyBriefOfferTime(now)) {
+      let offered = false;
+      try {
+        offered = await claimDailyBriefOffer(now, skillCtx);
+      } catch (e) {
+        console.error("daily brief offer state error:", e.message);
       }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({
+        greeting,
+        offer: offered ? "Want your brief?" : "",
+        offerSkill: offered ? "daily_brief" : "",
+        news: "",
+        cachedAt: briefingCache.at
+      }));
+      return;
+    }
+    try {
+      await getCachedBriefingText();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         greeting,
         offer: briefingCache.text ? "Would you like a quick brief on the news around the world?" : "",
+        offerSkill: "",
         news: briefingCache.text,
         cachedAt: briefingCache.at
       }));
     } catch (e) {
       console.error("/api/briefing error:", e.message);
       res.writeHead(200, { "Content-Type": "application/json" }); // never block the boot
-      res.end(JSON.stringify({ greeting, offer: "", news: "" }));
+      res.end(JSON.stringify({ greeting, offer: "", offerSkill: "", news: "" }));
     }
     return;
   }
