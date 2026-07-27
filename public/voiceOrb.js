@@ -9,6 +9,7 @@
 import {
   PAL,
   arcs as drawHudArcs,
+  poly as drawHudPoly,
   prefersReducedMotion,
   ring as drawHudRing,
   ticks as drawHudTicks
@@ -16,28 +17,70 @@ import {
 
 // Reactor geometry is immutable and shared by every frame. Keeping the segment
 // tables here avoids rebuilding dash arrays in the render loop.
+const TAU = Math.PI * 2;
+const TICK_COUNT = 72;
+const COMET_TRAIL_STEPS = 4;
+const RIPPLE_POOL_SIZE = 16;
 const REACTOR_BANDS = [
   {
-    radius: 0.32, width: 0.032, speed: 0.72, phase: 0.08, alpha: 0.72, blur: 5, color: PAL.B,
+    radius: 0.32, width: 0.032, phase: 0.08, alpha: 0.72, blur: 5, color: PAL.B,
+    velocity: 0.42, waveAmp1: 0.16, waveFreq1: 0.43, wavePhase1: 0.2,
+    waveAmp2: 0.08, waveFreq2: 0.71, wavePhase2: 1.1,
+    morphRate: 0.34, morphAmp: 0.035, morphPhase: 0.4,
+    cometCount: 3, cometRate: 1.45, cometPhase: 0.3,
     segments: [[0.02, 0.54], [0.72, 1.48], [1.72, 2.28], [2.52, 3.34], [3.56, 4.12], [4.38, 5.14], [5.4, 6.12]]
   },
   {
-    radius: 0.44, width: 0.022, speed: -0.48, phase: 0.86, alpha: 0.54, blur: 3, color: PAL.O,
+    radius: 0.44, width: 0.022, phase: 0.86, alpha: 0.54, blur: 3, color: PAL.O,
+    velocity: -0.08, waveAmp1: 0.32, waveFreq1: 0.37, wavePhase1: 1.4,
+    waveAmp2: 0.14, waveFreq2: 0.83, wavePhase2: 0.2,
+    morphRate: 0.27, morphAmp: 0.045, morphPhase: 1.3,
+    cometCount: 2, cometRate: -1.35, cometPhase: 1.1,
     segments: [[0.1, 0.84], [1.04, 1.3], [1.5, 2.44], [2.68, 3.08], [3.28, 4.2], [4.44, 5.02], [5.26, 6.02]]
   },
   {
-    radius: 0.57, width: 0.027, speed: 0.94, phase: 1.72, alpha: 0.62, blur: 4, color: PAL.B,
+    radius: 0.57, width: 0.027, phase: 1.72, alpha: 0.62, blur: 4, color: PAL.B,
+    velocity: 0.53, waveAmp1: 0.2, waveFreq1: 0.51, wavePhase1: 2.2,
+    waveAmp2: 0.09, waveFreq2: 0.77, wavePhase2: 0.5,
+    morphRate: 0.39, morphAmp: 0.032, morphPhase: 2.4,
+    cometCount: 3, cometRate: 1.7, cometPhase: 2,
     segments: [[0, 0.3], [0.46, 0.92], [1.08, 1.72], [1.9, 2.2], [2.4, 3.04], [3.2, 3.66], [3.84, 4.54], [4.74, 5.08], [5.3, 5.94], [6.1, 6.24]]
   },
   {
-    radius: 0.7, width: 0.018, speed: -0.31, phase: 2.56, alpha: 0.48, blur: 2, color: PAL.O,
+    radius: 0.7, width: 0.018, phase: 2.56, alpha: 0.48, blur: 2, color: PAL.O,
+    velocity: -0.31, waveAmp1: 0.13, waveFreq1: 0.33, wavePhase1: 0.9,
+    waveAmp2: 0.07, waveFreq2: 0.67, wavePhase2: 2.7,
+    morphRate: 0.22, morphAmp: 0.04, morphPhase: 3.1,
+    cometCount: 2, cometRate: -1.25, cometPhase: 2.8,
     segments: [[0.06, 0.62], [0.8, 1.1], [1.28, 1.94], [2.14, 2.72], [2.92, 3.54], [3.72, 4.04], [4.24, 4.84], [5.04, 5.54], [5.76, 6.18]]
   }
 ];
-const THINKING_SCANNER_SEGMENTS = [
+const SCANNER_SEGMENTS = [
   [0, 0.12], [0.23, 0.38], [0.5, 0.68], [0.81, 1.02], [1.16, 1.4], [1.55, 1.82]
 ];
 const OUTER_BEZEL_SEGMENTS = [[0.1, 1.5], [2.2, 3], [3.6, 5.2]];
+
+// Morphing bands need frame-varying endpoints, while orbShared.arcs strokes
+// every segment separately. Batching the same geometry into one path preserves
+// its appearance and keeps the continuous-motion pass below the old draw cost.
+function strokeArcSegments(ctx, r, segments, width, rotation, color, alpha, blur) {
+  r = Math.max(0, r);
+  if (!r) return;
+  ctx.beginPath();
+  ctx.lineWidth = width;
+  ctx.strokeStyle = color + alpha + ")";
+  ctx.lineCap = "round";
+  ctx.shadowColor = PAL.GLOW;
+  ctx.shadowBlur = blur || 0;
+  for (let i = 0; i < segments.length; i++) {
+    const start = rotation + segments[i][0];
+    ctx.moveTo(Math.cos(start) * r, Math.sin(start) * r);
+    ctx.arc(0, 0, r, start, rotation + segments[i][1]);
+  }
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.lineCap = "butt";
+}
 
 export class VoiceOrb {
   constructor(container, opts = {}) {
@@ -49,7 +92,9 @@ export class VoiceOrb {
     this._manualAmp = 0;
     this.NB = 28;                       // spectrum bands driving the talking waveform
     this.bins = new Float32Array(this.NB);
-    this._ripples = [];                 // expanding sound-waves on speech peaks
+    this._ripples = new Array(RIPPLE_POOL_SIZE);
+    for (let i = 0; i < RIPPLE_POOL_SIZE; i++) this._ripples[i] = { t0: 0, e: 0 };
+    this._rippleCount = 0;
     this._prevAmp = 0;
     this._lastRipple = -1;
     this._audioActive = false;
@@ -58,8 +103,35 @@ export class VoiceOrb {
     this._listeningMix = 0;
     this._thinkingMix = 0;
     this._speakingMix = 0;
-    this._reactorPhase = 0;
+    this._bandAngles = new Float64Array(REACTOR_BANDS.length);
+    this._bandVelocities = new Float64Array(REACTOR_BANDS.length);
+    this._bandWavePhase1 = new Float64Array(REACTOR_BANDS.length);
+    this._bandWavePhase2 = new Float64Array(REACTOR_BANDS.length);
+    this._bandMorphPhase = new Float64Array(REACTOR_BANDS.length);
+    this._bandCometPhase = new Float64Array(REACTOR_BANDS.length);
+    this._bandSegments = new Array(REACTOR_BANDS.length);
+    for (let i = 0; i < REACTOR_BANDS.length; i++) {
+      const band = REACTOR_BANDS[i];
+      this._bandAngles[i] = band.phase;
+      this._bandWavePhase1[i] = band.wavePhase1;
+      this._bandWavePhase2[i] = band.wavePhase2;
+      this._bandMorphPhase[i] = band.morphPhase;
+      this._bandCometPhase[i] = band.cometPhase;
+      this._bandSegments[i] = new Array(band.segments.length);
+      for (let j = 0; j < band.segments.length; j++) {
+        this._bandSegments[i][j] = [band.segments[j][0], band.segments[j][1]];
+      }
+    }
     this._scannerPhase = 0;
+    this._counterScannerPhase = 0;
+    this._scannerWavePhase1 = 0.4;
+    this._scannerWavePhase2 = 1.7;
+    this._tickRotation = 0;
+    this._tickMarqueePhase = 0;
+    this._tickWavePhase1 = 0.8;
+    this._tickWavePhase2 = 2.1;
+    this._reticlePhase = 0;
+    this._nextSonarAt = 4.8;
     this._lastFrameAt = 0;
 
     // ---- 3D geometry (unit sphere; projected each frame in _draw) ----
@@ -142,13 +214,35 @@ export class VoiceOrb {
   }
 
   setStatus(s) {
-    if (s === "idle" || s === "listening" || s === "thinking" || s === "speaking") this.status = s;
+    if (s === "idle" || s === "listening" || s === "thinking" || s === "speaking") {
+      if (s !== this.status) {
+        this.status = s;
+        const t = this.reduced ? 0 : (this._elapsed || 0);
+        if (this.reduced) this._rippleCount = 0;
+        this._emitRipple(t, 1);
+        if (!this.reduced && s === "idle") this._nextSonarAt = t + 4.8;
+      }
+    }
     if (this.reduced) this._loop(); // reduced motion: repaint one frame for the new state
   }
 
   feed(a) {
     const v = Math.max(0, Math.min(1, Number(a) || 0));
     if (v > this._manualAmp) this._manualAmp = v;
+  }
+
+  _emitRipple(t, energy) {
+    let slot = this._rippleCount;
+    if (slot < this._ripples.length) {
+      this._rippleCount++;
+    } else {
+      slot = 0;
+      for (let i = 1; i < this._ripples.length; i++) {
+        if (this._ripples[i].t0 < this._ripples[slot].t0) slot = i;
+      }
+    }
+    this._ripples[slot].t0 = t;
+    this._ripples[slot].e = Math.max(0, Math.min(1, energy));
   }
 
   // ---- audio ----
@@ -239,8 +333,57 @@ export class VoiceOrb {
     this._thinkingMix += (thinkingTarget - this._thinkingMix) * stateEase;
     this._speakingMix += (speakingTarget - this._speakingMix) * stateEase;
     if (!this.reduced) {
-      this._reactorPhase += dt * (0.42 + this._listeningMix * 1.05);
-      this._scannerPhase += dt * (1.15 + this._thinkingMix * 1.35);
+      const velocityBoost = 1 + this._listeningMix * 1.25;
+      const morphBoost = 1 + this._thinkingMix * 1.4;
+      for (let i = 0; i < REACTOR_BANDS.length; i++) {
+        const band = REACTOR_BANDS[i];
+        this._bandWavePhase1[i] += dt * band.waveFreq1;
+        this._bandWavePhase2[i] += dt * band.waveFreq2;
+        this._bandMorphPhase[i] += dt * band.morphRate * morphBoost;
+        const velocity = (
+          band.velocity +
+          band.waveAmp1 * Math.sin(this._bandWavePhase1[i]) +
+          band.waveAmp2 * Math.sin(this._bandWavePhase2[i])
+        ) * velocityBoost;
+        const cometVelocity = band.cometRate * (
+          1 +
+          0.14 * Math.sin(this._bandWavePhase2[i] * 1.17 + i * 0.61) +
+          0.07 * Math.sin(this._bandWavePhase1[i] * 0.73 + i * 1.13)
+        ) * (1 + this._listeningMix * 0.65);
+        this._bandVelocities[i] = velocity;
+        this._bandAngles[i] += dt * velocity;
+        this._bandCometPhase[i] += dt * cometVelocity;
+      }
+
+      this._scannerWavePhase1 += dt * 0.47;
+      this._scannerWavePhase2 += dt * 0.79;
+      const sweepBoost = 1 + this._thinkingMix;
+      const scannerVelocity = (
+        1.15 +
+        0.22 * Math.sin(this._scannerWavePhase1) +
+        0.11 * Math.sin(this._scannerWavePhase2)
+      ) * sweepBoost;
+      const counterVelocity = (
+        -0.92 +
+        0.18 * Math.sin(this._scannerWavePhase2 + 1.2) +
+        0.09 * Math.sin(this._scannerWavePhase1 + 2.4)
+      ) * sweepBoost;
+      this._scannerPhase += dt * scannerVelocity;
+      this._counterScannerPhase += dt * counterVelocity;
+
+      this._tickWavePhase1 += dt * 0.41;
+      this._tickWavePhase2 += dt * 0.73;
+      this._tickMarqueePhase += dt * (
+        1.28 +
+        0.26 * Math.sin(this._tickWavePhase1) +
+        0.13 * Math.sin(this._tickWavePhase2)
+      );
+      this._tickRotation += dt * (
+        -0.08 +
+        0.024 * Math.sin(this._tickWavePhase2 + 0.6) +
+        0.012 * Math.sin(this._tickWavePhase1 + 1.8)
+      );
+      this._reticlePhase -= dt * (0.06 + Math.abs(this._bandVelocities[0]) * 0.15);
     }
 
     // spectrum: peak-per-band → drives the talking waveform; also overall amplitude
@@ -280,13 +423,31 @@ export class VoiceOrb {
     // "listening shimmer") can react to the user's real voice too
     window.__artemisAmp = amp;
 
-    // emit an expanding ripple on a speech peak (with cooldown so it's not spammy)
-    if (!this.reduced && amp > 0.16 && amp - this._prevAmp > 0.035 && t - this._lastRipple > 0.16) {
-      this._ripples.push({ t0: t, e: Math.min(1, amp) });
+    // Even silent idle has a 4–6 second sonar cadence. Speaking adds faster
+    // peak ripples; both reuse the preallocated ripple pool.
+    if (!this.reduced && this.status === "idle" && t >= this._nextSonarAt) {
+      this._emitRipple(t, 0.68);
+      this._nextSonarAt = t + 5 + Math.sin(t * 0.73) * 0.85;
+    }
+    if (!this.reduced && this.status === "speaking" &&
+        amp > 0.16 && amp - this._prevAmp > 0.035 && t - this._lastRipple > 0.16) {
+      this._emitRipple(t, amp);
       this._lastRipple = t;
     }
     this._prevAmp = amp;
-    if (this._ripples.length) this._ripples = this._ripples.filter((rp) => t - rp.t0 < 1.1);
+    if (this._rippleCount) {
+      let write = 0;
+      for (let read = 0; read < this._rippleCount; read++) {
+        const ripple = this._ripples[read];
+        if (t - ripple.t0 >= 1.1) continue;
+        if (write !== read) {
+          this._ripples[write].t0 = ripple.t0;
+          this._ripples[write].e = ripple.e;
+        }
+        write++;
+      }
+      this._rippleCount = write;
+    }
 
     this._mx += (this._mouse.x - this._mx) * 0.06;
     this._my += (this._mouse.y - this._my) * 0.06;
@@ -394,53 +555,139 @@ export class VoiceOrb {
     };
     for (const cfg of this._rings) drawRing(cfg, false); // far halves
 
-    // ---- (3) arc-reactor core: hard disc, reticle, segmented bands + scale ----
+    // ---- (3) continuously moving arc-reactor core ----
     const activeMix = Math.min(1, this._listeningMix + this._thinkingMix + this._speakingMix);
     const idleMix = 1 - activeMix;
-    const idleWave = Math.sin(t * 1.45);
+    const slowPlasma = 0.68 * Math.sin(t * 0.92) + 0.32 * Math.sin(t * 0.37 + 1.1);
+    const microPlasma = 0.62 * Math.sin(t * 11.7 + 0.4) + 0.38 * Math.sin(t * 17.3 + 1.9);
     const speakingPulse = this._speakingMix * amp;
-    const coreR = R * 0.16 * (1 + idleMix * idleWave * 0.028 + speakingPulse * 0.34);
+    const coreR = R * 0.16 * (
+      1 +
+      slowPlasma * (0.018 + idleMix * 0.012) +
+      microPlasma * 0.012 +
+      speakingPulse * 0.48
+    );
     const contraction = 1 - this._listeningMix * 0.11;
     const bandBoost = this._listeningMix * 0.28;
+    const bandBrightness = 1 + this._listeningMix * 0.42;
 
-    drawHudTicks(ctx, R * 0.86, 72, R * 0.034, -this._reactorPhase * 0.13, PAL.D, 0.46 + bandBoost * 0.7);
+    // One 72-tick pass carries both the base scale and its moving marquee.
+    const tickR = R * 0.86, tickLen = R * 0.034;
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = PAL.GLOW;
+    ctx.shadowBlur = 3;
+    for (let i = 0; i < TICK_COUNT; i++) {
+      const ang = this._tickRotation + (i / TICK_COUNT) * TAU;
+      const co = Math.cos(ang), si = Math.sin(ang);
+      const wave = 0.5 + 0.5 * Math.cos(ang - this._tickMarqueePhase);
+      const crest = wave * wave * wave * wave * wave * wave;
+      ctx.strokeStyle = (crest > 0.08 ? PAL.B : PAL.D) +
+        Math.min(1, 0.2 + bandBoost * 0.45 + crest * 0.72) + ")";
+      ctx.beginPath();
+      ctx.moveTo(co * tickR, si * tickR);
+      ctx.lineTo(co * (tickR - tickLen * (1 + crest * 0.55)), si * (tickR - tickLen * (1 + crest * 0.55)));
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+
+    // Segment endpoints morph in preallocated pairs while each band's velocity
+    // waves independently. Comets advance faster than their host band.
+    ctx.shadowColor = PAL.GLOW;
     for (let i = 0; i < REACTOR_BANDS.length; i++) {
       const band = REACTOR_BANDS[i];
-      drawHudArcs(
+      const segments = this._bandSegments[i];
+      for (let j = 0; j < segments.length; j++) {
+        const morph = band.morphAmp * Math.sin(this._bandMorphPhase[i] + j * 1.61803398875);
+        const drift = band.morphAmp * 0.32 * Math.sin(this._bandMorphPhase[i] * 0.61 + j * 0.87);
+        segments[j][0] = band.segments[j][0] + morph + drift;
+        segments[j][1] = band.segments[j][1] - morph * 0.82 + drift;
+      }
+      const bandR = R * band.radius * contraction;
+      strokeArcSegments(
         ctx,
-        R * band.radius * contraction,
-        band.segments,
+        bandR,
+        segments,
         Math.max(1, R * band.width),
-        band.phase + this._reactorPhase * band.speed,
+        this._bandAngles[i],
         band.color,
-        Math.min(1, band.alpha + bandBoost),
+        Math.min(1, band.alpha * bandBrightness),
         band.blur + this._listeningMix * 5
       );
     }
 
-    drawHudArcs(
+    // Trail levels share a path: five fills render every comet on all bands.
+    ctx.shadowColor = PAL.GLOW;
+    for (let trail = COMET_TRAIL_STEPS; trail >= 0; trail--) {
+      const fade = 1 - trail / (COMET_TRAIL_STEPS + 1);
+      const dotR = Math.max(0.7, R * (0.006 + fade * 0.009));
+      const alpha = Math.min(1, (0.1 + 0.8 * fade * fade) * (1 + bandBoost * 0.35));
+      ctx.fillStyle = (trail ? PAL.B : PAL.Hl) + alpha + ")";
+      ctx.shadowBlur = trail ? 0 : 8 + this._listeningMix * 5;
+      ctx.beginPath();
+      for (let i = 0; i < REACTOR_BANDS.length; i++) {
+        const band = REACTOR_BANDS[i];
+        const bandR = R * band.radius * contraction;
+        const cometDirection = band.cometRate < 0 ? -1 : 1;
+        const cometBase = this._bandAngles[i] + this._bandCometPhase[i];
+        for (let comet = 0; comet < band.cometCount; comet++) {
+          const headAngle = cometBase + (comet / band.cometCount) * TAU;
+          const trailAngle = headAngle - cometDirection * trail * (
+            0.032 + 0.008 * Math.abs(Math.sin(this._bandWavePhase1[i] + comet))
+          );
+          const x = Math.cos(trailAngle) * bandR, y = Math.sin(trailAngle) * bandR;
+          ctx.moveTo(x + dotR, y);
+          ctx.arc(x, y, dotR, 0, TAU);
+        }
+      }
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+
+    // The primary radar is always live. Thinking eases in a second sweep in
+    // the opposite direction; both clocks are velocity-modulated in _loop.
+    strokeArcSegments(
       ctx,
       R * 0.78,
-      THINKING_SCANNER_SEGMENTS,
+      SCANNER_SEGMENTS,
       Math.max(2, R * 0.024),
       this._scannerPhase,
       PAL.B,
-      0.9 * this._thinkingMix,
-      10 * this._thinkingMix
+      0.62 + bandBoost * 0.35,
+      8 + this._thinkingMix * 4
+    );
+    strokeArcSegments(
+      ctx,
+      R * 0.75,
+      SCANNER_SEGMENTS,
+      Math.max(1.5, R * 0.018),
+      this._counterScannerPhase,
+      PAL.O,
+      0.72 * this._thinkingMix,
+      8 * this._thinkingMix
     );
 
     drawHudRing(ctx, coreR * 1.52, Math.max(1, R * 0.009), PAL.Hl, 0.78, 4);
+    drawHudPoly(ctx, coreR * 1.38, 6, this._reticlePhase, Math.max(1, R * 0.008), PAL.B, 0.72);
+    const coreBrightness = Math.max(0.7, Math.min(
+      1,
+      0.86 + slowPlasma * 0.045 + microPlasma * 0.065 + speakingPulse * 0.12
+    ));
     ctx.shadowColor = PAL.GLOW;
-    ctx.shadowBlur = R * (0.1 + idleMix * (0.018 + idleWave * 0.012) + speakingPulse * 0.28);
-    ctx.fillStyle = PAL.B + (0.9 + speakingPulse * 0.1) + ")";
-    ctx.beginPath(); ctx.arc(0, 0, coreR, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = R * (
+      0.1 +
+      (slowPlasma + 1) * 0.018 +
+      Math.abs(microPlasma) * 0.025 +
+      speakingPulse * 0.4
+    );
+    ctx.fillStyle = PAL.B + coreBrightness + ")";
+    ctx.beginPath(); ctx.arc(0, 0, coreR, 0, TAU); ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = PAL.B + "1)";
-    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.76, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = PAL.Hl + "0.96)";
-    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = PAL.Hl + "1)";
-    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.24, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAL.B + Math.min(1, coreBrightness + 0.08) + ")";
+    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.76, 0, TAU); ctx.fill();
+    ctx.fillStyle = PAL.Hl + Math.min(1, 0.9 + microPlasma * 0.055 + speakingPulse * 0.08) + ")";
+    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.5, 0, TAU); ctx.fill();
+    ctx.fillStyle = PAL.Hl + Math.min(1, 0.96 + microPlasma * 0.03 + speakingPulse * 0.04) + ")";
+    ctx.beginPath(); ctx.arc(0, 0, coreR * 0.24, 0, TAU); ctx.fill();
 
     // ---- (5) front-hemisphere rings + particles (drawn last → in front) ----
     for (const cfg of this._rings) drawRing(cfg, true);
@@ -450,13 +697,16 @@ export class VoiceOrb {
     drawHudArcs(ctx, base * 0.98, OUTER_BEZEL_SEGMENTS, 2, t * 0.09 * spin, PAL.O, 0.4 + amp * 0.45, 6 + amp * 10);
     drawHudTicks(ctx, base * 0.9, 42, base * 0.035 * (1 + amp * 0.6), -t * 0.05 * spin, PAL.D, 0.4 + amp * 0.45);
 
-    // sound-wave ripples on speech peaks
-    for (let i = 0; i < this._ripples.length; i++) {
-      const rp = this._ripples[i], age = t - rp.t0, life = 1 - age / 1.1;
+    // Sonar, state-shockwave, and speaking ripples ease outward from the core.
+    for (let i = 0; i < this._rippleCount; i++) {
+      const rp = this._ripples[i], age = t - rp.t0;
+      const progress = Math.max(0, Math.min(1, age / 1.1));
+      const life = 1 - progress;
       if (life <= 0) continue;
+      const expansion = 1 - (1 - progress) * (1 - progress);
       ctx.lineWidth = 1.8 * life;
       ctx.strokeStyle = PAL.O + (0.42 * life * rp.e) + ")";
-      ctx.beginPath(); ctx.arc(0, 0, R * 0.5 + age * base * 0.55, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.18 + expansion * base * 0.62, 0, TAU); ctx.stroke();
     }
     ctx.restore();
 

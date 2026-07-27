@@ -118,3 +118,17 @@ always-on flat scanner was removed in favour of the thinking-only scanner,
 which matches the spec's state table better than keeping both. Proof re-run:
 node --check clean, 11 suites + 19/19 eval green. Verified visually in the
 app. PASSED — one round.
+
+### Round 3 — Codex resume: continuous-motion pass (voiceOrb.js only)
+All 8 Rev-3 motion systems: velocity-wave engines per band (band 2 reverses),
+morphing segment endpoints, comet heads with trails, always-on radar +
+thinking counter-sweep, 72-tick marquee, rotating hex reticle + plasma core,
+idle sonar pings, eased state modulation + shockwaves. Ripples moved to a
+fixed pool; central stroke calls DOWN vs Rev 2 (~89 vs ~116).
+
+### Claude's verdict
+Diff audited: all pools/typed arrays allocated in the constructor, hot loop
+allocation-free; public API surface unchanged; node --check clean; 11 suites
++ 19/19 eval green. Motion empirically confirmed: orb-region hashes of three
+frames 1.5 s apart all differ. Awaiting user verdict on the look before
+commit.
