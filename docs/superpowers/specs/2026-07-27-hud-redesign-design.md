@@ -245,3 +245,41 @@ Replace the soft wobbling sphere at the centre of `voiceOrb.js` with:
 - Draw cost must not exceed the current orb's (no per-frame allocations in
   the hot loop; reuse the existing ring/arc/ticks helpers).
 - The DOM "ARTEMIS" wordmark overlay is untouched.
+
+## Revision 3 — 2026-07-27: continuous-motion pass on the reactor
+
+User verdict on the first reactor build: structure right, motion boring —
+"I don't want static, I want movement, tech, animation." Constant-velocity
+rotation reads as a clock. The fix is NOT dwell-and-snap (explicitly
+rejected); it is continuous, layered, technical motion where every layer
+moves all the time but nothing moves uniformly:
+
+1. **Velocity waves, not constant spin.** Each band's angular velocity
+   oscillates (sum of 2 incommensurate sines per band, different
+   frequencies/phases per band); at least one band smoothly reverses
+   direction when its velocity wave crosses zero. Always moving, never
+   uniform.
+2. **Morphing segments.** Band segment start/end angles breathe — gaps
+   open and close slowly — so the rings visibly reshape while rotating.
+3. **Comet dots.** 2–3 bright points per band travelling along their band
+   faster than the band rotates, with short fading trails.
+4. **Always-on radar sweep.** A dashed scanner arc sweeps continuously in
+   idle; a second counter-sweep joins it when thinking. (Reverts Rev-2's
+   thinking-only scanner: constant sweep is wanted.)
+5. **Tick marquee.** A brightness wave travels around the 72-tick scale
+   continuously.
+6. **Rotating inner reticle** around the core (slow, opposite the nearest
+   band), and the core itself gets plasma flicker: layered slow breathe +
+   fast micro-shimmer in brightness and radius.
+7. **Idle sonar ping.** Every ~4–6 s an expanding ripple ring launches from
+   the core (reusing the existing ripple system) so the scene pulses even
+   in silence.
+8. **State modulation on top:** listening multiplies band velocity and
+   brightness and tightens radii; thinking doubles sweep speed and speeds
+   the segment morphing; speaking launches ripples on amp peaks and pulses
+   the core hard; every state change fires one shockwave ripple.
+
+Same hard constraints as Revision 2: API surface, PAL-only colours, no
+per-frame allocations (velocity/morph phases are per-band scalars),
+reduced-motion renders one static frame, outer 3D rings/satellites and
+wordmark untouched.
