@@ -445,6 +445,12 @@ const MAX_TOOL_ROUNDS = 8;
 const TONE = {
   friendly: "\n\nTone: warm, encouraging, supportive. Be kind and patient.",
   balanced: "",
+  casual:
+    "\n\nTone: relaxed and conversational, like a close friend. Use contractions " +
+    "and everyday words, drop the formality entirely, keep it short and easy.",
+  funny:
+    "\n\nTone: witty and playful. Slip in a light joke, a wry aside, or a gentle " +
+    "roast when it fits — but land the useful answer first, humor second.",
   blunt:
     "\n\nTone: blunt, direct, brutally honest. Skip pleasantries and hedging. " +
     "If an idea is bad, say so plainly and explain why. Lead with the truth.",
