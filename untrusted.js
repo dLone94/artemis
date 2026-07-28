@@ -21,9 +21,47 @@ export function wrapUntrusted(tag, attrs, body) {
   return `<${tag}${safeAttrs ? " " + safeAttrs : ""}>\n` + stripSentinels(body) + `\n</${tag}>`;
 }
 
+// Mail/message-controlled text gets a stricter taint: once read, a generic
+// browser or network request could turn an injected header into an exfiltration
+// query before the existing client-open guard gets a chance to drop it.
+export const MAIL_UNTRUSTED_SKILLS = new Set([
+  "check_email",
+  "check_followups",
+  "daily_brief",
+  "read_email",
+  "check_messages"
+]);
+
 // Skills whose output feeds text controlled by somebody outside this process
 // into model context. A turn that ran fetch_page or one of these is "tainted".
-export const UNTRUSTED_SKILLS = new Set(["check_email", "read_email", "check_messages", "research_investment"]);
+export const UNTRUSTED_SKILLS = new Set([
+  ...MAIL_UNTRUSTED_SKILLS,
+  "research_investment"
+]);
+
+const MAIL_TAINT_BLOCKED_TOOLS = new Set([
+  "web_search",
+  "fetch_page",
+  "web_research",
+  "research_investment",
+  "open_url",
+  "play_media"
+]);
+
+export function blockedAfterMailRead(toolName, mailUntrusted) {
+  return !!mailUntrusted && MAIL_TAINT_BLOCKED_TOOLS.has(toolName);
+}
+
+export function historyHasMailTaint(messages) {
+  return (Array.isArray(messages) ? messages : []).some(
+    (message) => message && message.role === "assistant" && message.mailUntrusted === true
+  );
+}
+
+export function mailSafeHistoryContent(content, mailUntrusted) {
+  if (!mailUntrusted) return String(content == null ? "" : content);
+  return "[Earlier assistant reply derived from untrusted mail/message data; details omitted from model history.]";
+}
 
 // Browser-open actions produced in a tainted turn are a prompt-injection
 // exfiltration risk (a poisoned page/email telling the model to open

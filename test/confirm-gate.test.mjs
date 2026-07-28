@@ -2,6 +2,7 @@
 // cannot execute without an explicit "yes". Run: node test/confirm-gate.test.mjs
 import assert from "node:assert";
 import { getSkill, createPending, getPending, dropPending, skillCtx } from "../skills.js";
+import { confirmationDecision } from "../public/confirmDecision.js";
 
 // send_message now opens WhatsApp for real, so the opener is stubbed — running
 // the test suite must never launch an app or put a message in front of a human.
@@ -59,6 +60,21 @@ async function confirmHandler(id, decision) {
 
   // 5) a non-consequential skill is never gated (auto-runs in the loop)
   assert.ok(!gatedSkill([{ name: "remember_note", input: { text: "x" } }]), "remember_note must not be gated");
+
+  // 6) a refusal always wins over mixed/contradictory speech
+  for (const text of [
+    "yes — actually no",
+    "okay, don't",
+    "okay, don’t",
+    "sure, cancel",
+    "yes, not now",
+    "okay, but not yet",
+    "sure, actually not"
+  ]) {
+    assert.equal(confirmationDecision(text), "no", `"${text}" must never confirm`);
+  }
+  assert.equal(confirmationDecision("open it"), "yes");
+  assert.equal(confirmationDecision("maybe"), null);
 
   console.log("PASS ✅  confirm-gate: a 'send' cannot fire without an explicit yes (0 calls on no/expired, 1 on yes)");
 })().catch((e) => {

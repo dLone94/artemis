@@ -58,6 +58,15 @@ const META = {
     confirm: "always",
     forceFamilies: ["email_delete"]
   },
+  check_followups: { family: "followups", effect: "read", requires: "gmail" },
+  nudge_email:     {
+    family: "followups",
+    effect: "client",
+    requires: "gmail",
+    external: true,
+    confirm: "always",
+    forceFamilies: ["followups_nudge"]
+  },
   check_messages:  { family: "messages", effect: "read" },
   research_investment: { family: "research", effect: "read", requires: "search" },
   set_reminder:    { family: "reminder", effect: "mutate" },
@@ -79,6 +88,8 @@ export const ACTIONABLE_FAMILIES = new Set([
   "media",
   "email",
   "email_delete",
+  "followups",
+  "followups_nudge",
   "messages",
   "reminder",
   "memory",
@@ -89,6 +100,7 @@ export const ACTIONABLE_FAMILIES = new Set([
 
 const EMAIL_LIST_POSITION =
   String.raw`(?:\d+|numbers?\s+(?:one|two|three|four|five|six|seven|eight|nine|ten)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last)`;
+const FOLLOWUP_NOUN = String.raw`follow(?:[ -]?up)s?`;
 // A list position must NOT be required here: "delete the unread emails" has
 // none, and requiring one silently routed every such request to the read-only
 // email family — she'd re-read the inbox forever instead of deleting. The
@@ -102,9 +114,26 @@ const EMAIL_DELETE_PATTERN = new RegExp(
     // "delete number 2" / "trash the first one" — the follow-up after a
     // listing, where nobody repeats the word "email". The lookahead keeps
     // other deletable nouns (reminders, contacts, notes) out of this family.
-    String.raw`\b(?:delete|trash)\b(?![^.?!]{0,30}\b(?:reminders?|contacts?|notes?|alarms?|messages?|files?|history)\b)[^.?!]{0,30}\b${EMAIL_LIST_POSITION}\b(?:\s+one(?:s)?)?` +
+    String.raw`\b(?:delete|trash)\b(?![^.?!]{0,80}\b(?:reminders?|contacts?|notes?|alarms?|messages?|files?|history|${FOLLOWUP_NOUN}|nudges?|threads?)\b)[^.?!]{0,30}\b${EMAIL_LIST_POSITION}\b(?:\s+one(?:s)?)?` +
     "|" +
     String.raw`\bmove\b[^.?!]{0,60}\b(?:e-?mails?|mail)\b[^.?!]{0,60}\b(?:to\s+)?trash\b`,
+  "i"
+);
+
+const FOLLOWUPS_NUDGE_PATTERN = new RegExp(
+  String.raw`\b(?:nudge|chase)\b(?=[^.?!]{0,60}\b(?:${FOLLOWUP_NOUN}|threads?|items?|${EMAIL_LIST_POSITION})\b)[^.?!]{0,80}`,
+  "i"
+);
+const FOLLOWUPS_READ_PATTERN = new RegExp(
+  String.raw`\b(?:any|check|show|list|find)\b[^.?!]{0,40}\b${FOLLOWUP_NOUN}\b` +
+    "|" +
+    String.raw`\bwho\s+owes?\s+me\s+(?:a\s+)?repl(?:y|ies)\b` +
+    "|" +
+    String.raw`\b(?:didn['’]?t|did\s+not|did\s+anyone\s+not)\b[^.?!]{0,35}\b(?:answer|reply)\b` +
+    "|" +
+    String.raw`\bwaiting\s+on\s+(?:a\s+)?repl(?:y|ies)\b` +
+    "|" +
+    String.raw`^\s*${FOLLOWUP_NOUN}\s*[?!.]*$`,
   "i"
 );
 
@@ -125,6 +154,10 @@ const FAMILY_PATTERNS = {
   // Deletion gets a narrower force route than ordinary email reads. It must
   // include a spoken list position; query-shaped "delete mail from X" stays out.
   email_delete: EMAIL_DELETE_PATTERN,
+  // Keep consequential nudges out of the read route, and keep both after
+  // explicit email deletion so "delete follow-up email number 1" stays delete.
+  followups_nudge: FOLLOWUPS_NUDGE_PATTERN,
+  followups: FOLLOWUPS_READ_PATTERN,
   email:    /\b(e-?mails?|inbox|unread|my\s+mail|check\s+my\s+mail)\b/i,
   reminder: /\b(remind\s+me|set\s+a\s+reminder|cancel\s+(the|my)\s+reminder|my\s+reminders|wake\s+me)\b/i,
   memory:   /\b(remember\s+that|note\s+that|make\s+a\s+note|my\s+notes|what\s+did\s+i\s+(save|note))\b/i,
@@ -143,7 +176,9 @@ const PRONOUN_ONLY_RE =
 // edge: "don't open anything" contains "open". An explicitly negated action is
 // conversation, and forcing a tool there would be acting against instruction.
 const NEGATED_ACTION_RE =
-  /\b(don'?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|send|text|message|remind|remember|check|save|add|cancel|delete|trash|move)\w*\b/i;
+  /\b(don['’]?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|send|text|message|remind|remember|check|save|add|cancel|delete|trash|move|nudge|chase|follow(?:[ -]?up))\w*\b/i;
+const NEGATED_FOLLOWUP_ACTION_RE =
+  /\b(?:don['’]?t|do\s+not|never|without|no\s+need(?:\s+for\s+you)?\s+to|i(?:['’]d|\s+would)?\s+rather\s+not|i(?:['’]m|\s+am)\s+not\s+asking\s+you\s+to)\b[^.?!;]{0,80}\b(?:nudge|chase|follow(?:[ -]?up))\w*\b/i;
 
 function capOk(entry, caps) {
   return !entry.requires || !!caps[entry.requires];
@@ -319,7 +354,9 @@ function historyHasReferent(history = []) {
 export function classifyIntent(text, caps = {}, history = []) {
   const s = String(text || "").trim();
   if (!s) return { intent: "chat", family: null, expected: [], reason: "empty" };
-  if (NEGATED_ACTION_RE.test(s)) return { intent: "chat", family: null, expected: [], reason: "action is negated" };
+  if (NEGATED_ACTION_RE.test(s) || NEGATED_FOLLOWUP_ACTION_RE.test(s)) {
+    return { intent: "chat", family: null, expected: [], reason: "action is negated" };
+  }
 
   const tools = availableTools(caps);
   const families = new Set(tools.flatMap((t) => t.forceFamilies));

@@ -49,7 +49,7 @@ Copy `.env.example` to `.env`. Nothing is required to boot, but each key unlocks
 | `TAVILY_API_KEY` | Live web search (needed for news, weather, prices). |
 | `DEEPGRAM_API_KEY` | Speech-to-text + text-to-speech (incl. live streaming transcript). |
 | `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` | Optional premium voices (free 10k chars/mo). |
-| `GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN` | Gmail read + draft (see below). |
+| `GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN` | Gmail read + recoverable Trash (see below). |
 | `ASSISTANT_USER_NAME` | How she addresses you (default: “sir”). |
 | `STRIPE_SECRET_KEY` | Optional revenue-celebration confetti on real payments. |
 
@@ -59,7 +59,11 @@ Draco), free Microsoft Edge neural (Sonia/Libby/Ryan — most human), and Eleven
 
 ## Gmail (optional)
 
-Read + draft only — **she can never send email**. One-time setup:
+Artemis implements Gmail read + recoverable Trash and no Gmail draft/send
+endpoint. Follow-up nudges only open a browser compose that you review and send.
+The required Google `gmail.modify` OAuth grant is broader than those implemented
+operations and technically authorizes sending, so protect the refresh token.
+One-time setup:
 
 1. Google Cloud Console → **Google Auth Platform**: create an OAuth client, type
    **Desktop app**; set **Publishing status → In production** (so the token never expires).

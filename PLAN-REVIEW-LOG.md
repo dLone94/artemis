@@ -180,3 +180,16 @@ generation-tracked follow-up loop, dock toggle, pure-logic suite.
 wakeLocal diff verified minimal/additive; matcher whole-utterance only;
 follow-up loop guards (wake/hidden/busy/toggle/generation) traced; 16
 suites + 19/19 eval green on my re-run. PASSED — one round.
+
+### Round 8 — Codex review-then-build: follow-up tracker + nudge_email
+Codex's pre-build audit corrected my spec on real issues: gmail.modify
+technically permits send (boundary = no send/draft code path, test-enforced),
+compose-URL exfiltration closed (model supplies only list+number; recipient
+from strict headers only, fail-closed parsing), /api/confirm previously
+DROPPED client actions (fixed narrowly), routing split followups vs
+followups_nudge below email_delete priority.
+
+### Claude's verdict
+Re-ran proofs: 16 suites + 19/19 eval. Spot-checks: no send/draft endpoint
+(the 2 grep hits are comments/negative assertions), tainted-open guard holds,
+confirm flow passes clientActions through dropTaintedOpens. PASSED.

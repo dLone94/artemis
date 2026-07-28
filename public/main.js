@@ -9,6 +9,7 @@ import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
 import { PAL, prefersReducedMotion } from "./orbShared.js";
 import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand, activeWakeProfile } from "./wakeLocal.js";
+import { confirmationDecision } from "./confirmDecision.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -135,6 +136,27 @@ function showOpenPill(url, label) {
   openPill = b;
   setLiveStatus("Pop-up blocked — tap Open. (Allow pop-ups for this site and I'll open tabs myself.)");
   setTimeout(() => { if (openPill === b) { b.remove(); openPill = null; } }, 25000);
+}
+
+// One consumer for browser actions, whether they came from a normal tool turn
+// or from the confirmation endpoint after an explicitly approved nudge.
+function applyClientActions(actions) {
+  if (!Array.isArray(actions)) return;
+  for (const action of actions) {
+    if (!action) continue;
+    if (action.type === "panel" && action.card) {
+      hud("context", action.card);
+      continue;
+    }
+    if (action.type === "open" && action.url) {
+      const opened = openUrl(action.url, action.label);
+      hud("log", "action", (opened ? "open " : "ready to open ") + (action.label || action.url));
+      hud("context", {
+        title: opened ? "OPENED" : "READY TO OPEN",
+        links: [{ title: action.label || action.url, url: action.url }]
+      });
+    }
+  }
 }
 
 function addMsg(role, text, sources) {
@@ -359,7 +381,12 @@ function restoreConversation() {
     const arr = JSON.parse(localStorage.getItem(CONV_KEY) || "[]");
     if (!Array.isArray(arr)) return;
     arr.forEach((m) => {
-      conversation.push({ role: m.role, content: m.content });
+      conversation.push({
+        role: m.role,
+        content: m.content,
+        sources: m.sources,
+        mailUntrusted: m.role === "assistant" && m.mailUntrusted === true
+      });
       addMsg(m.role === "user" ? "user" : "artemis", m.content, m.sources);
     });
     // hand the last few turns to the cockpit so its command log isn't blank on
@@ -424,14 +451,13 @@ function cancelPendingConfirmation() {
 
 function handleConfirmIfPending(text) {
   if (!pendingConfirm) return false;
-  const t = (text || "").toLowerCase().trim();
   // Repeating the pending action's verb IS consent: replying "delete them" to
   // "shall I move these to trash?" previously counted as ambiguous, cancelled
   // the confirmation, and re-ran the command — an infinite loop from the
   // user's side.
-  const yes = /\b(yes|yeah|yep|yup|sure|confirm|send it|do it|do that|go ahead|go for it|sounds good|please do|affirmative|correct|okay|ok)\b/.test(t) ||
-    /\b(delete|trash|send|remove)\b.{0,24}\b(it|them|those|these|all|everything)\b/.test(t);
-  const no = /\b(no|nope|nah|cancel|stop|don'?t|do not|never ?mind|abort|negative)\b/.test(t);
+  const decision = confirmationDecision(text);
+  const yes = decision === "yes";
+  const no = decision === "no";
   const pa = pendingConfirm;
   pendingConfirm = null;
   if (!yes && !no) {
@@ -474,18 +500,27 @@ function handleConfirmIfPending(text) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirmId: pa.confirmId, decision: yes ? "yes" : "no" })
   })
-    .then((r) => r.json())
+    .then(async (r) => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || "Confirm failed.");
+      return data;
+    })
     .then((d) => {
       const reply = d.reply || (yes ? "Done." : "Cancelled.");
       addMsg("artemis", reply);
       conversation.push({ role: "assistant", content: reply });
       saveConversation();
+      applyClientActions(d.clientActions);
       setLiveStatus("");
       speak(reply);
     })
     .catch(() => {
       setLiveStatus("Confirm failed.");
-      afterSpeak();
+      const reply = "I couldn't verify that action completed.";
+      addMsg("artemis", reply);
+      conversation.push({ role: "assistant", content: reply });
+      saveConversation();
+      speak(reply);
     })
     .finally(() => { busy = false; });
   return true;
@@ -706,6 +741,7 @@ async function ask(text) {
   let pendingAction = null;
   let clientActions = null;
   let toolsUsed = null;
+  let mailUntrusted = false;
   const t0 = performance.now(); // real time-to-first-word for the HUD
   // The server tells us what kind of turn this is (intent_pending) before it
   // invokes the model. Until that arrives the class is unknown — and unknown
@@ -756,6 +792,10 @@ async function ask(text) {
         } else if (event === "tool") {
           hud("tool", data);
           orb.toolEvent(data);
+        } else if (event === "mail_taint") {
+          // Monotonic within the turn: provenance must survive even if the
+          // stream drops before terminal metadata.
+          mailUntrusted = true;
         } else if (event === "token") {
           if (!gotToken) {
             gotToken = true;
@@ -779,6 +819,7 @@ async function ask(text) {
           pendingAction = data.pendingAction || null;
           clientActions = data.clientActions || null;
           toolsUsed = data.toolsUsed || null;
+          mailUntrusted = mailUntrusted || data.mailUntrusted === true;
         } else if (event === "error") {
           setLiveStatus(data.error || "Chat failed.");
           hud("state", "error");
@@ -796,7 +837,12 @@ async function ask(text) {
     const replyText = out.text();
     if (replyText) {
       out.setSources(finalSources);
-      conversation.push({ role: "assistant", content: replyText, sources: finalSources });
+      conversation.push({
+        role: "assistant",
+        content: replyText,
+        sources: finalSources,
+        mailUntrusted
+      });
       saveConversation();
       flushTts();
       hud("log", "artemis", replyText.length > 120 ? replyText.slice(0, 117) + "…" : replyText);
@@ -812,20 +858,7 @@ async function ask(text) {
     }
     // execute anything Artemis chose to open (maps location, a site, etc.)
     // + render structured tool panels (e.g. the inbox) as context cards
-    if (clientActions && clientActions.length) {
-      for (const a of clientActions) {
-        if (!a) continue;
-        if (a.type === "panel" && a.card) {
-          hud("context", a.card);
-          continue;
-        }
-        if (a.url) {
-          openUrl(a.url, a.label);
-          hud("log", "action", "open " + (a.label || a.url));
-          hud("context", { title: "OPENED", links: [{ title: a.label || a.url, url: a.url }] });
-        }
-      }
-    }
+    applyClientActions(clientActions);
     // pump may have drained while the stream was still marked busy. Defer the
     // terminal decision until finally clears busy so a pending-confirm reply
     // opens its follow-up window and a bare "yes" is accepted.
