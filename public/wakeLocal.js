@@ -51,7 +51,9 @@ let noiseFloor = 0.004;
 // command-capture state
 let capBuf = [], capLen = 0, capStart = 0, capHeard = false, capQuiet = 0;
 let capResolve = null, capSafety = 0, capOnLevel = null;
-const CAP_SILENCE_MS = 1100;  // this much quiet after speech = you finished
+const CAP_SILENCE_MS = 750;   // quiet-after-speech = done. 1100ms was the single
+                              // largest chunk of dead air in every exchange; 750 still
+                              // survives a mid-sentence breath
 const CAP_NOSPEECH_MS = 4500; // never spoke → give up
 const CAP_MAX_MS = 12000;     // hard cap per command
 const PREROLL_MS = 1200;      // audio kept from BEFORE detection fired
