@@ -44,6 +44,14 @@ const META = {
   fetch_page:      { family: "web",      effect: "read",   requires: "search" },
   web_research:    { family: "web",      effect: "read",   requires: "search" },
   daily_brief:     { family: "briefing", effect: "read" },
+  money_school:    { family: "school",   effect: "mutation" },
+  money_map:       { family: "map",      effect: "mutation" },
+  update_money_map: {
+    family: "map",
+    effect: "mutation",
+    confirm: "always",
+    forceFamilies: ["map_update"]
+  },
   open_url:        { family: "navigate", effect: "client" },
   play_media:      { family: "media",    effect: "client" },
   check_email:     { family: "email",    effect: "read",   requires: "gmail",
@@ -84,6 +92,9 @@ const META = {
 // every "what do you think about…" would break normal talking.
 export const ACTIONABLE_FAMILIES = new Set([
   "briefing",
+  "school",
+  "map",
+  "map_update",
   "navigate",
   "media",
   "email",
@@ -136,12 +147,24 @@ const FOLLOWUPS_READ_PATTERN = new RegExp(
     String.raw`^\s*${FOLLOWUP_NOUN}\s*[?!.]*$`,
   "i"
 );
+const MONEY_SCHOOL_PATTERN = new RegExp(
+  String.raw`\b(?:teach\s+me\s+(?:about\s+)?investing|money\s+school|money\s+lesson|next\s+(?:money\s+)?lesson|repeat\s+(?:the\s+)?(?:money\s+)?lesson)\b` +
+    "|" +
+    String.raw`(?:^|\b)what(?:['’]s|\s+is)\s+(?:an?\s+)?(?:bond|share|stock|pooled\s+fund|exchange-traded\s+fund|index\s+fund|diversification|compounding|currency\s+risk)\b` +
+    String.raw`(?![^.?!]{0,35}\b(?:price|yield|rate|worth|trading|today|now|current|latest)\b)`,
+  "i"
+);
 
 // Phrases that map a user's words onto a family. Recall-biased: it is much worse
 // to miss a real request (she narrates and does nothing — the bug) than to force
 // a tool on a borderline turn (she does the thing).
 const FAMILY_PATTERNS = {
   briefing: /\b(?:my\s+(?:morning\s+)?brief|morning\s+brief|what(?:['’]s|\s+is)\s+my\s+day)\b/i,
+  map_update:
+    /\b(?:actually|update|change|correct|revise)\b[^.?!]{0,70}\b(?:money\s+map|income|contract\s+months?|family\s+(?:needs?|costs?)|monthly\s+needs?|savings?|loss\s+(?:cap|limit)|could\s+lose|horizon|years?\s+until|risk\s+comfort|sleep\s+test)\b|\b(?:income|contract\s+months?|family\s+(?:needs?|costs?)|monthly\s+needs?|savings?|loss\s+(?:cap|limit)|horizon|risk\s+comfort|sleep\s+test)\b[^.?!]{0,50}\b(?:has\s+changed|is\s+actually|should\s+be)\b/i,
+  school: MONEY_SCHOOL_PATTERN,
+  map:
+    /\b(?:my\s+money\s+map|money\s+map|(?:show|build|make|give)\s+me\s+(?:my\s+)?(?:money\s+map|investment\s+plan)|build\s+my\s+(?:money\s+map|investment\s+plan|plan)|my\s+investment\s+plan)\b|^\s*(?:an?\s+)?investment\s+plan\s*[?!.]*$/i,
   navigate: /\b(open|pull\s+up|show\s+me|take\s+me\s+to|navigate\s+to|launch|bring\s+up|go\s+to|visit)\b/i,
   media:    /\b(play|put\s+on|queue\s+up|youtube|spotify|some\s+music|a\s+song|the\s+video)\b/i,
   messages: /\b(any(?:\s+(?:new|unread))?\s+(?:whatsapp\s+)?messages?|unread\s+(?:whatsapp\s+)?messages?|new\s+whatsapp\s+messages?|check\s+(?:my\s+)?whatsapp|any\s+whatsapp|did\s+anyone\s+message\s+me)\b/i,
@@ -176,7 +199,7 @@ const PRONOUN_ONLY_RE =
 // edge: "don't open anything" contains "open". An explicitly negated action is
 // conversation, and forcing a tool there would be acting against instruction.
 const NEGATED_ACTION_RE =
-  /\b(don['’]?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|send|text|message|remind|remember|check|save|add|cancel|delete|trash|move|nudge|chase|follow(?:[ -]?up))\w*\b/i;
+  /\b(don['’]?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|send|text|message|remind|remember|check|save|add|cancel|delete|trash|move|nudge|chase|follow(?:[ -]?up)|teach|build|update|change|correct)\w*\b/i;
 const NEGATED_FOLLOWUP_ACTION_RE =
   /\b(?:don['’]?t|do\s+not|never|without|no\s+need(?:\s+for\s+you)?\s+to|i(?:['’]d|\s+would)?\s+rather\s+not|i(?:['’]m|\s+am)\s+not\s+asking\s+you\s+to)\b[^.?!;]{0,80}\b(?:nudge|chase|follow(?:[ -]?up))\w*\b/i;
 

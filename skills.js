@@ -21,6 +21,7 @@ import { stripSentinels, wrapUntrusted } from "./untrusted.js";
 import { normalizePhone, composeUrl, openLocally, whatsappInstalled } from "./whatsapp.js";
 import { fxRate, worldBankIndicator, usYieldCurve, formatFigure } from "./finance.js";
 import { unreadReport } from "./macMessages.js";
+import { MONEY_SCHOOL_CURRICULUM } from "./moneySchool.js";
 
 // Overridable so tests get their own scratch directory instead of appending to
 // the real reminder/note/action history.
@@ -714,6 +715,488 @@ function localDateKey(now) {
   return `${year}-${month}-${day}`;
 }
 
+const MONEY_ADVISOR_LINE =
+  "I'm a research assistant, not a licensed financial advisor. " +
+  "This is education and planning, not a promise of returns or a recommendation to buy anything.";
+const MONEY_MAP_CLOSE = "Nothing here moves money — it's a plan we refine.";
+
+function moneyIsoNow(ctx = skillCtx) {
+  const supplied = typeof ctx.now === "function" ? ctx.now() : Date.now();
+  const date = supplied instanceof Date ? supplied : new Date(supplied);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
+}
+
+function normalizeSchoolProgress(stored) {
+  const source = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  const lesson = Number.isInteger(source.lesson) && source.lesson >= 1 &&
+    source.lesson <= MONEY_SCHOOL_CURRICULUM.length
+    ? source.lesson
+    : 1;
+  const seen = new Set();
+  const completedAt = [];
+  for (const entry of Array.isArray(source.completedAt) ? source.completedAt : []) {
+    if (
+      !entry || !Number.isInteger(entry.lesson) || entry.lesson < 1 ||
+      entry.lesson > MONEY_SCHOOL_CURRICULUM.length || seen.has(entry.lesson) ||
+      typeof entry.at !== "string" || !Number.isFinite(new Date(entry.at).getTime())
+    ) {
+      continue;
+    }
+    seen.add(entry.lesson);
+    completedAt.push({ lesson: entry.lesson, at: new Date(entry.at).toISOString() });
+  }
+  completedAt.sort((a, b) => a.lesson - b.lesson);
+  return { lesson, completedAt };
+}
+
+function schoolCompletion(progress) {
+  const summary = `${MONEY_ADVISOR_LINE} You have completed all twelve Money School lessons.`;
+  return {
+    ok: true,
+    complete: true,
+    progress,
+    summary,
+    content:
+      `${MONEY_ADVISOR_LINE}\n\n` +
+      "You have finished the twelve-part foundation. The next useful step is your Money Map, " +
+      "where we turn your own ballpark numbers into safety boundaries rather than guessing at investments.\n\n" +
+      MONEY_MAP_CLOSE
+  };
+}
+
+function schoolLessonResult(lesson, progress) {
+  return {
+    ok: true,
+    lesson,
+    progress,
+    summary: `${MONEY_ADVISOR_LINE} Money School lesson ${lesson.id}: ${lesson.title}.`,
+    content:
+      `${MONEY_ADVISOR_LINE}\n\n` +
+      `Money School lesson ${lesson.id}: ${lesson.title}\n` +
+      lesson.beats.join("\n") +
+      `\nEnd with this one check question: ${lesson.check}\n` +
+      "Teach this conversationally in Artemis's voice, one beat at a time if that feels natural. " +
+      "Do not add products, market figures, forecasts, or return promises."
+  };
+}
+
+const MONEY_MAP_FIELDS = [
+  "contract_monthly_income",
+  "contract_months_per_year",
+  "family_monthly_needs",
+  "liquid_savings",
+  "max_permanent_loss",
+  "horizon_years",
+  "risk_comfort"
+];
+const MONEY_MAP_FIELD_SET = new Set(MONEY_MAP_FIELDS);
+const MONEY_FIELDS = new Set([
+  "contract_monthly_income",
+  "family_monthly_needs",
+  "liquid_savings",
+  "max_permanent_loss"
+]);
+const MONEY_RISK_CHOICES = new Set(["sleep_normally", "worry", "want_out"]);
+const MAX_SAFE_MONEY_INPUT = Number.MAX_SAFE_INTEGER;
+const confirmedMoneyMapUpdates = new WeakMap();
+const MONEY_MAP_QUESTIONS = {
+  contract_monthly_income:
+    "During a paid ship-contract month, roughly how much comes in after tax and personal shipboard costs, in whole units, and which three-letter currency should this map use?",
+  contract_months_per_year:
+    "In a typical year, how many whole months are you paid under ship contracts, from zero through twelve?",
+  family_monthly_needs:
+    "In that same planning currency, what whole monthly amount covers the family's usual needs plus averaged irregular obligations?",
+  liquid_savings:
+    "In that same currency, how much liquid, uncommitted savings is available now, excluding property, pensions, and locked holdings?",
+  max_permanent_loss:
+    "What total whole amount could the optional risky slice lose permanently without harming the family?",
+  horizon_years:
+    "How many whole years are there until your goal of spending more time at home, from one through eighty?",
+  risk_comfort:
+    "If the optional risky slice fell by half, would you sleep normally, worry but stay with the plan, or want out?"
+};
+
+function cleanRawMoneyAnswer(value) {
+  const cleaned = stripSentinels(value)
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+  return cleaned;
+}
+
+function normalizeMoneyMap(stored) {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    return { version: 1, revision: 0, currency: null, answers: {}, updatedAt: null };
+  }
+  const currency = /^[A-Z]{3}$/.test(String(stored.currency || "").toUpperCase())
+    ? String(stored.currency).toUpperCase()
+    : null;
+  const answers = {};
+  const sourceAnswers =
+    stored.answers && typeof stored.answers === "object" && !Array.isArray(stored.answers)
+      ? stored.answers
+      : {};
+  for (const field of MONEY_MAP_FIELDS) {
+    const entry = sourceAnswers[field];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const at = typeof entry.answeredAt === "string" &&
+      Number.isFinite(new Date(entry.answeredAt).getTime())
+      ? new Date(entry.answeredAt).toISOString()
+      : null;
+    if (!at) continue;
+    if (field === "risk_comfort") {
+      if (!MONEY_RISK_CHOICES.has(entry.value)) continue;
+      const raw = cleanRawMoneyAnswer(entry.raw);
+      if (!raw) continue;
+      answers[field] = {
+        raw,
+        value: entry.value,
+        answeredAt: at
+      };
+      continue;
+    }
+    const digits = String(entry.value || "");
+    if (!/^(0|[1-9]\d*)$/.test(digits)) continue;
+    const value = BigInt(digits);
+    if (value > BigInt(MAX_SAFE_MONEY_INPUT)) continue;
+    if (
+      (field === "contract_months_per_year" && value > 12n) ||
+      (field === "horizon_years" && (value < 1n || value > 80n)) ||
+      (field === "family_monthly_needs" && value < 1n)
+    ) {
+      continue;
+    }
+    const raw = cleanRawMoneyAnswer(entry.raw);
+    if (!raw) continue;
+    answers[field] = {
+      raw,
+      value: digits,
+      answeredAt: at
+    };
+  }
+  // Monetary answers are meaningful only after the first answer establishes a
+  // common planning currency.
+  if (!currency || !answers.contract_monthly_income) {
+    for (const field of MONEY_FIELDS) delete answers[field];
+  }
+  const revision = Number.isSafeInteger(stored.revision) && stored.revision >= 0
+    ? stored.revision
+    : Object.keys(answers).length;
+  const updatedAt = typeof stored.updatedAt === "string" &&
+    Number.isFinite(new Date(stored.updatedAt).getTime())
+    ? new Date(stored.updatedAt).toISOString()
+    : null;
+  return { version: 1, revision, currency, answers, updatedAt };
+}
+
+function nextMoneyMapField(store) {
+  return MONEY_MAP_FIELDS.find((field) => !store.answers[field]) || null;
+}
+
+function moneyMapFailure(summary, content = summary) {
+  return {
+    ok: false,
+    summary: `${MONEY_ADVISOR_LINE} ${summary}`,
+    content: `${MONEY_ADVISOR_LINE}\n\n${content}`
+  };
+}
+
+function moneyMapQuestion(store, field) {
+  const question = MONEY_MAP_QUESTIONS[field];
+  return {
+    ok: true,
+    nextField: field,
+    question,
+    progress: {
+      answered: Object.keys(store.answers).length,
+      total: MONEY_MAP_FIELDS.length
+    },
+    summary: `${MONEY_ADVISOR_LINE} ${question}`,
+    content:
+      `${MONEY_ADVISOR_LINE}\n\n${question}\n` +
+      "Ask only that one question. Do not add a product, forecast, return estimate, or second question."
+  };
+}
+
+function moneyAnswerValidation(params, store) {
+  const allowed = new Set([
+    "action",
+    "field",
+    "integer_value",
+    "currency",
+    "raw_answer",
+    "choice"
+  ]);
+  const extras = Object.keys(params || {}).filter((key) => !allowed.has(key));
+  if (extras.length) {
+    return { ok: false, message: `Unknown money-map argument: ${extras[0]}.` };
+  }
+  if (!params || params.action !== "answer") {
+    return { ok: false, message: "A Money Map answer must use the answer action." };
+  }
+  const field = params && params.field;
+  if (!MONEY_MAP_FIELD_SET.has(field)) {
+    return { ok: false, message: "Use one known Money Map answer field." };
+  }
+  const raw = typeof params.raw_answer === "string"
+    ? cleanRawMoneyAnswer(params.raw_answer)
+    : "";
+  if (!raw) {
+    return { ok: false, message: "Keep the user's original spoken answer in raw_answer." };
+  }
+  if (field === "risk_comfort") {
+    if (!MONEY_RISK_CHOICES.has(params.choice)) {
+      return {
+        ok: false,
+        message: "Risk comfort must be sleep_normally, worry, or want_out."
+      };
+    }
+    if (params.integer_value !== undefined || params.currency !== undefined) {
+      return { ok: false, message: "Risk comfort accepts a choice, not a numeric amount." };
+    }
+    return {
+      ok: true,
+      field,
+      entry: {
+        raw,
+        value: params.choice
+      }
+    };
+  }
+  if (params.choice !== undefined) {
+    return { ok: false, message: "Numeric Money Map answers do not accept a sleep-test choice." };
+  }
+  if (!Number.isSafeInteger(params.integer_value) || params.integer_value < 0) {
+    return { ok: false, message: "That answer must be a non-negative safe whole number." };
+  }
+  if (field === "contract_months_per_year" && params.integer_value > 12) {
+    return { ok: false, message: "Contract months must be a whole number from zero through twelve." };
+  }
+  if (field === "horizon_years" && (params.integer_value < 1 || params.integer_value > 80)) {
+    return { ok: false, message: "The horizon must be a whole number from one through eighty." };
+  }
+  if (field === "family_monthly_needs" && params.integer_value < 1) {
+    return { ok: false, message: "Family monthly needs must be at least one whole currency unit." };
+  }
+  if (field === "contract_monthly_income") {
+    if (!/^[A-Za-z]{3}$/.test(String(params.currency || ""))) {
+      return { ok: false, message: "The first answer needs one three-letter planning currency." };
+    }
+  } else if (params.currency !== undefined) {
+    if (!MONEY_FIELDS.has(field)) {
+      return { ok: false, message: "Only monetary answers accept a planning currency." };
+    }
+    if (!/^[A-Za-z]{3}$/.test(String(params.currency)) ||
+      String(params.currency).toUpperCase() !== store.currency) {
+      return { ok: false, message: `All map amounts must stay in ${store.currency}.` };
+    }
+  }
+  const digits = String(params.integer_value);
+  return {
+    ok: true,
+    field,
+    currency: field === "contract_monthly_income"
+      ? String(params.currency).toUpperCase()
+      : store.currency,
+    entry: {
+      raw,
+      value: digits
+    }
+  };
+}
+
+function deriveMoneyMap(store) {
+  if (!store || !store.currency || nextMoneyMapField(store)) return null;
+  try {
+    const value = (field) => BigInt(store.answers[field].value);
+    const contractMonthlyIncome = value("contract_monthly_income");
+    const contractMonthsPerYear = value("contract_months_per_year");
+    const familyMonthlyNeeds = value("family_monthly_needs");
+    const liquidSavings = value("liquid_savings");
+    const maxPermanentLoss = value("max_permanent_loss");
+    const annualIncome = contractMonthlyIncome * contractMonthsPerYear;
+    const annualNeeds = familyMonthlyNeeds * 12n;
+    const headroom = annualIncome > annualNeeds ? annualIncome - annualNeeds : 0n;
+    const emergencyTarget = familyMonthlyNeeds * 6n;
+    const emergencyFunded =
+      liquidSavings < emergencyTarget ? liquidSavings : emergencyTarget;
+    const emergencyGap =
+      emergencyTarget > liquidSavings ? emergencyTarget - liquidSavings : 0n;
+    const reserveExcess =
+      liquidSavings > emergencyTarget ? liquidSavings - emergencyTarget : 0n;
+    const headroomAfterGap = headroom > emergencyGap ? headroom - emergencyGap : 0n;
+    const postReservePool = reserveExcess + headroomAfterGap;
+    const poolFifth = postReservePool / 5n;
+    const satelliteCap =
+      maxPermanentLoss < poolFifth ? maxPermanentLoss : poolFifth;
+    const coreTarget = postReservePool - satelliteCap;
+    const progressPercent = emergencyTarget > 0n
+      ? Number((emergencyFunded * 100n) / emergencyTarget)
+      : 0;
+    return {
+      complete: true,
+      revision: store.revision,
+      currency: store.currency,
+      contractMonthlyIncome: contractMonthlyIncome.toString(),
+      contractMonthsPerYear: contractMonthsPerYear.toString(),
+      familyMonthlyNeeds: familyMonthlyNeeds.toString(),
+      liquidSavings: liquidSavings.toString(),
+      maxPermanentLoss: maxPermanentLoss.toString(),
+      horizonYears: store.answers.horizon_years.value,
+      riskComfort: store.answers.risk_comfort.value,
+      annualIncome: annualIncome.toString(),
+      annualNeeds: annualNeeds.toString(),
+      headroom: headroom.toString(),
+      emergencyTarget: emergencyTarget.toString(),
+      emergencyFunded: emergencyFunded.toString(),
+      emergencyGap: emergencyGap.toString(),
+      postReservePool: postReservePool.toString(),
+      satelliteCap: satelliteCap.toString(),
+      coreTarget: coreTarget.toString(),
+      progressPercent,
+      currentStage: emergencyGap > 0n ? 1 : 2
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function userMoney(currency, digits) {
+  return `${currency} ${BigInt(digits).toLocaleString("en-US")}`;
+}
+
+function mapRiskLine(choice) {
+  if (choice === "sleep_normally") {
+    return "Your sleep test says you could tolerate volatility, but it does not raise the loss cap.";
+  }
+  if (choice === "want_out") {
+    return "Your sleep test says a deep fall would make you want out, so the optional risky ceiling may sensibly remain unused.";
+  }
+  return "Your sleep test says a deep fall would worry you, so the optional risky ceiling is a boundary, not a target.";
+}
+
+function moneyMapPresentation(store) {
+  const map = deriveMoneyMap(store);
+  if (!map) {
+    return moneyMapFailure(
+      "I cannot calculate this map from the stored answers yet.",
+      "The stored Money Map is incomplete or malformed. Ask only the next missing interview question."
+    );
+  }
+  const current =
+    map.currentStage === 1
+      ? `Stage 1 is current, with ${userMoney(map.currency, map.emergencyGap)} still to fill.`
+      : "Stage 2 is current because the stored liquid reserve meets the Stage 1 target.";
+  return {
+    ok: true,
+    map,
+    summary: `${MONEY_ADVISOR_LINE} ${current}`,
+    content:
+      `${MONEY_ADVISOR_LINE}\n\n` +
+      `This map uses ${map.currency} whole-unit ballparks from your stored answers. ` +
+      `Paid contract months imply ${userMoney(map.currency, map.annualIncome)} of annual income, ` +
+      `while a full year of family needs is ${userMoney(map.currency, map.annualNeeds)}. ` +
+      `The difference, ${userMoney(map.currency, map.headroom)}, is arithmetic headroom, not promised disposable income.\n\n` +
+      `Stage 1 — reserve. A six-month rule of thumb gives a target of ` +
+      `${userMoney(map.currency, map.emergencyTarget)}. You have ` +
+      `${userMoney(map.currency, map.emergencyFunded)} counted toward it, leaving an exact gap of ` +
+      `${userMoney(map.currency, map.emergencyGap)}. This reserve is a planning buffer, not a guarantee of safety. ` +
+      `Graduate when liquid savings meet the target. ${current}\n\n` +
+      `Stage 2 — boring core. After the reserve arithmetic, the year-one planning estimate is ` +
+      `${userMoney(map.currency, map.postReservePool)}. The largest calculated slice is ` +
+      `${userMoney(map.currency, map.coreTarget)}. Broad diversified company ownership and short-term ` +
+      "government debt are generic candidates to research; neither is a product recommendation, and either can lose value. " +
+      "Consider the optional sidecar only after the reserve is covered and this core amount is deliberately allocated.\n\n" +
+      `Stage 3 — optional risky sidecar. Its hard maximum is ${userMoney(map.currency, map.satelliteCap)}, ` +
+      `which is no more than one fifth of the calculated pool and never more than your stored permanent-loss limit of ` +
+      `${userMoney(map.currency, map.maxPermanentLoss)}. This is not an amount I recommend investing. ` +
+      `The full principal can be lost, and no borrowing or leverage belongs here. ${mapRiskLine(map.riskComfort)}\n\n` +
+      `${MONEY_MAP_CLOSE}`
+  };
+}
+
+async function readDerivedMoneyMap(ctx) {
+  if (!ctx || typeof ctx.readJson !== "function") return null;
+  const stored = await ctx.readJson("money-map.json", null);
+  return deriveMoneyMap(normalizeMoneyMap(stored));
+}
+
+function moneyAnswerDisplay(field, value, currency) {
+  if (MONEY_FIELDS.has(field)) return userMoney(currency, value);
+  if (field === "contract_months_per_year") {
+    return `${value} contract month${value === "1" ? "" : "s"} per year`;
+  }
+  if (field === "horizon_years") {
+    return `${value} year${value === "1" ? "" : "s"}`;
+  }
+  if (value === "sleep_normally") return "sleep normally";
+  if (value === "want_out") return "want out";
+  return "worry but stay with the plan";
+}
+
+function validateMoneyUpdateParams(params, store) {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return { ok: false, message: "The Money Map update must be one structured answer." };
+  }
+  const allowed = new Set(["field", "integer_value", "currency", "raw_answer", "choice"]);
+  const extra = Object.keys(params).find((key) => !allowed.has(key));
+  if (extra) return { ok: false, message: `Unknown money-map update argument: ${extra}.` };
+  if (!MONEY_MAP_FIELD_SET.has(params.field)) {
+    return { ok: false, message: "Use one known Money Map answer field." };
+  }
+  if (!store.answers[params.field]) {
+    return { ok: false, message: "That answer does not exist yet; answer the interview question first." };
+  }
+  const candidate = { action: "answer", ...params };
+  if (
+    params.field === "contract_monthly_income" &&
+    candidate.currency === undefined
+  ) {
+    candidate.currency = store.currency;
+  }
+  const validation = moneyAnswerValidation(candidate, store);
+  if (!validation.ok) return validation;
+  if (
+    params.field === "contract_monthly_income" &&
+    validation.currency !== store.currency
+  ) {
+    return {
+      ok: false,
+      message:
+        `This map is fixed to ${store.currency}; changing currency requires rebuilding every monetary answer.`
+    };
+  }
+  const current = store.answers[params.field];
+  if (current.value === validation.entry.value) {
+    return { ok: false, message: "That answer is already stored, so there is nothing to change." };
+  }
+  return { ...validation, current };
+}
+
+async function prepareMoneyMapUpdate(params, ctx) {
+  let store;
+  try {
+    store = normalizeMoneyMap(await ctx.readJson("money-map.json", null));
+  } catch (error) {
+    return moneyMapFailure("I could not read the current Money Map, so I will not change it.");
+  }
+  if (!Number.isSafeInteger(store.revision) || store.revision >= Number.MAX_SAFE_INTEGER) {
+    return moneyMapFailure("The Money Map revision is invalid, so I will not change it.");
+  }
+  const validation = validateMoneyUpdateParams(params, store);
+  if (!validation.ok) return moneyMapFailure(validation.message);
+  const selection = {
+    revision: store.revision,
+    currency: store.currency,
+    field: validation.field,
+    oldValue: validation.current.value,
+    newEntry: { ...validation.entry }
+  };
+  confirmedMoneyMapUpdates.set(params, selection);
+  return { ok: true };
+}
+
 export function isDailyBriefOfferTime(now = new Date()) {
   const localNow = new Date(now);
   const hour = localNow.getHours();
@@ -772,6 +1255,13 @@ export async function assembleDailyBrief(ctx = skillCtx) {
     null,
     3500
   );
+  // Personal map status is another independent local source. A corrupt map may
+  // omit one count-only clause; it must never hide valid, sourced market figures.
+  const moneyMapForBrief = briefSource(
+    () => readDerivedMoneyMap(ctx),
+    null,
+    1000
+  );
 
   const sections = await Promise.all([
     briefSource(async () => {
@@ -828,7 +1318,7 @@ export async function assembleDailyBrief(ctx = skillCtx) {
     }, { key: "today", spoken: "Reminders are unreachable right now." }),
 
     (async () => {
-      const [fxPart, yieldPart] = await Promise.all([
+      const [fxPart, yieldPart, personalMap] = await Promise.all([
         briefSource(async () => {
           const rate = await fetchFx("USD", "KES", { timeoutMs: 4000 });
           if (!rate) throw new Error("exchange rate is unavailable");
@@ -847,11 +1337,17 @@ export async function assembleDailyBrief(ctx = skillCtx) {
             spoken: `The US 10-year yield is ${spokenFigure(tenYear)}.`,
             item: { key: "us10y", figure: tenYear }
           };
-        }, { spoken: "The Treasury yield is unreachable right now.", item: null })
+        }, { spoken: "The Treasury yield is unreachable right now.", item: null }),
+        moneyMapForBrief
       ]);
+      const mapClause =
+        personalMap && personalMap.currentStage === 1
+          ? ` Stage 1 sits at ${personalMap.progressPercent} percent — ` +
+            "say 'my money map' for the picture."
+          : "";
       return {
         key: "money",
-        spoken: `Money minute: ${fxPart.spoken} ${yieldPart.spoken}`,
+        spoken: `Money minute: ${fxPart.spoken} ${yieldPart.spoken}${mapClause}`,
         items: [fxPart.item, yieldPart.item].filter(Boolean)
       };
     })(),
@@ -900,6 +1396,321 @@ async function findYouTubeVideo(query) {
 
 // ---- skills ----------------------------------------------------------------
 const SKILLS = [
+  {
+    name: "money_school",
+    description:
+      "Teach the user's fixed beginner investing curriculum or resume its saved progress. " +
+      "Use for 'teach me investing', 'money lesson', 'next lesson', 'repeat the lesson', " +
+      "and definition-shaped beginner questions such as 'what's a bond?'. " +
+      "It persists only local lesson progress and never fetches market data or recommends a product.",
+    requiresConfirmation: false,
+    paramSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["resume", "next", "repeat", "lesson"],
+          description: "Resume progress, advance, repeat, or open a specific curriculum lesson."
+        },
+        lesson: {
+          type: "integer",
+          minimum: 1,
+          maximum: MONEY_SCHOOL_CURRICULUM.length,
+          description: "Lesson id, required only when action is lesson."
+        }
+      },
+      additionalProperties: false
+    },
+    confirmPrompt(params) {
+      const action = params && params.action;
+      const change = action === "next"
+        ? "Mark the current lesson complete, advance, and save that progress?"
+        : "Open this Money School lesson and save its local progress state?";
+      return `${MONEY_ADVISOR_LINE} ${change}`;
+    },
+    async execute(params = {}, ctx = skillCtx) {
+      const fail = (message) => ({
+        ok: false,
+        summary: `${MONEY_ADVISOR_LINE} ${message}`,
+        content: `${MONEY_ADVISOR_LINE}\n\n${message}`
+      });
+      if (!params || typeof params !== "object" || Array.isArray(params)) {
+        return fail("The Money School request must be one structured action.");
+      }
+      const action = params.action || "resume";
+      if (!["resume", "next", "repeat", "lesson"].includes(action)) {
+        return fail("Choose resume, next, repeat, or a numbered lesson.");
+      }
+      const allowed = new Set(action === "lesson" ? ["action", "lesson"] : ["action"]);
+      const extra = Object.keys(params).find((key) => !allowed.has(key));
+      if (extra) {
+        return fail(`${action} does not accept the ${extra} argument.`);
+      }
+      if (
+        action === "lesson" &&
+        (!Number.isInteger(params.lesson) || params.lesson < 1 ||
+          params.lesson > MONEY_SCHOOL_CURRICULUM.length)
+      ) {
+        return fail("Choose a lesson from one through twelve.");
+      }
+
+      const progress = normalizeSchoolProgress(
+        await ctx.readJson("money-school.json", { lesson: 1, completedAt: [] })
+      );
+      const completed = new Set(progress.completedAt.map((entry) => entry.lesson));
+
+      if (action === "lesson") {
+        progress.lesson = params.lesson;
+      } else if (action === "next") {
+        if (!completed.has(progress.lesson)) {
+          progress.completedAt.push({ lesson: progress.lesson, at: moneyIsoNow(ctx) });
+          progress.completedAt.sort((a, b) => a.lesson - b.lesson);
+          completed.add(progress.lesson);
+        }
+        if (progress.lesson < MONEY_SCHOOL_CURRICULUM.length) progress.lesson += 1;
+      }
+
+      await ctx.writeJson("money-school.json", progress);
+      if (
+        action !== "repeat" && action !== "lesson" &&
+        progress.lesson === MONEY_SCHOOL_CURRICULUM.length &&
+        completed.has(MONEY_SCHOOL_CURRICULUM.length)
+      ) {
+        return schoolCompletion(progress);
+      }
+      return schoolLessonResult(MONEY_SCHOOL_CURRICULUM[progress.lesson - 1], progress);
+    }
+  },
+  {
+    name: "money_map",
+    description:
+      "Show or build the user's personal Money Map from seven ordered, whole-unit planning answers. " +
+      "Use for 'my money map', 'build my plan', or 'investment plan'. With no complete map, ask " +
+      "exactly the next question; action answer records only that first unanswered field. " +
+      "Never use this skill to overwrite an answer — use update_money_map for that confirmed path.",
+    requiresConfirmation: false,
+    paramSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["show", "answer"],
+          description: "Show/resume the map, or record the next first-time answer."
+        },
+        field: {
+          type: "string",
+          enum: MONEY_MAP_FIELDS,
+          description: "The exact next interview field when action is answer."
+        },
+        integer_value: {
+          type: "integer",
+          minimum: 0,
+          maximum: MAX_SAFE_MONEY_INPUT,
+          description: "Whole-unit value for a numeric field; never a decimal or formatted string."
+        },
+        currency: {
+          type: "string",
+          description: "Three-letter planning currency on the first monetary answer."
+        },
+        choice: {
+          type: "string",
+          enum: [...MONEY_RISK_CHOICES],
+          description: "Sleep-test choice, only for risk_comfort."
+        },
+        raw_answer: {
+          type: "string",
+          description: "The user's original spoken wording, retained for audit."
+        }
+      },
+      additionalProperties: false
+    },
+    confirmPrompt(params) {
+      const action = params && params.action;
+      return action === "answer"
+        ? `${MONEY_ADVISOR_LINE} Record this first Money Map answer and recalculate the plan?`
+        : `${MONEY_ADVISOR_LINE} Open the Money Map from the stored answers?`;
+    },
+    async execute(params = {}, ctx = skillCtx) {
+      if (!params || typeof params !== "object" || Array.isArray(params)) {
+        return moneyMapFailure("The Money Map request must be one structured action.");
+      }
+      const action = params.action || "show";
+      if (action !== "show" && action !== "answer") {
+        return moneyMapFailure("Choose show or answer for the Money Map.");
+      }
+      const allowedShowKeys = new Set(["action"]);
+      if (action === "show") {
+        const extra = Object.keys(params).find((key) => !allowedShowKeys.has(key));
+        if (extra) return moneyMapFailure(`Show does not accept the ${extra} argument.`);
+      }
+      const store = normalizeMoneyMap(
+        await ctx.readJson("money-map.json", {
+          version: 1,
+          revision: 0,
+          currency: null,
+          answers: {},
+          updatedAt: null
+        })
+      );
+      const nextField = nextMoneyMapField(store);
+
+      if (action === "show") {
+        return nextField ? moneyMapQuestion(store, nextField) : moneyMapPresentation(store);
+      }
+      if (!nextField) {
+        return moneyMapFailure(
+          "That answer already exists, so changing it needs confirmation.",
+          "The Money Map is complete. Call update_money_map with one known field so the user can confirm the overwrite."
+        );
+      }
+      if (params.field !== nextField) {
+        if (MONEY_MAP_FIELD_SET.has(params.field) && store.answers[params.field]) {
+          return moneyMapFailure(
+            "That answer already exists, so changing it needs confirmation.",
+            `Do not overwrite ${params.field} through money_map. Call update_money_map instead.`
+          );
+        }
+        return moneyMapFailure(
+          "Please answer the one current Money Map question first.",
+          `The next field is ${nextField}; do not store ${String(params.field || "an unknown field")} out of order.`
+        );
+      }
+
+      const validation = moneyAnswerValidation(params, store);
+      if (!validation.ok) return moneyMapFailure(validation.message);
+      const at = moneyIsoNow(ctx);
+      store.answers[validation.field] = { ...validation.entry, answeredAt: at };
+      if (validation.currency) store.currency = validation.currency;
+      store.revision += 1;
+      store.updatedAt = at;
+      await ctx.writeJson("money-map.json", store);
+
+      const following = nextMoneyMapField(store);
+      return following ? moneyMapQuestion(store, following) : moneyMapPresentation(store);
+    }
+  },
+  {
+    name: "update_money_map",
+    description:
+      "Change exactly one existing Money Map interview answer. Use only when the user explicitly " +
+      "corrects or updates income, contract months, family needs, liquid savings, permanent-loss cap, " +
+      "horizon, or sleep-test comfort. This always names the old and new value and requires confirmation.",
+    requiresConfirmation: true,
+    paramSchema: {
+      type: "object",
+      properties: {
+        field: {
+          type: "string",
+          enum: MONEY_MAP_FIELDS,
+          description: "One existing interview answer to replace."
+        },
+        integer_value: {
+          type: "integer",
+          minimum: 0,
+          maximum: MAX_SAFE_MONEY_INPUT,
+          description: "New whole-unit value for a numeric field."
+        },
+        currency: {
+          type: "string",
+          description: "The unchanged three-letter planning currency when updating contract income."
+        },
+        choice: {
+          type: "string",
+          enum: [...MONEY_RISK_CHOICES],
+          description: "New sleep-test choice, only for risk_comfort."
+        },
+        raw_answer: {
+          type: "string",
+          description: "The user's original correction, retained for audit."
+        }
+      },
+      required: ["field", "raw_answer"],
+      additionalProperties: false
+    },
+    confirmPrompt(params) {
+      const selection =
+        params && typeof params === "object"
+          ? confirmedMoneyMapUpdates.get(params)
+          : null;
+      if (!selection) {
+        return (
+          `${MONEY_ADVISOR_LINE} Re-check the current Money Map before changing this answer? ` +
+          "Every derived stage will be recalculated."
+        );
+      }
+      const oldValue = moneyAnswerDisplay(
+        selection.field,
+        selection.oldValue,
+        selection.currency
+      );
+      const newValue = moneyAnswerDisplay(
+        selection.field,
+        selection.newEntry.value,
+        selection.currency
+      );
+      return (
+        `${MONEY_ADVISOR_LINE} Change ${selection.field.replace(/_/g, " ")} ` +
+        `from ${oldValue} to ${newValue}? Every derived stage will be recalculated.`
+      );
+    },
+    async precheck(params, ctx = skillCtx) {
+      return prepareMoneyMapUpdate(params, ctx);
+    },
+    async execute(params, ctx = skillCtx) {
+      const confirmed =
+        params && typeof params === "object"
+          ? confirmedMoneyMapUpdates.get(params)
+          : null;
+      if (params && typeof params === "object") confirmedMoneyMapUpdates.delete(params);
+      if (!confirmed) {
+        return moneyMapFailure(
+          "That update has no live confirmed snapshot, so nothing changed.",
+          "Run update_money_map through precheck and explicit confirmation before execution."
+        );
+      }
+
+      let store;
+      try {
+        store = normalizeMoneyMap(await ctx.readJson("money-map.json", null));
+      } catch (error) {
+        return moneyMapFailure("I could not re-read the Money Map, so nothing changed.");
+      }
+      const validation = validateMoneyUpdateParams(params, store);
+      const current = store.answers[confirmed.field];
+      if (
+        !validation.ok ||
+        confirmed.field !== params.field ||
+        validation.entry.value !== confirmed.newEntry.value ||
+        validation.entry.raw !== confirmed.newEntry.raw ||
+        store.revision !== confirmed.revision ||
+        store.currency !== confirmed.currency ||
+        !current ||
+        current.value !== confirmed.oldValue
+      ) {
+        return moneyMapFailure(
+          "The Money Map changed before you confirmed, so nothing changed.",
+          "The confirmed answer snapshot is stale or no longer matches the current map. Ask for the update again."
+        );
+      }
+
+      const at = moneyIsoNow(ctx);
+      store.answers[confirmed.field] = {
+        ...confirmed.newEntry,
+        answeredAt: at
+      };
+      store.revision += 1;
+      store.updatedAt = at;
+      await ctx.writeJson("money-map.json", store);
+      const following = nextMoneyMapField(store);
+      if (!following) return moneyMapPresentation(store);
+      const result = moneyMapQuestion(store, following);
+      return {
+        ...result,
+        summary: `${result.summary} ${MONEY_MAP_CLOSE}`,
+        content: `${result.content}\n\n${MONEY_MAP_CLOSE}`
+      };
+    }
+  },
   {
     name: "daily_brief",
     description:
@@ -1660,7 +2471,7 @@ const SKILLS = [
       },
       required: ["topic"]
     },
-    async execute(p, ctx = {}) {
+    async execute(p, ctx = skillCtx) {
       const topic = String(p.topic || "").trim();
       if (!topic) return { ok: false, summary: "What would you like me to research?", content: "No topic given." };
 
@@ -1674,11 +2485,12 @@ const SKILLS = [
 
       // Gather figures first. Each returns null on failure rather than throwing,
       // so one dead source degrades the brief instead of killing it.
-      const [rate, inflation, growth, curve] = await Promise.all([
+      const [rate, inflation, growth, curve, personalMap] = await Promise.all([
         currency ? fx("USD", currency) : Promise.resolve(null),
         country ? wb(country, "FP.CPI.TOTL.ZG") : Promise.resolve(null),
         country ? wb(country, "NY.GDP.MKTP.KD.ZG") : Promise.resolve(null),
-        yc()
+        yc(),
+        readDerivedMoneyMap(ctx).catch(() => null)
       ]);
 
       const figures = [];
@@ -1745,6 +2557,22 @@ const SKILLS = [
         `I've pulled what I can on ${topic}: ${gathered}.` +
         spokenStale + spokenMissing +
         ` Full evidence pack saved. Shall I walk you through it?`;
+      const personalMapContext = personalMap
+        ? (
+            "\nPERSONAL MONEY MAP CONTEXT — trusted user-supplied planning data, not a market claim.\n" +
+            `Current stage: Stage ${personalMap.currentStage}. ` +
+            (personalMap.currentStage === 1
+              ? "The stored emergency-reserve target is not yet met.\n"
+              : "The stored emergency-reserve target is met, so core-building is current.\n") +
+            `The user's stored total permanent-loss cap is ` +
+            `${userMoney(personalMap.currency, personalMap.maxPermanentLoss)}; ` +
+            "this is not an amount Artemis recommends investing. " +
+            "No allocation balance is tracked, so do not infer unused capacity.\n" +
+            "If the researched idea is materially riskier or Africa-linked, describe it only as a " +
+            "candidate for the optional risky sidecar. User-supplied map amounts need no market source.\n" +
+            "END PERSONAL MONEY MAP CONTEXT\n"
+          )
+        : "";
 
       return {
         ok: true,
@@ -1758,22 +2586,19 @@ const SKILLS = [
           `Investment research brief for: ${topic}\n` +
           `Evidence pack written to ${briefPath}\n\n` +
           `VERIFIED FIGURES — retrieved directly from named data providers, with dates.\n` +
-          `These are the only numbers you may state as fact.\n` +
+          `These are the only numbers you may state as fact about markets.\n` +
           (figureLines.join("\n") || "(none available)") + "\n" +
           (missing.length ? `\nUNAVAILABLE (say so, never guess, never call it zero): ${missing.join(", ")}\n` : "") +
           (staleLabels.length ? `\nSTALE — state the date when you mention these: ${staleLabels.join(", ")}\n` : "") +
+          personalMapContext +
           "\n" +
           wrapUntrusted("UNTRUSTED_RESEARCH_CONTENT", "",
             `GENERAL SOURCES:\n${bull.map(srcLine).join("\n") || "none"}\n\n` +
             `THE CASE AGAINST:\n${bear.map(srcLine).join("\n") || "none"}`) +
-          "\n\nNUMBERS IN THE SOURCE TEXT ABOVE ARE NOT VERIFIED. A blanket ban on them fails — they " +
-          "are right there and they are useful — so the rule is attribution, not silence. If you quote " +
-          "any figure not in the VERIFIED list, you MUST say where it came from and that you cannot " +
-          "confirm how current it is. For example: 'one source puts the 91-day bill near 8.8 percent, " +
-          "though I can't confirm the date on that'. Never state such a number bare, and never give it " +
-          "the same confidence as a verified figure. Local instrument yields and share prices are NEVER " +
-          "in the verified list — no free provider publishes them — so any yield you quote for a " +
-          "specific bill, bond or share falls under this rule.\n" +
+          "\n\nNUMBERS IN THE SOURCE TEXT ABOVE ARE NOT VERIFIED. Never repeat or speak a market " +
+          "number from that source text, even with attribution. Only market numbers in the VERIFIED " +
+          "FIGURES list may be spoken; every one reached this prompt through formatFigure with its " +
+          "source and date. You may still attribute qualitative claims from the wrapped sources.\n" +
           "\nWrite the brief in six sections, out loud and conversational, no markdown symbols:\n" +
           "1. HOW IT WORKS — what the user would actually own, who owes them what, how money comes back out.\n" +
           "2. WHY NOW — only if there is a DATED catalyst in the sources. If there isn't, say plainly: " +

@@ -173,11 +173,10 @@ const stubFetch = (body, ok = true) => async () => ({ ok, status: ok ? 200 : 503
 
 console.log("PASS ✅  finance: every number carries a source, or it is not said");
 
-// ---- unverified numbers must carry their provenance -------------------------
-// Found in live testing: she quoted "the 91-day bill is yielding around 8.8%"
-// with the same confidence as World Bank data. That figure came from a scraped
-// article, not from a data provider. A blanket ban failed because the number was
-// sitting in the source text; requiring attribution is what actually holds.
+// ---- source-text numbers never become spoken market figures -----------------
+// Scraped articles can contain plausible-looking figures, but they have not
+// passed through the Figure provenance boundary. They may remain in the
+// sentinel-wrapped evidence text; the speaking policy must ban repeating them.
 {
   const skill = getSkill("research_investment");
   const fig = (v, u) => ({ value: v, unit: u, asOf: today(), source: "Test Source", url: "https://open.er-api.com/x", stale: false });
@@ -188,9 +187,13 @@ console.log("PASS ✅  finance: every number carries a source, or it is not said
     webSearch: async () => ({ results: [{ title: "Auction", url: "https://example.test/a", content: "91-day yields were approximately 8.7986%" }] })
   });
   assert.match(r.content, /NOT VERIFIED/, "source numbers are marked unverified");
-  assert.match(r.content, /where it came from/i, "attribution is required, not silence");
-  assert.match(r.content, /cannot confirm how current/i, "and the date caveat is required");
-  assert.match(r.content, /NEVER in the verified list/i, "local instrument yields are named as always-unverified");
   assert.match(r.content, /only numbers you may state as fact/i, "verified figures keep their privileged status");
-  console.log("  ✓ a number scraped from an article must be attributed, never spoken bare");
+  const speakingPolicy = r.content.slice(r.content.indexOf("</UNTRUSTED_RESEARCH_CONTENT>"));
+  assert.match(
+    speakingPolicy,
+    /never (?:repeat|speak)[^.]*market number[^.]*source text/i,
+    "scraped market numbers are barred from speech"
+  );
+  assert.doesNotMatch(speakingPolicy, /\b8\.8\b/, "the fixed prompt carries no hard-coded market example");
+  console.log("  ✓ only formatFigure-rendered market figures may be spoken");
 }

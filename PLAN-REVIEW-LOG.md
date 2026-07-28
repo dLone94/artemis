@@ -193,3 +193,17 @@ followups_nudge below email_delete priority.
 Re-ran proofs: 16 suites + 19/19 eval. Spot-checks: no send/draft endpoint
 (the 2 grep hits are comments/negative assertions), tainted-open guard holds,
 confirm flow passes clientActions through dropTaintedOpens. PASSED.
+
+### Round 9 — Codex review-then-build: Money School + Money Map
+Pre-build audit again earned its keep: split always-confirmed
+update_money_map out of money_map (registry confirm is tool-wide), moved
+map math to BigInt canonical-integer arithmetic (no float money), made
+Stage-3 an honest capped sidecar (killed my uncomputable "amount left"
+claim), advisor framing enforced in CODE on every path, and no product
+names/promises anywhere in the curriculum.
+
+### Claude's verdict
+17 suites + 19/19 eval green on my re-run. Spot-checks: zero
+tickers/brands in the curriculum, advisor line present in code, routing
+correct for school/map/map_update including definition-shaped questions.
+PASSED — one round.
