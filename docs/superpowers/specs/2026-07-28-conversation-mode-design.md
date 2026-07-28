@@ -9,7 +9,7 @@
   after each of her answers the mic re-opens automatically for a follow-up —
   no wake word needed. A soft, shorter earcon (distinct from the wake blip)
   marks each re-open; the orb shows listening.
-- If the user says nothing for ~7 s, the conversation ends **silently** and
+- If the user says nothing for ~20 s, the conversation ends **silently** and
   she returns to normal wake-word listening. No "are you still there?".
 - Closing phrases end it immediately with a one-word ack ("Done." / nothing
   if TTS is mid-flight): "that's all", "that's it", "thanks that's all",
@@ -26,7 +26,7 @@
 
 `captureCommand(opts)` gains `opts.waitForSpeechMs` (default: current
 behaviour): if no speech has STARTED within that window, resolve null
-early — the follow-up listener must give up in ~7 s, not hold the turn
+early — the follow-up listener must give up in ~20 s, not hold the turn
 for CAP_MAX_MS. No other engine changes; detection/preroll/VAD untouched.
 
 ### public/wakeWords.js — pure closing-phrase matcher
@@ -44,7 +44,7 @@ NOT substring ("that's all the emails" is not a close). Unit-testable.
   `followUpListen()`:
   1. soft earcon, orb listening, status "Listening…" (or the pending-confirm
      prompt when one exists),
-  2. `captureCommand({ waitForSpeechMs: 7000, onLevel: orb.feed })`,
+  2. `captureCommand({ waitForSpeechMs: 20000, onLevel: orb.feed })`,
   3. null → `conversationLive = false`, fall back to today's afterSpeak
      wake-arming path (silent),
   4. transcript → `isClosingPhrase` → end with brief ack; else route

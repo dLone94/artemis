@@ -429,20 +429,37 @@ function handleConfirmIfPending(text) {
   // "shall I move these to trash?" previously counted as ambiguous, cancelled
   // the confirmation, and re-ran the command — an infinite loop from the
   // user's side.
-  const yes = /\b(yes|yeah|yep|yup|sure|confirm|send it|do it|go ahead|please do|affirmative|okay|ok)\b/.test(t) ||
+  const yes = /\b(yes|yeah|yep|yup|sure|confirm|send it|do it|do that|go ahead|go for it|sounds good|please do|affirmative|correct|okay|ok)\b/.test(t) ||
     /\b(delete|trash|send|remove)\b.{0,24}\b(it|them|those|these|all|everything)\b/.test(t);
   const no = /\b(no|nope|nah|cancel|stop|don'?t|do not|never ?mind|abort|negative)\b/.test(t);
   const pa = pendingConfirm;
   pendingConfirm = null;
   if (!yes && !no) {
-    // ambiguous → cancel the pending action for safety, then let the caller treat
-    // this text as a brand-new command (it is NOT a confirmation).
+    // Ambiguous is NOT consent and NOT refusal — and it must not cancel.
+    // The old path cancelled the pending action and re-ran the words as a
+    // fresh command; the model, now on a free chat turn, would happily
+    // NARRATE the action as done ("deleted!") while nothing happened.
+    // First ambiguity: keep the confirmation alive and ask again plainly.
+    // Second in a row: cancel out loud, then treat the text as a command.
+    if (!pa.ambiguousOnce) {
+      pa.ambiguousOnce = true;
+      pendingConfirm = pa;
+      addMsg("user", text);
+      const reprompt = "Just to be safe — is that a yes or a no?";
+      addMsg("artemis", reprompt);
+      speak(reprompt);
+      return true;
+    }
     fetch("/api/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirmId: pa.confirmId, decision: "no" })
     }).catch(() => {});
-    return false;
+    addMsg("artemis", "Okay, I've cancelled that.");
+    speak("Okay, I've cancelled that.");
+    // Consume the utterance entirely: handing it to the model here is how a
+    // cancelled delete became a cheerfully narrated fake success.
+    return true;
   }
   addMsg("user", text);
   orb._ensureAudio();
@@ -1297,7 +1314,7 @@ async function followUpListen() {
 
   try {
     const wav = await captureCommand({
-      waitForSpeechMs: 7000,
+      waitForSpeechMs: 20000,
       onLevel: (rms) => orb.feed(Math.min(1, rms * 10))
     });
     followUpCaptureOpen = false;
