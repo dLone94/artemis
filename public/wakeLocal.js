@@ -175,9 +175,14 @@ function captureFrame(f, rms) {
   const speechThresh = Math.max(noiseFloor * 3.5, 0.010); // adapts to the room
   if (rms > speechThresh) { capHeard = true; capQuiet = 0; }
   else if (capHeard && !capQuiet) capQuiet = now;
+  // The hard cap must budget for the wait-for-speech window: with a 20s
+  // follow-up wait, a fixed 12s ceiling closed the mic at 12s no matter what
+  // the caller asked for. Waits at or below the default keep the exact old
+  // ceiling; longer waits extend it by the difference.
+  const capCeiling = CAP_MAX_MS + Math.max(0, capWaitForSpeechMs - CAP_NOSPEECH_MS);
   if ((capHeard && capQuiet && now - capQuiet > CAP_SILENCE_MS) ||
       (!capHeard && dur > capWaitForSpeechMs) ||
-      dur > CAP_MAX_MS) {
+      dur > capCeiling) {
     finishCapture(capHeard);
   }
 }
@@ -232,7 +237,10 @@ export function captureCommand(opts = {}) {
     mode = "capture";
     // if the mic/worklet dies mid-capture, frames stop arriving and the VAD
     // above never runs again — this backstop guarantees the promise settles
-    capSafety = setTimeout(() => finishCapture(capHeard), CAP_MAX_MS + 2000);
+    capSafety = setTimeout(
+      () => finishCapture(capHeard),
+      CAP_MAX_MS + Math.max(0, capWaitForSpeechMs - CAP_NOSPEECH_MS) + 2000
+    );
   });
 }
 
