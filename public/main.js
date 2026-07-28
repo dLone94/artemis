@@ -1313,41 +1313,56 @@ async function followUpListen() {
   window.__wakeLive = false;
 
   try {
-    const wav = await captureCommand({
-      waitForSpeechMs: 20000,
-      onLevel: (rms) => orb.feed(Math.min(1, rms * 10))
-    });
-    followUpCaptureOpen = false;
-    if (!followUpStillCurrent(generation)) return false;
-    if (!wav) {
-      conversationLive = false;
-      returnToWake = true;
-      return false;
-    }
+    // A 20-SECOND WALL-CLOCK WINDOW, not "20s unless the room makes a sound".
+    // Any noise above the speech threshold starts a capture; 1.1s of quiet
+    // then finishes it with an empty transcript — and ending the conversation
+    // on that blip is why the window felt like it never lasted. Blips loop;
+    // only true silence for the REMAINING time (or a real utterance) exits.
+    const deadline = performance.now() + 20000;
+    for (;;) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 500) {
+        conversationLive = false;
+        returnToWake = true;
+        return false;
+      }
+      const wav = await captureCommand({
+        waitForSpeechMs: remaining,
+        onLevel: (rms) => orb.feed(Math.min(1, rms * 10))
+      });
+      followUpCaptureOpen = false;
+      if (!followUpStillCurrent(generation)) return false;
+      if (!wav) {
+        conversationLive = false;
+        returnToWake = true;
+        return false;
+      }
 
-    setLiveStatus("Transcribing…");
-    sttAbort = new AbortController();
-    followUpAbort = sttAbort;
-    const res = await fetch("/api/stt", {
-      method: "POST",
-      headers: { "Content-Type": "audio/wav" },
-      body: wav,
-      signal: sttAbort.signal
-    });
-    const data = await res.json();
-    if (!followUpStillCurrent(generation)) return false;
-    const text = scrubWakePrefix(data.transcript);
-    if (!text) {
-      conversationLive = false;
-      returnToWake = true;
-      return false;
+      setLiveStatus("Transcribing…");
+      sttAbort = new AbortController();
+      followUpAbort = sttAbort;
+      const res = await fetch("/api/stt", {
+        method: "POST",
+        headers: { "Content-Type": "audio/wav" },
+        body: wav,
+        signal: sttAbort.signal
+      });
+      const data = await res.json();
+      if (!followUpStillCurrent(generation)) return false;
+      const text = scrubWakePrefix(data.transcript);
+      if (!text) {
+        // noise blip, not a command — reopen quietly within the same window
+        followUpCaptureOpen = true;
+        setLiveStatus(pendingConfirm ? "Say “yes” to confirm, or “no” to cancel." : "Listening…");
+        continue;
+      }
+      if (!dispatchUtterance(text)) {
+        conversationLive = false;
+        returnToWake = true;
+        return false;
+      }
+      return true;
     }
-    if (!dispatchUtterance(text)) {
-      conversationLive = false;
-      returnToWake = true;
-      return false;
-    }
-    return true;
   } catch (e) {
     if (generation === followUpGeneration) {
       conversationLive = false;
