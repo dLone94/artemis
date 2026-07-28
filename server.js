@@ -2033,6 +2033,62 @@ if (USE_HTTPS) {
   server = createServer(onRequest);
 }
 
+// Shared by the HTTPS route and the plain-HTTP side door below.
+async function handleGoogleCallback(url, res, exchangePort) {
+  const code = url.searchParams.get("code");
+  if (!code) {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Missing ?code — start again at /auth/google");
+    return;
+  }
+  try {
+    const rt = await gmailExchangeCode(code, exchangePort);
+    // save + apply immediately: no copy-paste, no restart needed
+    saveEnvVar("GOOGLE_REFRESH_TOKEN", rt);
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(
+      '<body style="font-family:monospace;background:#04070b;color:#e8f7fb;padding:40px;line-height:1.6">' +
+      "<h2 style=\"color:#22d3ee\">Gmail connected ✓</h2>" +
+      "<p>The token was saved to <code>.env</code> on this machine (never logged).</p>" +
+      "<p>You're all set — go back to <a style=\"color:#22d3ee\" href=\"https://localhost:" + PORT + "/\">Artemis</a> and say " +
+      "<strong>“Artemis, check my email.”</strong></p></body>"
+    );
+    closeAuthSideDoor();
+  } catch (e) {
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end("Authorization failed: " + e.message);
+  }
+}
+
+// Google's Desktop-app OAuth redirects to plain http://localhost — but this
+// server speaks HTTPS on its port, so the hand-back was dropped mid-TLS and
+// the flow could never finish. The side door is a loopback-only plain-HTTP
+// listener that exists ONLY while an authorization is in flight (10 min max),
+// serves ONLY the callback path, and closes itself after success.
+const AUTH_SIDE_PORT = Number(process.env.ARTEMIS_AUTH_PORT || PORT + 1);
+let authSideDoor = null;
+let authSideDoorTimer = 0;
+function closeAuthSideDoor() {
+  clearTimeout(authSideDoorTimer);
+  authSideDoorTimer = 0;
+  if (authSideDoor) { try { authSideDoor.close(); } catch (e) {} authSideDoor = null; }
+}
+function openAuthSideDoor() {
+  if (authSideDoor) return AUTH_SIDE_PORT;
+  authSideDoor = createServer(async (req2, res2) => {
+    const u = new URL(req2.url, "http://localhost:" + AUTH_SIDE_PORT);
+    if (u.pathname !== "/auth/google/callback") {
+      res2.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
+      return;
+    }
+    await handleGoogleCallback(u, res2, AUTH_SIDE_PORT);
+  });
+  authSideDoor.listen(AUTH_SIDE_PORT, "127.0.0.1");
+  clearTimeout(authSideDoorTimer);
+  authSideDoorTimer = setTimeout(closeAuthSideDoor, 10 * 60 * 1000);
+  return AUTH_SIDE_PORT;
+}
+
 async function handleRequest(req, res) {
   let url;
   try {
@@ -2102,33 +2158,12 @@ async function handleRequest(req, res) {
       res.end("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env first (OAuth client, type: Desktop app), then restart and retry.");
       return;
     }
-    res.writeHead(302, { Location: gmailAuthUrl(PORT) });
+    res.writeHead(302, { Location: gmailAuthUrl(httpsActive ? openAuthSideDoor() : PORT) });
     res.end();
     return;
   }
   if (url.pathname === "/auth/google/callback") {
-    const code = url.searchParams.get("code");
-    if (!code) {
-      res.writeHead(400, { "Content-Type": "text/plain" });
-      res.end("Missing ?code — start again at /auth/google");
-      return;
-    }
-    try {
-      const rt = await gmailExchangeCode(code, PORT);
-      // save + apply immediately: no copy-paste, no restart needed
-      saveEnvVar("GOOGLE_REFRESH_TOKEN", rt);
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(
-        '<body style="font-family:monospace;background:#0a0805;color:#f6efe7;padding:40px;line-height:1.6">' +
-        "<h2 style=\"color:#ffb24d\">Gmail connected ✓</h2>" +
-        "<p>The token was saved to <code>.env</code> on this machine (never logged).</p>" +
-        "<p>You're all set — go back to <a style=\"color:#ffb24d\" href=\"/\">Artemis</a> and say " +
-        "<strong>“Artemis, check my email.”</strong></p></body>"
-      );
-    } catch (e) {
-      res.writeHead(500, { "Content-Type": "text/plain" });
-      res.end("Authorization failed: " + e.message);
-    }
+    await handleGoogleCallback(url, res, PORT);
     return;
   }
 
