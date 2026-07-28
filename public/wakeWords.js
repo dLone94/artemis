@@ -11,6 +11,41 @@ export const WAKE_WORDS = [
   "hey art"
 ];
 
+const CLOSING_PHRASES = new Set([
+  "that's all",
+  "that's it",
+  "thanks that's all",
+  "thank you that's all",
+  "go to sleep",
+  "stop listening",
+  "never mind"
+]);
+
+export const FOLLOW_UP_STORAGE_KEY = "artemisFollowUp";
+
+export function isClosingPhrase(text) {
+  const normalized = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\p{P}+$/u, "")
+    .trim();
+  return CLOSING_PHRASES.has(normalized);
+}
+
+export function loadFollowUpEnabled(storage) {
+  try {
+    return !storage || storage.getItem(FOLLOW_UP_STORAGE_KEY) !== "0";
+  } catch (e) {
+    return true;
+  }
+}
+
+export function saveFollowUpEnabled(storage, enabled) {
+  try {
+    if (storage) storage.setItem(FOLLOW_UP_STORAGE_KEY, enabled ? "1" : "0");
+  } catch (e) {}
+}
+
 function normalize(s) {
   return (s || "")
     .toLowerCase()

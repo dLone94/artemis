@@ -4,7 +4,7 @@
 // reacts to YOUR voice (listening) and ARTEMIS's voice (speaking) via real audio.
 import { VoiceOrb } from "./voiceOrb.js";
 import { resolveOpenIntent } from "./siteRegistry.js";
-import { matchWake } from "./wakeWords.js";
+import { isClosingPhrase, loadFollowUpEnabled, matchWake, saveFollowUpEnabled } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
 import { PAL, prefersReducedMotion } from "./orbShared.js";
@@ -38,10 +38,20 @@ document.querySelectorAll("[data-link]").forEach((a) => {
 const conversation = [];
 let busy = false;
 let recording = false;
+let talkStarting = false;
+let talkSuppressClosingAck = false;
+let conversationLive = false;
+let followUpEnabled = true;
+try { followUpEnabled = loadFollowUpEnabled(window.localStorage); } catch (e) {}
+let followUpInFlight = false;
+let followUpCaptureOpen = false;
+let followUpGeneration = 0;
+let followUpStarting = false;
+let followUpAbort = null;
 
 // celebration.js checks this before playing its jingle / hijacking the orb —
 // a payment landing mid-conversation must not talk over Artemis or the user
-window.celebrationVoiceActive = () => speaking || recording || busy;
+window.celebrationVoiceActive = () => speaking || recording || talkStarting || followUpInFlight || busy;
 
 // On the cockpit page the orb sits dead-center; on the landing it offsets
 // right to make room for the hero copy (VoiceOrb's default).
@@ -86,6 +96,7 @@ const liveStatus = $("liveStatus");
 const transcript = $("transcript"); // null now (chat window removed) — DOM updates are guarded
 const micToggle = $("micToggle");
 const wakeToggle = $("wakeToggle");
+const followUpToggle = $("followUpToggle");
 
 function setLiveStatus(t) {
   if (liveStatus) liveStatus.textContent = t;
@@ -225,12 +236,13 @@ function stopBargeIn() {
   bargeAnalyser = null; bargeFreq = null; bargeHot = 0;
 }
 function bargeIn() {
+  const interruptedTts = speaking || ttsPlaying || ttsQueue.length > 0;
   stopBargeIn();
   resetTtsPipe();
   speaking = false;
   orb.stopAudio();
   if (currentAbort) { try { currentAbort.abort(); } catch (e) {} }
-  startTalk(); // immediately capture what you're now saying
+  startTalk({ suppressClosingAck: interruptedTts }); // immediately capture what you're now saying
 }
 
 // Public hook for the cockpit (welcome briefing etc.) — must be invoked from
@@ -241,6 +253,7 @@ async function speak(text) {
   // speak() and the streaming pumpTts() share one <audio> element; take sole
   // ownership first so a still-draining streamed reply (or a poller-triggered
   // announce) can't leave a stale onended handler that wedges `speaking`.
+  if (followUpInFlight || followUpStarting) void abortFollowUp();
   resetTtsPipe();
   pauseWakeForSpeech();
   orb.connectMediaElement(ttsEl); // route Artemis's voice into the orb's analyser
@@ -258,21 +271,69 @@ async function speak(text) {
   }
 }
 
-function afterSpeak() {
-  stopBargeIn();
-  speaking = false;
-  if (recording) return; // user already barged in — don't clobber the live mic UI
-  orb.stopAudio();
-  micStream = null; // stopAudio killed the tracks; resumeWake must reacquire
+function restoreWakeListening() {
+  if (recording || talkStarting || speaking) return;
   if (wakeOn) {
     orb.setStatus("listening");
     // keep a pending yes/no question visible — it's the most important status
     setLiveStatus(pendingConfirm ? "Say “yes” to confirm, or “no” to cancel." : "Listening for “" + wakePhrase() + "…”");
-    resumeWake();
+    void resumeWake();
   } else {
     orb.setStatus("idle");
     setLiveStatus(pendingConfirm ? "Say “yes” to confirm, or “no” to cancel." : "Click the mic to speak");
   }
+}
+
+async function abortFollowUp({ endConversation = false, resumeWakeAfter = false } = {}) {
+  if (endConversation) conversationLive = false;
+  followUpGeneration++;
+  if (followUpAbort) {
+    try { followUpAbort.abort(); } catch (e) {}
+  }
+  if ((followUpCaptureOpen || followUpStarting) && (localWakeRunning() || wakeStarting)) {
+    await stopLocalWake();
+  }
+  if (resumeWakeAfter && wakeOn && !recording && !talkStarting && !speaking && !busy) {
+    restoreWakeListening();
+  }
+}
+
+function canStartFollowUp() {
+  return wakeOn && conversationLive && followUpEnabled && !document.hidden &&
+    !recording && !talkStarting && !busy && !speaking &&
+    !ttsPlaying && !ttsQueue.length && !wakeCapturing && !followUpInFlight &&
+    localWakeRunning();
+}
+
+async function afterSpeak() {
+  stopBargeIn();
+  speaking = false;
+  if (recording || talkStarting) return; // user already barged in — don't clobber the live mic UI
+  orb.stopAudio();
+  micStream = null; // stopAudio killed the tracks; resumeWake must reacquire
+  if (followUpInFlight || followUpStarting) return;
+  if (!wakeOn || !conversationLive || !followUpEnabled || document.hidden || busy) {
+    if (conversationLive && (!wakeOn || !followUpEnabled || document.hidden || busy)) conversationLive = false;
+    restoreWakeListening();
+    return;
+  }
+
+  // A mic-tap turn temporarily stops the local engine for exclusive access.
+  // Bring it back before applying the localWakeRunning() capture guard.
+  const generation = followUpGeneration;
+  followUpStarting = true;
+  try {
+    if (!localWakeRunning()) await resumeWake();
+    if (generation !== followUpGeneration) return;
+    if (canStartFollowUp()) {
+      void followUpListen();
+      return;
+    }
+    conversationLive = false; // no local engine means no safe follow-up window
+  } finally {
+    followUpStarting = false;
+  }
+  restoreWakeListening();
 }
 
 // ---- persistence + settings ----
@@ -350,6 +411,17 @@ function handleOpenIntent(text) {
 
 // ---- confirm-before-act: intercept the user's yes/no for a pending action ----
 let pendingConfirm = null;
+function cancelPendingConfirmation() {
+  if (!pendingConfirm) return;
+  const pendingAction = pendingConfirm;
+  pendingConfirm = null;
+  fetch("/api/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmId: pendingAction.confirmId, decision: "no" })
+  }).catch(() => {});
+}
+
 function handleConfirmIfPending(text) {
   if (!pendingConfirm) return false;
   const t = (text || "").toLowerCase().trim();
@@ -737,7 +809,10 @@ async function ask(text) {
         }
       }
     }
-    if (!ttsPlaying && !ttsQueue.length) { speaking = false; afterSpeak(); } // pump may have deferred to us while busy
+    // pump may have drained while the stream was still marked busy. Defer the
+    // terminal decision until finally clears busy so a pending-confirm reply
+    // opens its follow-up window and a bare "yes" is accepted.
+    if (!ttsPlaying && !ttsQueue.length) { speaking = false; queueMicrotask(afterSpeak); }
   } catch (e) {
     stopThinking();
     resetTtsPipe();
@@ -760,12 +835,15 @@ let mediaRecorder = null;
 let chunks = [];
 let micStream = null;
 
-async function startTalk() {
-  if (busy || recording) return;
+async function startTalk({ suppressClosingAck = false } = {}) {
+  if (busy || recording || talkStarting) return;
+  talkStarting = true;
+  talkSuppressClosingAck = suppressClosingAck;
+  await abortFollowUp({ endConversation: true });
   stopBargeIn(); // we're recording now — no need for the barge-in listener
   // manual recording needs EXCLUSIVE mic access — a second stream on the same
   // device can come back silent (iPhone). resumeWake() restarts the engine.
-  if (localWakeRunning()) await stopLocalWake();
+  if (localWakeRunning() || wakeStarting) await stopLocalWake();
   orb._ensureAudio(); // unlock audio in this gesture
   try {
     // stop the wake-mode viz stream first — overwriting it leaks a live mic
@@ -773,7 +851,10 @@ async function startTalk() {
     if (micStream) { try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {} micStream = null; }
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
+    talkStarting = false;
+    talkSuppressClosingAck = false;
     setLiveStatus("Microphone permission denied.");
+    restoreWakeListening();
     return;
   }
   orb.connectMic(micStream); // orb reacts to YOUR voice
@@ -791,6 +872,7 @@ async function startTalk() {
   mediaRecorder.onstop = onTalkStop;
   mediaRecorder.start(250); // 250ms slices feed the live stream
   recording = true;
+  talkStarting = false;
   micToggle.classList.add("recording");
   setLiveStatus("Listening… click to send");
 }
@@ -879,6 +961,8 @@ function closeLiveStt() {
 
 async function onTalkStop() {
   recording = false;
+  const suppressClosingAck = talkSuppressClosingAck;
+  talkSuppressClosingAck = false;
   micToggle.classList.remove("recording");
   const type = (mediaRecorder && mediaRecorder.mimeType) || "audio/webm";
   mediaRecorder = null;
@@ -898,20 +982,17 @@ async function onTalkStop() {
   // fall back to the batch POST only when streaming produced nothing
   const streamed = await closeLiveStt();
   if (streamed) {
-    setLiveStatus("");
-    if (handleConfirmIfPending(streamed)) return;
-    if (!handleOpenIntent(streamed)) ask(streamed);
+    if (!dispatchUtterance(streamed, { suppressClosingAck })) {
+      setLiveStatus("Didn't catch that — try again.");
+      afterSpeak();
+    }
     return;
   }
   setLiveStatus("Transcribing…");
   try {
     const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": type }, body: blob });
     const data = await res.json();
-    const text = (data.transcript || "").trim();
-    if (text) {
-      if (handleConfirmIfPending(text)) return;
-      if (!handleOpenIntent(text)) ask(text);
-    } else {
+    if (!dispatchUtterance(data.transcript, { suppressClosingAck })) {
       setLiveStatus("Didn't catch that — try again.");
       afterSpeak();
     }
@@ -936,7 +1017,7 @@ micToggle.addEventListener("click", () => {
     // startTalk()'s busy-guard silently eats this click
     busy = false;
     stopThinking();
-    startTalk();
+    startTalk({ suppressClosingAck: true });
     return;
   }
   // cancel a thinking turn
@@ -961,6 +1042,7 @@ micToggle.addEventListener("click", () => {
  */
 window.ArtemisBargeIn = {
   interrupt() {
+    void abortFollowUp({ endConversation: true, resumeWakeAfter: true });
     stopBargeIn();
     resetTtsPipe();
     speaking = false;
@@ -996,24 +1078,44 @@ if (bargeToggle) {
   label();
 }
 
+if (followUpToggle) {
+  const label = () => {
+    followUpToggle.classList.toggle("on", followUpEnabled);
+    followUpToggle.textContent = "FOLLOW-UP: " + (followUpEnabled ? "ON" : "OFF");
+  };
+  followUpToggle.addEventListener("click", () => {
+    followUpEnabled = !followUpEnabled;
+    try { saveFollowUpEnabled(window.localStorage, followUpEnabled); } catch (e) {}
+    label();
+    if (!followUpEnabled) {
+      void abortFollowUp({ endConversation: true, resumeWakeAfter: true });
+    }
+  });
+  label();
+}
+
 // short rising blip + orb flash the instant a wake word fires (kills dead air)
-function playEarcon() {
+function playEarcon({ soft = false } = {}) {
   try {
     const c = orb._ensureAudio();
     if (!c) return;
     const t = c.currentTime;
+    const rise = soft ? 0.012 : 0.02;
+    const sweep = soft ? 0.075 : 0.13;
+    const fade = soft ? 0.11 : 0.2;
+    const stop = soft ? 0.13 : 0.22;
     const o = c.createOscillator();
     const g = c.createGain();
     o.type = "sine";
     o.frequency.setValueAtTime(620, t);
-    o.frequency.exponentialRampToValueAtTime(940, t + 0.13);
+    o.frequency.exponentialRampToValueAtTime(940, t + sweep);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.14, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    g.gain.exponentialRampToValueAtTime(soft ? 0.05 : 0.14, t + rise);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + fade);
     o.connect(g);
     g.connect(c.destination);
     o.start(t);
-    o.stop(t + 0.22);
+    o.stop(t + stop);
   } catch (e) {}
 }
 
@@ -1113,6 +1215,31 @@ function wakePrefixRe() {
 // words and concludes she's broken.
 function wakePhrase() { return localWakeRunning() ? activeWakeProfile().phrase : "Artemis"; }
 
+function scrubWakePrefix(text) {
+  return String(text || "").replace(wakePrefixRe(), "").trim();
+}
+
+// Every voice entry point lands here after STT. Keep the safety-sensitive
+// ordering shared: scrub any captured wake prefix, then confirmation, local
+// open intent, and finally the assistant.
+function dispatchUtterance(text, { suppressClosingAck = false } = {}) {
+  const command = scrubWakePrefix(text);
+  if (!command) return false;
+  if (isClosingPhrase(command)) {
+    conversationLive = false;
+    cancelPendingConfirmation();
+    const ttsActive = speaking || ttsPlaying || ttsQueue.length > 0;
+    if (!suppressClosingAck && !ttsActive) speak("Done.");
+    else if (!ttsActive) afterSpeak();
+    return true;
+  }
+  conversationLive = true;
+  setLiveStatus("");
+  if (handleConfirmIfPending(command)) return true;
+  if (!handleOpenIntent(command)) ask(command);
+  return true;
+}
+
 // The LOCAL wake path: openWakeWord reliably detects "Hey Jarvis" on-device
 // (works on iPhone). On detection the ENGINE ITSELF captures the command from
 // the same mic stream — including ~1.2s of pre-roll from before detection
@@ -1120,8 +1247,9 @@ function wakePhrase() { return localWakeRunning() ? activeWakeProfile().phrase :
 // batch STT (the reliable path); no MediaRecorder, no chunk streaming.
 let wakeCapturing = false;
 async function onLocalWake() {
-  if (recording || busy || wakeCapturing) return; // already handling a turn
-  if (speaking || ttsPlaying || ttsQueue.length) window.ArtemisBargeIn.interrupt(); // she was talking → interrupt
+  if (recording || talkStarting || busy || wakeCapturing || followUpInFlight) return; // already handling a turn
+  const interruptedTts = speaking || ttsPlaying || ttsQueue.length > 0;
+  if (interruptedTts) window.ArtemisBargeIn.interrupt(); // she was talking → interrupt
   wakeCapturing = true;
   playEarcon();
   orb.feed(0.6);
@@ -1134,19 +1262,90 @@ async function onLocalWake() {
     setLiveStatus("Transcribing…");
     const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
     const data = await res.json();
-    let text = (data.transcript || "").trim();
-    // the pre-roll may include the tail of the wake phrase — scrub it off, using
-    // the mishearings the active profile declares rather than a fixed list
-    text = text.replace(wakePrefixRe(), "").trim();
-    if (!text) { setLiveStatus("Didn't catch that — try again."); afterSpeak(); return; }
-    setLiveStatus("");
-    if (handleConfirmIfPending(text)) return;
-    if (!handleOpenIntent(text)) ask(text);
+    // the pre-roll may include the tail of the wake phrase; the shared
+    // dispatcher scrubs it using the active profile's declared mishearings.
+    if (!dispatchUtterance(data.transcript, { suppressClosingAck: interruptedTts })) {
+      setLiveStatus("Didn't catch that — try again.");
+      afterSpeak();
+    }
   } catch (e) {
     setLiveStatus("Transcription failed.");
     afterSpeak();
   } finally {
     wakeCapturing = false;
+  }
+}
+
+function followUpStillCurrent(generation) {
+  return generation === followUpGeneration && wakeOn && conversationLive &&
+    followUpEnabled && !document.hidden && !recording && !talkStarting &&
+    !busy && !speaking && localWakeRunning();
+}
+
+async function followUpListen() {
+  if (!canStartFollowUp()) return false;
+  const generation = ++followUpGeneration;
+  let returnToWake = false;
+  let sttAbort = null;
+  followUpInFlight = true;
+  followUpCaptureOpen = true;
+  playEarcon({ soft: true });
+  orb.feed(0.35);
+  orb.setStatus("listening");
+  setLiveStatus(pendingConfirm ? "Say “yes” to confirm, or “no” to cancel." : "Listening…");
+  window.__wakeLive = false;
+
+  try {
+    const wav = await captureCommand({
+      waitForSpeechMs: 7000,
+      onLevel: (rms) => orb.feed(Math.min(1, rms * 10))
+    });
+    followUpCaptureOpen = false;
+    if (!followUpStillCurrent(generation)) return false;
+    if (!wav) {
+      conversationLive = false;
+      returnToWake = true;
+      return false;
+    }
+
+    setLiveStatus("Transcribing…");
+    sttAbort = new AbortController();
+    followUpAbort = sttAbort;
+    const res = await fetch("/api/stt", {
+      method: "POST",
+      headers: { "Content-Type": "audio/wav" },
+      body: wav,
+      signal: sttAbort.signal
+    });
+    const data = await res.json();
+    if (!followUpStillCurrent(generation)) return false;
+    const text = scrubWakePrefix(data.transcript);
+    if (!text) {
+      conversationLive = false;
+      returnToWake = true;
+      return false;
+    }
+    if (!dispatchUtterance(text)) {
+      conversationLive = false;
+      returnToWake = true;
+      return false;
+    }
+    return true;
+  } catch (e) {
+    if (generation === followUpGeneration) {
+      conversationLive = false;
+      setLiveStatus("Transcription failed.");
+      returnToWake = true;
+    }
+    return false;
+  } finally {
+    if (followUpAbort === sttAbort) followUpAbort = null;
+    followUpCaptureOpen = false;
+    followUpInFlight = false;
+    if (returnToWake && generation === followUpGeneration &&
+        !recording && !talkStarting && !speaking && !busy) {
+      restoreWakeListening();
+    }
   }
 }
 
@@ -1222,10 +1421,15 @@ async function startWake() {
 
 function stopWake() {
   setWakeUi(false);
+  conversationLive = false;
+  followUpGeneration++;
+  if (followUpAbort) {
+    try { followUpAbort.abort(); } catch (e) {}
+  }
   disarmWake();
   stopWakeWatchdog();
   wakeRunning = false;
-  if (localWakeRunning()) stopLocalWake();
+  if (localWakeRunning() || wakeStarting) stopLocalWake();
   if (wakeRec) {
     wakeRec.onend = null; // don't auto-restart after an intentional stop
     try { wakeRec.stop(); } catch (e) {}
@@ -1235,25 +1439,27 @@ function stopWake() {
   setLiveStatus("Click the mic to speak");
 }
 
-function runWakeCommand(cmd) {
+function runWakeCommand(cmd, { suppressClosingAck = false } = {}) {
   cmd = (cmd || "").trim();
   if (!cmd) return;
   disarmWake();
   pauseWakeForSpeech();
   orb.stopAudio(); // release viz mic before thinking/speaking
   micStream = null; // tracks are dead now — resumeWake must reacquire, not reuse
-  if (handleConfirmIfPending(cmd)) return;
-  if (handleOpenIntent(cmd)) return;
-  ask(cmd);
+  dispatchUtterance(cmd, { suppressClosingAck });
 }
 
 function handleWake(raw) {
   const w = matchWake(raw);
+  let interruptedTts = false;
   // If she's mid-sentence when you say her name, that's an interrupt — stop her
   // and take the command, don't drop it. (Only a fresh wake word interrupts; a
   // stray armed follow-up while busy is still ignored to avoid double-runs.)
   if (busy || speaking) {
-    if (w) { window.ArtemisBargeIn.interrupt(); }
+    if (w) {
+      interruptedTts = speaking || ttsPlaying || ttsQueue.length > 0;
+      window.ArtemisBargeIn.interrupt();
+    }
     else return;
   }
   console.debug("[wake] heard:", raw); // open the console to see what was recognized
@@ -1264,7 +1470,7 @@ function handleWake(raw) {
     orb.feed(0.6);
     const cmd = (w.rest || "").trim();
     if (cmd) {
-      runWakeCommand(cmd); // "Artemis, what's the weather" in one breath
+      runWakeCommand(cmd, { suppressClosingAck: interruptedTts }); // "Artemis, what's the weather" in one breath
     } else {
       // just "Artemis": arm for the follow-up AND speak a short ack. The ack
       // pauses the recogniser briefly; when it ends, resumeWake restarts it and
@@ -1293,10 +1499,10 @@ function pauseWakeForSpeech() {
     try { wakeRec.stop(); } catch (e) {} // onend fires → wakeRunning=false
   }
 }
-function resumeWake() {
-  if (!wakeOn) return;
-  if (localWakeRunning()) { resumeLocalWake(); window.__wakeLive = true; return; } // local engine: re-arm detection
-  if (localWakeCfg && localWakeCfg.ready) { startWakeLocal(); return; } // a manual talk stopped the engine — restart it
+async function resumeWake() {
+  if (!wakeOn) return false;
+  if (localWakeRunning()) { resumeLocalWake(); window.__wakeLive = true; return true; } // local engine: re-arm detection
+  if (localWakeCfg && localWakeCfg.ready) return startWakeLocal(); // a manual talk stopped the engine — restart it
   // a stream whose tracks were stopped (orb.stopAudio) is useless — check
   // liveness, not just presence, or the orb never reacts after the 1st turn
   const live = micStream && micStream.getTracks().some((t) => t.readyState === "live");
@@ -1312,6 +1518,7 @@ function resumeWake() {
   // small delay so the just-stopped recognizer has fully ended before restart
   // (avoids the "already started" throttle); the watchdog is the backstop.
   setTimeout(safeStartRec, 250);
+  return false;
 }
 
 wakeToggle.addEventListener("click", () => (wakeOn ? stopWake() : startWake()));
@@ -1654,6 +1861,9 @@ document.querySelectorAll(".features, .team, .demo").forEach((el) => pauseIo.obs
 // freeze every CSS animation while the tab is hidden (the orb's rAF already pauses)
 document.addEventListener("visibilitychange", () => {
   document.body.classList.toggle("tab-hidden", document.hidden);
+  if (document.hidden && conversationLive) {
+    void abortFollowUp({ endConversation: true, resumeWakeAfter: true });
+  }
 });
 
 // ---- dock: intent-driven state machine (idle mic bubble ⇄ expanded panel) ----

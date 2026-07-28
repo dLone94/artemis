@@ -55,6 +55,7 @@ const CAP_SILENCE_MS = 1100;  // this much quiet after speech = you finished
 const CAP_NOSPEECH_MS = 4500; // never spoke → give up
 const CAP_MAX_MS = 12000;     // hard cap per command
 const PREROLL_MS = 1200;      // audio kept from BEFORE detection fired
+let capWaitForSpeechMs = CAP_NOSPEECH_MS;
 
 function rmsOf(f) {
   let s = 0;
@@ -175,7 +176,7 @@ function captureFrame(f, rms) {
   if (rms > speechThresh) { capHeard = true; capQuiet = 0; }
   else if (capHeard && !capQuiet) capQuiet = now;
   if ((capHeard && capQuiet && now - capQuiet > CAP_SILENCE_MS) ||
-      (!capHeard && dur > CAP_NOSPEECH_MS) ||
+      (!capHeard && dur > capWaitForSpeechMs) ||
       dur > CAP_MAX_MS) {
     finishCapture(capHeard);
   }
@@ -225,6 +226,7 @@ export function captureCommand(opts = {}) {
     capLen = pre;
     capStart = performance.now();
     capHeard = false; capQuiet = 0;
+    capWaitForSpeechMs = opts.waitForSpeechMs ?? CAP_NOSPEECH_MS;
     capOnLevel = opts.onLevel || null;
     capResolve = resolve;
     mode = "capture";

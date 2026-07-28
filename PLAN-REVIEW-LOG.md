@@ -170,3 +170,13 @@ reasonable: offer ties to the boot gesture; sender-cap honesty ("at least
 13 suites + 19/19 eval green on my re-run. Live endpoint verified: 4
 ordered sections, sourced+dated FX figure, cold news cache → honest
 clause. PASSED — one round.
+
+### Round 7 — Codex build: conversation mode (wake once, keep talking)
+waitForSpeechMs additive VAD deadline (2-line engine change), pure
+isClosingPhrase + persisted toggle seam, shared dispatchUtterance, guarded
+generation-tracked follow-up loop, dock toggle, pure-logic suite.
+
+### Claude's verdict
+wakeLocal diff verified minimal/additive; matcher whole-utterance only;
+follow-up loop guards (wake/hidden/busy/toggle/generation) traced; 16
+suites + 19/19 eval green on my re-run. PASSED — one round.
