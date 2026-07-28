@@ -1083,6 +1083,7 @@ function newTurnState(intent) {
     // is not proof — search and skills routinely return error strings.
     requiredActionSatisfied: false,
     forceAttempted: false,
+    precheckRecovered: false, // one in-turn retry after a recoverable precheck failure
     intent: intent || { intent: "chat", family: null, expected: [] },
     id: randomBytes(4).toString("hex")
   };
@@ -1205,7 +1206,13 @@ async function runToolCalls(toolCalls, convo, sources, clientActions, state, opt
 // actually asked for — searching the web does not satisfy "open my calendar".
 function isSatisfyingCall(name, state) {
   const expected = (state.intent && state.intent.expected) || [];
-  return expected.length ? expected.includes(name) : true;
+  if (!expected.length) return true;
+  // "check my email and delete them": check_email is expected as a helper,
+  // but only the deletion itself completes the turn — otherwise the loop
+  // ends satisfied after the read and she narrates deleting without doing it.
+  const mutations = (state.intent && state.intent.mutations) || [];
+  if (mutations.length) return mutations.includes(name);
+  return expected.includes(name);
 }
 
 // ---- the backstop -----------------------------------------------------------
@@ -1531,6 +1538,16 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
             const pre = await precheckSkill(confirm.name, params, skillCtx);
             if (!pre.ok) {
               state.rejected.push({ name: confirm.name, error: "precondition failed" });
+              // Recoverable ONCE per turn: hand the model the precheck's
+              // instruction as a tool result and let the loop continue (e.g.
+              // "call check_email first, then delete"). Ending the turn here
+              // spoke the summary while nothing happened — the exact bug.
+              if (!state.precheckRecovered && pre.content) {
+                state.precheckRecovered = true;
+                convo.push({ role: "assistant", content: null, tool_calls: [{ id: confirm.id, type: "function", function: { name: confirm.name, arguments: confirm.arguments } }] });
+                convo.push({ role: "tool", tool_call_id: confirm.id, content: String(pre.content) });
+                continue;
+              }
               onText(pre.summary);
               return finishTurn({ preconditionFailed: confirm.name });
             }
@@ -1667,6 +1684,12 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         const pre = await precheckSkill(confirm.name, params, skillCtx);
         if (!pre.ok) {
           state.rejected.push({ name: confirm.name, error: "precondition failed" });
+          if (!state.precheckRecovered && pre.content) {
+            state.precheckRecovered = true;
+            convo.push({ role: "assistant", content: contentBuf || null, tool_calls: [{ id: confirm.id, type: "function", function: { name: confirm.name, arguments: confirm.arguments } }] });
+            convo.push({ role: "tool", tool_call_id: confirm.id, content: String(pre.content) });
+            continue;
+          }
           onText(pre.summary);
           return finishTurn({ preconditionFailed: confirm.name });
         }
@@ -1756,6 +1779,12 @@ async function callNvidia(messages, tone, opts = {}) {
         const pre = await precheckSkill(confirm.name, params, skillCtx);
         if (!pre.ok) {
           state.rejected.push({ name: confirm.name, error: "precondition failed" });
+          if (!state.precheckRecovered && pre.content) {
+            state.precheckRecovered = true;
+            convo.push(msg);
+            convo.push({ role: "tool", tool_call_id: confirm.id, content: String(pre.content) });
+            continue;
+          }
           return finishTurn(pre.summary, { preconditionFailed: confirm.name });
         }
         const confirmId = createPending(confirm.name, params);

@@ -333,10 +333,14 @@ export function classifyIntent(text, caps = {}, history = []) {
 
   if (!matched) return { intent: "chat", family: null, expected: [], reason: "no actionable family matched" };
 
-  const expected = tools.filter((t) => t.forceFamilies.includes(matched)).map((t) => t.name);
+  const expectedTools = tools.filter((t) => t.forceFamilies.includes(matched));
+  const expected = expectedTools.map((t) => t.name);
+  // On a mutation turn, helper reads (check before delete) must not satisfy
+  // the turn — the server uses this list to demand the mutation itself.
+  const mutations = expectedTools.filter((t) => t.effect === "mutation").map((t) => t.name);
 
   if (PRONOUN_ONLY_RE.test(s) && !historyHasReferent(history)) {
-    return { intent: "needs_clarification", family: matched, expected, reason: "pronoun with no referent in context" };
+    return { intent: "needs_clarification", family: matched, expected, mutations, reason: "pronoun with no referent in context" };
   }
-  return { intent: "executable_action", family: matched, expected, reason: `matched ${matched} family` };
+  return { intent: "executable_action", family: matched, expected, mutations, reason: `matched ${matched} family` };
 }

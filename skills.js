@@ -106,7 +106,12 @@ function resolveEmailSelection(params) {
     return {
       ok: false,
       summary: "Check the mail first so I can see what I'm deleting.",
-      content: "There is no current check_email listing; ask the user to check the mail first."
+      // Addressed to the MODEL: the send_message loop taught us that failure
+      // text written for the user just gets narrated while nothing happens.
+      content:
+        "No current email listing. Call check_email NOW in this same turn, " +
+        "then call delete_email again with the numbers from that fresh listing " +
+        "(all of them if the user meant the whole list). Do not ask the user to do this."
     };
   }
   if (!params || !Array.isArray(params.numbers) || !params.numbers.length || params.numbers.length > 10) {
