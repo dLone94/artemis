@@ -150,11 +150,15 @@ async function offerConfirmation(params) {
   const deleteIntent = classifyIntent("delete email number 1", CAPS);
   assert.equal(deleteIntent.intent, "executable_action");
   assert.equal(deleteIntent.family, "email_delete");
-  assert.deepEqual(deleteIntent.expected, ["delete_email"]);
+  // A delete turn also offers the read-only lister: "check my email and
+  // delete them" needs to list before it can delete, and without a current
+  // listing delete_email's precheck can only fail. The critical property is
+  // the inverse (a READ turn never offers deletion), asserted above.
+  assert.deepEqual(deleteIntent.expected, ["check_email", "delete_email"]);
   assert.deepEqual(
-    toolDefsForFamily(CAPS, "email_delete").map((def) => def.function.name),
-    ["delete_email"],
-    "an explicit numbered delete turn force-selects only the gated deletion tool"
+    toolDefsForFamily(CAPS, "email_delete").map((def) => def.function.name).sort(),
+    ["check_email", "delete_email"],
+    "a delete turn offers the lister plus the gated deletion tool, nothing else"
   );
   assert.equal(classifyIntent("delete email number one", CAPS).family, "email_delete");
   assert.equal(classifyIntent("trash the second email", CAPS).family, "email_delete");
@@ -162,7 +166,7 @@ async function offerConfirmation(params) {
   for (const refused of ["don't delete email number 1", "do not trash the second email", "never move email 2 to trash"]) {
     assert.equal(classifyIntent(refused, CAPS).intent, "chat", refused);
   }
-  assert.notEqual(classifyIntent("delete one email", CAPS).family, "email_delete");
+  assert.equal(classifyIntent("delete one email", CAPS).family, "email_delete");
   assert.notEqual(classifyIntent("delete reminder number 1", CAPS).family, "email_delete");
   assert.notEqual(classifyIntent("delete contact number 1", CAPS).family, "email_delete");
   const registeredDelete = toolByName("delete_email", CAPS);

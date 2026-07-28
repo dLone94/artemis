@@ -46,7 +46,10 @@ const META = {
   daily_brief:     { family: "briefing", effect: "read" },
   open_url:        { family: "navigate", effect: "client" },
   play_media:      { family: "media",    effect: "client" },
-  check_email:     { family: "email",    effect: "read",   requires: "gmail" },
+  check_email:     { family: "email",    effect: "read",   requires: "gmail",
+    // also offered on delete turns: "check my email and delete them" must be
+    // able to list first, then delete from that listing
+    forceFamilies: ["email", "email_delete"] },
   read_email:      { family: "email",    effect: "read",   requires: "gmail" },
   delete_email:    {
     family: "email",
@@ -86,10 +89,22 @@ export const ACTIONABLE_FAMILIES = new Set([
 
 const EMAIL_LIST_POSITION =
   String.raw`(?:\d+|numbers?\s+(?:one|two|three|four|five|six|seven|eight|nine|ten)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last)`;
+// A list position must NOT be required here: "delete the unread emails" has
+// none, and requiring one silently routed every such request to the read-only
+// email family — she'd re-read the inbox forever instead of deleting. The
+// numbered-list discipline lives in delete_email's own validation; routing
+// only needs to know the user wants deletion.
 const EMAIL_DELETE_PATTERN = new RegExp(
-  String.raw`\b(?:delete|trash)\b(?=[^.?!]{0,60}\b(?:e-?mails?|mail)\b)(?=[^.?!]{0,60}\b${EMAIL_LIST_POSITION}\b)[^.?!]{0,60}` +
+  String.raw`\b(?:delete|trash|remove|clear|clean\s+(?:up|out))\b[^.?!]{0,60}\b(?:e-?mails?|mail|inbox)\b` +
     "|" +
-    String.raw`\bmove\b(?=[^.?!]{0,60}\b(?:e-?mails?|mail)\b)(?=[^.?!]{0,60}\b${EMAIL_LIST_POSITION}\b)[^.?!]{0,60}\b(?:to\s+)?trash\b`,
+    String.raw`\b(?:e-?mails?|mail|inbox)\b[^.?!]{0,60}\b(?:delete|trash|remove)\b` +
+    "|" +
+    // "delete number 2" / "trash the first one" — the follow-up after a
+    // listing, where nobody repeats the word "email". The lookahead keeps
+    // other deletable nouns (reminders, contacts, notes) out of this family.
+    String.raw`\b(?:delete|trash)\b(?![^.?!]{0,30}\b(?:reminders?|contacts?|notes?|alarms?|messages?|files?|history)\b)[^.?!]{0,30}\b${EMAIL_LIST_POSITION}\b(?:\s+one(?:s)?)?` +
+    "|" +
+    String.raw`\bmove\b[^.?!]{0,60}\b(?:e-?mails?|mail)\b[^.?!]{0,60}\b(?:to\s+)?trash\b`,
   "i"
 );
 

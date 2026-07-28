@@ -353,7 +353,12 @@ let pendingConfirm = null;
 function handleConfirmIfPending(text) {
   if (!pendingConfirm) return false;
   const t = (text || "").toLowerCase().trim();
-  const yes = /\b(yes|yeah|yep|yup|sure|confirm|send it|do it|go ahead|please do|affirmative|okay|ok)\b/.test(t);
+  // Repeating the pending action's verb IS consent: replying "delete them" to
+  // "shall I move these to trash?" previously counted as ambiguous, cancelled
+  // the confirmation, and re-ran the command — an infinite loop from the
+  // user's side.
+  const yes = /\b(yes|yeah|yep|yup|sure|confirm|send it|do it|go ahead|please do|affirmative|okay|ok)\b/.test(t) ||
+    /\b(delete|trash|send|remove)\b.{0,24}\b(it|them|those|these|all|everything)\b/.test(t);
   const no = /\b(no|nope|nah|cancel|stop|don'?t|do not|never ?mind|abort|negative)\b/.test(t);
   const pa = pendingConfirm;
   pendingConfirm = null;
