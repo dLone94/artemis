@@ -1306,6 +1306,7 @@ async function followUpListen() {
   let sttAbort = null;
   followUpInFlight = true;
   followUpCaptureOpen = true;
+  hud("log", "status", "follow-up: mic open — just talk (20s)");
   playEarcon({ soft: true });
   orb.feed(0.35);
   orb.setStatus("listening");
@@ -1335,6 +1336,7 @@ async function followUpListen() {
       if (!wav) {
         conversationLive = false;
         returnToWake = true;
+        hud("log", "status", "follow-up: closed (silence) — say \u201cHey Artemis\u201d");
         return false;
       }
 
