@@ -2706,6 +2706,8 @@ async function handleRequest(req, res) {
     // surface) and one inspiring line. News stays a voice-ask away via the
     // brief. Mail failure is omitted honestly, never zeroed.
     try {
+      // Human, not a status report: one flowing sentence, phrasing varied per
+      // boot so no two launches sound identical. Count-only, still.
       let mailClause = null;
       if (gmailConfigured()) {
         try {
@@ -2714,16 +2716,25 @@ async function handleRequest(req, res) {
             new Promise((_, rej) => setTimeout(() => rej(new Error("mail timeout")), 4000))
           ]);
           const n = Array.isArray(mails) ? mails.length : 0;
-          mailClause = n === 0 ? "Inbox is clear."
-            : n === 1 ? "You've got one unread email."
-            : n >= 10 ? "You've got at least ten unread emails."
-            : `You've got ${n} unread emails.`;
+          const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+          mailClause = n === 0
+            ? pick(["Inbox is quiet, nothing waiting.", "Nothing new in the mail.", "Your inbox is all clear."])
+            : n === 1
+              ? pick(["One email came in while you were away.", "There's a single email waiting when you're ready.", "Just one new email for you."])
+              : n >= 10
+                ? "The inbox piled up a bit — at least ten waiting."
+                : pick([`${n} emails came in while you were away.`, `${n} new emails, whenever you're ready.`]);
         } catch (e) { /* unreadable mail → say nothing about mail */ }
       }
       const inspire = inspirationForDay();
+      const casualGreeting = [
+        `Good ${timeGreeting()}, ${ADDRESS}.`,
+        `${timeGreeting() === "evening" ? "Evening" : timeGreeting() === "morning" ? "Morning" : "Hey"}, ${ADDRESS} — good to have you back.`,
+        `Welcome back, ${ADDRESS}.`
+      ][Math.floor(Math.random() * 3)];
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify({
-        greeting,
+        greeting: casualGreeting,
         mail: mailClause,
         inspire,
         offer: "",
