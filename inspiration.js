@@ -47,15 +47,23 @@ const BRIDGES = [
   "One thought before the day starts."
 ];
 
-function dayOfYear(date) {
-  const start = Date.UTC(date.getFullYear(), 0, 0);
-  return Math.floor((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - start) / 86400000);
+// Fresh on EVERY entry, never the same twice in a row. Day-seeding sounded
+// elegant and was wrong: the user enters several times a day and heard the
+// identical sentence each time — the exact robotic tic this file exists to
+// avoid. Last picks live in module state; a restart reshuffles, which is fine.
+let lastLine = -1;
+let lastBridge = -1;
+function pickAvoiding(length, avoid) {
+  let i = Math.floor(Math.random() * length);
+  if (i === avoid) i = (i + 1 + Math.floor(Math.random() * (length - 1))) % length;
+  return i;
 }
 
-/** The day's line — stable within a calendar day, cycles the whole set. */
-export function inspirationForDay(date = new Date()) {
-  const day = dayOfYear(date);
-  return BRIDGES[day % BRIDGES.length] + " " + LINES[day % LINES.length];
+/** A bridged line — different combination on every call. */
+export function inspirationForDay() {
+  lastBridge = pickAvoiding(BRIDGES.length, lastBridge);
+  lastLine = pickAvoiding(LINES.length, lastLine);
+  return BRIDGES[lastBridge] + " " + LINES[lastLine];
 }
 
 export const INSPIRATION_COUNT = LINES.length;
