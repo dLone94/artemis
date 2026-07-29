@@ -34,11 +34,28 @@ const LINES = [
   "Your time on ships is buying something. Make sure you're the one deciding what."
 ];
 
+// The hand-off into the line. Varied on its own cycle (7 vs 30 shares no
+// factor), so bridge+line pairings don't repeat for 210 days — a fixed
+// "here's your quote" preamble would just be a new robotic tic.
+const BRIDGES = [
+  "Before you go — here's a thought for today.",
+  "One more thing. I picked this for you today.",
+  "And something to keep in your pocket:",
+  "Here's what I'd underline today.",
+  "A small thing worth hearing today:",
+  "And for the road:",
+  "One thought before the day starts."
+];
+
+function dayOfYear(date) {
+  const start = Date.UTC(date.getFullYear(), 0, 0);
+  return Math.floor((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - start) / 86400000);
+}
+
 /** The day's line — stable within a calendar day, cycles the whole set. */
 export function inspirationForDay(date = new Date()) {
-  const start = Date.UTC(date.getFullYear(), 0, 0);
-  const day = Math.floor((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - start) / 86400000);
-  return LINES[day % LINES.length];
+  const day = dayOfYear(date);
+  return BRIDGES[day % BRIDGES.length] + " " + LINES[day % LINES.length];
 }
 
 export const INSPIRATION_COUNT = LINES.length;

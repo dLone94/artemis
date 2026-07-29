@@ -74,6 +74,27 @@ window.celebrationVoiceActive = () =>
 // On the cockpit page the orb sits dead-center; on the landing it offsets
 // right to make room for the hero copy (VoiceOrb's default).
 const orb = new VoiceOrb($("sceneStage"), { center: document.body.classList.contains("cockpit") });
+
+// Clickable skill moons: a click near a moon opens its info card. The stage
+// sits behind the HUD panels, so only clicks that reach it (the open middle
+// of the screen) are candidates — panels and dock stay unaffected.
+(function moonClicks() {
+  const stage = $("sceneStage");
+  if (!stage || !orb.moonInfoAt) return;
+  stage.style.pointerEvents = "auto";
+  stage.style.cursor = "default";
+  stage.addEventListener("pointermove", (e) => {
+    const r = stage.getBoundingClientRect();
+    const hit = orb.moonInfoAt(e.clientX - r.left, e.clientY - r.top);
+    stage.style.cursor = hit ? "pointer" : "default";
+  });
+  stage.addEventListener("click", (e) => {
+    const r = stage.getBoundingClientRect();
+    const hit = orb.moonInfoAt(e.clientX - r.left, e.clientY - r.top);
+    if (!hit) return;
+    hud("context", { title: hit.title, lines: [hit.what, "Try: " + hit.say] });
+  });
+})();
 window.__orb = orb;
 
 // The cockpit HUD (cockpit.js) listens on window.ArtemisHUD; on pages without

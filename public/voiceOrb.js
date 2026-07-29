@@ -31,7 +31,7 @@ const WIRE_PULSE_COUNT = 5;
 const SCAN_INTERVAL = 10;
 const SCAN_DURATION = 2.5;
 const SCAN_RING_STEPS = 64;
-const MOON_COUNT = 6;
+const MOON_COUNT = 11;
 const MOON_SETTLE_TIME = 0.6;
 const MOON_ORBIT_STEPS = 48;
 const MOON_TAIL_SAMPLES = 5;
@@ -49,7 +49,27 @@ const MOON_LABELS = Object.freeze([
   "MESSAGES",
   "MEDIA",
   "MEMORY",
-  "FINANCE"
+  "FINANCE",
+  "BRIEF",
+  "FOLLOW-UPS",
+  "SCHOOL",
+  "PLAN",
+  "RADAR"
+]);
+
+// One-tap description per moon — shown as a context card on click.
+export const MOON_INFO = Object.freeze([
+  { title: "RESEARCH", what: "Web research with sources.", say: "should I invest in… / research…" },
+  { title: "MAIL", what: "Reads, checks and trashes Gmail — trash only, always asks.", say: "check my email · delete number 2" },
+  { title: "MESSAGES", what: "WhatsApp unread checks and drafted sends you approve.", say: "any WhatsApp messages?" },
+  { title: "MEDIA", what: "Opens sites, plays music and video.", say: "play some jazz · open YouTube" },
+  { title: "MEMORY", what: "Notes, reminders and meeting notes.", say: "take notes · what were my meeting notes?" },
+  { title: "FINANCE", what: "Live market figures, always with source and date.", say: "what's the dollar to shilling?" },
+  { title: "BRIEF", what: "Your morning rundown: mail, day, money minute, world.", say: "give me my brief" },
+  { title: "FOLLOW-UPS", what: "Who owes you a reply, and whom you owe. Nudges you send.", say: "any follow-ups?" },
+  { title: "SCHOOL", what: "Investing lessons from zero, one at a time.", say: "teach me investing · next lesson" },
+  { title: "PLAN", what: "Your Money Map: staged plan from your own numbers.", say: "my money map" },
+  { title: "RADAR", what: "Weekly sourced sweep of your opportunity themes.", say: "run the radar" }
 ]);
 
 const FAMILY_NAMES = Object.freeze([
@@ -61,9 +81,18 @@ const FAMILY_NAMES = Object.freeze([
   "navigate",
   "memory",
   "notes",
-  "finance"
+  "finance",
+  "briefing",
+  "followups",
+  "followups_nudge",
+  "school",
+  "map",
+  "map_update",
+  "radar",
+  "radar_update",
+  "meeting"
 ]);
-const FAMILY_MOONS = new Int8Array([0, 0, 1, 2, 3, 3, 4, 4, 5]);
+const FAMILY_MOONS = new Int8Array([0, 0, 1, 2, 3, 3, 4, 4, 5, 6, 7, 7, 8, 9, 9, 10, 10, 4]);
 
 function makeAlphaStyles(prefix, count = STYLE_ALPHA_BUCKETS) {
   const styles = new Array(count);
@@ -199,7 +228,12 @@ const MOON_STYLES = Object.freeze([
   MESSAGE_STYLES,
   V_STYLES,
   ICE_STYLES,
-  GOLD_STYLES
+  GOLD_STYLES,
+  HL_STYLES,      // BRIEF — bright ice
+  MAIL_STYLES,    // FOLLOW-UPS — mail-adjacent teal
+  V_STYLES,       // SCHOOL — violet
+  GOLD_STYLES,    // PLAN — finance gold family
+  O_STYLES        // RADAR — primary cyan
 ]);
 const MOON_PREFIXES = Object.freeze([
   PAL.O,
@@ -207,7 +241,12 @@ const MOON_PREFIXES = Object.freeze([
   PAL.MESSAGES,
   PAL.V,
   PAL.ICE,
-  PAL.GOLD
+  PAL.GOLD,
+  PAL.Hl,
+  PAL.MAIL,
+  PAL.V,
+  PAL.GOLD,
+  PAL.O
 ]);
 const SCENE_WASH = PAL.D + "0.022)";
 const GRID_STYLE = PAL.D + "0.05)";
@@ -712,6 +751,24 @@ export class VoiceOrb {
     if (value > this._manualAmp) this._manualAmp = value;
   }
 
+  /**
+   * Which moon (if any) sits under a canvas-relative point. Returns the
+   * MOON_INFO entry plus its index, or null. Generous 18px halo — these are
+   * small targets.
+   */
+  moonInfoAt(x, y) {
+    if (this._hitCenterX == null) return null;
+    let best = -1;
+    let bestD = 18 * 18;
+    for (let i = 0; i < MOON_COUNT; i++) {
+      const dx = x - (this._hitCenterX + this._moonScreenX[i]);
+      const dy = y - (this._hitCenterY + this._moonScreenY[i]);
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best >= 0 ? { index: best, ...MOON_INFO[best] } : null;
+  }
+
   toolEvent(data = {}) {
     if (!data || typeof data !== "object") return;
     const phase =
@@ -1111,6 +1168,8 @@ export class VoiceOrb {
     const centerYBase = this.narrow ? height * 0.46 : height * 0.5;
     const scroll = this.reduced ? 0 : this._scrollProg || 0;
     const centerY = centerYBase - scroll * height * 0.32;
+    this._hitCenterX = centerX;
+    this._hitCenterY = centerY;
     const recede = 1 - scroll * 0.28;
     const hudAlpha = 1 - scroll * 0.45;
     const base = Math.min(width, height) * 0.4 * recede;
