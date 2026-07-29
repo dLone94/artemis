@@ -27,13 +27,19 @@ function deliverBriefing(spoken) {
     : briefingP;
   responseP.then((b) => {
     if (!b) return;
-    if (spoken && b.offerSkill === "daily_brief" && b.offer && window.ArtemisSpeak) {
-      const command = "give me my brief";
+    if (b.offerSkill && b.offerCommand && b.offer) {
+      const command = String(b.offerCommand);
       const ask = b.greeting + " " + b.offer;
-      window.__pendingBriefing = { command };
       addLine("artemis", ask);
-      addCard({ title: "BRIEFING READY", lines: ["say “yes” — or tap play"], playCommand: command });
-      window.ArtemisSpeak(ask);
+      addCard({
+        title: b.offerSkill === "opportunity_radar" ? "RADAR DUE" : "BRIEFING READY",
+        lines: [spoken ? "say “yes” — or tap play" : "tap play when ready"],
+        playCommand: command
+      });
+      window.__pendingBriefing = { command };
+      if (spoken && window.ArtemisSpeak) {
+        window.ArtemisSpeak(ask);
+      }
     } else if (spoken && b.news && window.ArtemisSpeak) {
       const ask = b.greeting + " " + b.offer;
       window.__pendingBriefing = b.news; // a bare "yes" within the next turn plays it

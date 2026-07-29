@@ -36,6 +36,7 @@ export const MAIL_UNTRUSTED_SKILLS = new Set([
 // into model context. A turn that ran fetch_page or one of these is "tainted".
 export const UNTRUSTED_SKILLS = new Set([
   ...MAIL_UNTRUSTED_SKILLS,
+  "opportunity_radar",
   "research_investment"
 ]);
 
@@ -43,6 +44,7 @@ const MAIL_TAINT_BLOCKED_TOOLS = new Set([
   "web_search",
   "fetch_page",
   "web_research",
+  "opportunity_radar",
   "research_investment",
   "open_url",
   "play_media"

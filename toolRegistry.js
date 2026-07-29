@@ -44,6 +44,13 @@ const META = {
   fetch_page:      { family: "web",      effect: "read",   requires: "search" },
   web_research:    { family: "web",      effect: "read",   requires: "search" },
   daily_brief:     { family: "briefing", effect: "read" },
+  opportunity_radar: { family: "radar", effect: "read", directOnly: true },
+  update_radar_themes: {
+    family: "radar",
+    effect: "mutation",
+    confirm: "always",
+    forceFamilies: ["radar_update"]
+  },
   money_school:    { family: "school",   effect: "mutation" },
   money_map:       { family: "map",      effect: "mutation" },
   update_money_map: {
@@ -92,6 +99,8 @@ const META = {
 // every "what do you think about…" would break normal talking.
 export const ACTIONABLE_FAMILIES = new Set([
   "briefing",
+  "radar",
+  "radar_update",
   "school",
   "map",
   "map_update",
@@ -154,12 +163,73 @@ const MONEY_SCHOOL_PATTERN = new RegExp(
     String.raw`(?![^.?!]{0,35}\b(?:price|yield|rate|worth|trading|today|now|current|latest)\b)`,
   "i"
 );
+const RADAR_COMMAND_PREFIX =
+  String.raw`(?:(?:please|(?:can|could|would|will)\s+you)\s+)?`;
+const RADAR_TRAILER = String.raw`(?:\s+please)?\s*[?!.]*`;
+const RADAR_THEME_TARGET =
+  String.raw`(?:(?:my|the)\s+)?(?:opportunity\s+)?radar(?:['’]s)?\s+themes?`;
+const RADAR_THEME_REPLACEMENT =
+  String.raw`(?:\s*(?::|=)\s*[^.?!;\r\n]{3,300}|\s+(?:to|as|with)\s+[^.?!;\r\n]{3,300})`;
+const RADAR_UPDATE_PATTERN = new RegExp(
+  String.raw`^\s*` +
+    RADAR_COMMAND_PREFIX +
+    String.raw`(?:update|change|replace|edit|set)\s+` +
+    RADAR_THEME_TARGET +
+    String.raw`(?:` +
+    RADAR_THEME_REPLACEMENT +
+    String.raw`)?` +
+    RADAR_TRAILER +
+    String.raw`\s*$`,
+  "i"
+);
+const RADAR_RUN_PATTERN = new RegExp(
+  String.raw`^\s*` +
+    RADAR_COMMAND_PREFIX +
+    String.raw`(?:run\s+(?:the\s+)?(?:opportunity\s+)?radar|weekly\s+(?:opportunity\s+)?(?:scan|sweep))` +
+    RADAR_TRAILER +
+    String.raw`\s*$`,
+  "i"
+);
+const RADAR_REPLAY_PATTERN = new RegExp(
+  String.raw`^\s*(?:what\s+did\s+(?:the\s+)?radar\s+find|opportunity\s+radar)` +
+    RADAR_TRAILER +
+    String.raw`\s*$`,
+  "i"
+);
+const RADAR_READ_PATTERN = new RegExp(
+  `${RADAR_RUN_PATTERN.source}|${RADAR_REPLAY_PATTERN.source}`,
+  "i"
+);
+const NEGATED_RADAR_ACTION_RE = new RegExp(
+  String.raw`^\s*(?:(?:i\s+)?don['’]?t|(?:i\s+)?do\s+not|never|no\s+need|i(?:['’]m|\s+am)\s+not|i(?:['’]d|\s+would)\s+rather\s+not|without)\b` +
+    String.raw`[^.?!;]{0,80}\b(?:` +
+    String.raw`(?:run|start)\s+(?:the\s+)?(?:opportunity\s+)?radar` +
+    String.raw`|(?:run|start)\s+(?:the\s+)?weekly\s+(?:opportunity\s+)?(?:scan|sweep)` +
+    String.raw`|(?:update|change|replace|edit|set)\s+` +
+    RADAR_THEME_TARGET +
+    String.raw`(?:` +
+    RADAR_THEME_REPLACEMENT +
+    String.raw`)?` +
+    String.raw`)` +
+    RADAR_TRAILER +
+    String.raw`\s*$`,
+  "i"
+);
+
+export function radarActionForText(text) {
+  const value = String(text || "");
+  if (RADAR_RUN_PATTERN.test(value)) return "run";
+  if (RADAR_REPLAY_PATTERN.test(value)) return "replay";
+  return null;
+}
 
 // Phrases that map a user's words onto a family. Recall-biased: it is much worse
 // to miss a real request (she narrates and does nothing — the bug) than to force
 // a tool on a borderline turn (she does the thing).
 const FAMILY_PATTERNS = {
   briefing: /\b(?:my\s+(?:morning\s+)?brief|morning\s+brief|what(?:['’]s|\s+is)\s+my\s+day)\b/i,
+  radar_update: RADAR_UPDATE_PATTERN,
+  radar: RADAR_READ_PATTERN,
   map_update:
     /\b(?:actually|update|change|correct|revise)\b[^.?!]{0,70}\b(?:money\s+map|income|contract\s+months?|family\s+(?:needs?|costs?)|monthly\s+needs?|savings?|loss\s+(?:cap|limit)|could\s+lose|horizon|years?\s+until|risk\s+comfort|sleep\s+test)\b|\b(?:income|contract\s+months?|family\s+(?:needs?|costs?)|monthly\s+needs?|savings?|loss\s+(?:cap|limit)|horizon|risk\s+comfort|sleep\s+test)\b[^.?!]{0,50}\b(?:has\s+changed|is\s+actually|should\s+be)\b/i,
   school: MONEY_SCHOOL_PATTERN,
@@ -209,7 +279,11 @@ function capOk(entry, caps) {
 
 // Every tool Artemis could ever call, with its metadata merged in.
 function allEntries() {
-  const skills = skillToolDefs().map((s) => ({ name: s.name, description: s.description, parameters: s.input_schema }));
+  const skills = skillToolDefs({ includeDirect: true }).map((s) => ({
+    name: s.name,
+    description: s.description,
+    parameters: s.input_schema
+  }));
   return [...NATIVE_DEFS, ...skills].map((def) => {
     const meta = META[def.name] || { family: "other", effect: "read" };
     const skill = getSkill(def.name);
@@ -222,6 +296,7 @@ function allEntries() {
       requires: meta.requires || null,
       external: !!meta.external,
       confirm: meta.confirm || null,
+      directOnly: meta.directOnly === true,
       forceFamilies: Array.isArray(meta.forceFamilies) ? meta.forceFamilies : [meta.family],
       // a skill's own requiresConfirmation is a floor, never lowered here
       alwaysConfirm: !!(skill && skill.requiresConfirmation) || !!meta.external || meta.confirm === "always",
@@ -230,25 +305,30 @@ function allEntries() {
   });
 }
 
-/** Every tool that is usable right now, given the configured capabilities. */
-export function availableTools(caps = {}) {
+function routableTools(caps = {}) {
   return allEntries().filter((e) => capOk(e, caps));
 }
 
+/** Every provider-callable tool usable with the configured capabilities. */
+export function availableTools(caps = {}) {
+  return routableTools(caps).filter((entry) => !entry.directOnly);
+}
+
 export function toolByName(name, caps = {}) {
-  return availableTools(caps).find((e) => e.name === name) || null;
+  return routableTools(caps).find((e) => e.name === name) || null;
 }
 
 /** Tool schemas in OpenAI/NVIDIA function-calling format. */
 export function openaiToolDefs(caps = {}, filter) {
   return availableTools(caps)
-    .filter((e) => (filter ? filter(e) : true))
+    .filter((entry) => (filter ? filter(entry) : true))
     .map((e) => ({ type: "function", function: { name: e.name, description: e.description, parameters: e.parameters } }));
 }
 
 /** Tool schemas in Anthropic format (shared prompt policy; legacy path). */
 export function anthropicToolDefs(caps = {}) {
-  return availableTools(caps).map((e) => ({ name: e.name, description: e.description, input_schema: e.parameters }));
+  return availableTools(caps)
+    .map((e) => ({ name: e.name, description: e.description, input_schema: e.parameters }));
 }
 
 /** The tools that could satisfy a given family, as OpenAI defs. */
@@ -306,6 +386,13 @@ export function validateToolCall(name, rawArgs, caps = {}) {
     // usable error, and the user deserves an honest "that's not connected"
     const known = allEntries().find((e) => e.name === name);
     return { ok: false, error: known ? `${name} is not available (missing ${known.requires} configuration)` : `unknown tool "${name}"` };
+  }
+  if (tool.directOnly) {
+    return {
+      ok: false,
+      error: `${name} is available only through code-owned direct dispatch`,
+      tool
+    };
   }
 
   let args = rawArgs;
@@ -377,11 +464,15 @@ function historyHasReferent(history = []) {
 export function classifyIntent(text, caps = {}, history = []) {
   const s = String(text || "").trim();
   if (!s) return { intent: "chat", family: null, expected: [], reason: "empty" };
-  if (NEGATED_ACTION_RE.test(s) || NEGATED_FOLLOWUP_ACTION_RE.test(s)) {
+  if (
+    NEGATED_ACTION_RE.test(s) ||
+    NEGATED_FOLLOWUP_ACTION_RE.test(s) ||
+    NEGATED_RADAR_ACTION_RE.test(s)
+  ) {
     return { intent: "chat", family: null, expected: [], reason: "action is negated" };
   }
 
-  const tools = availableTools(caps);
+  const tools = routableTools(caps);
   const families = new Set(tools.flatMap((t) => t.forceFamilies));
 
   let matched = null;
@@ -402,5 +493,13 @@ export function classifyIntent(text, caps = {}, history = []) {
   if (PRONOUN_ONLY_RE.test(s) && !historyHasReferent(history)) {
     return { intent: "needs_clarification", family: matched, expected, mutations, reason: "pronoun with no referent in context" };
   }
-  return { intent: "executable_action", family: matched, expected, mutations, reason: `matched ${matched} family` };
+  const radarAction = matched === "radar" ? radarActionForText(s) : null;
+  return {
+    intent: "executable_action",
+    family: matched,
+    expected,
+    mutations,
+    ...(radarAction ? { radarAction } : {}),
+    reason: `matched ${matched} family`
+  };
 }

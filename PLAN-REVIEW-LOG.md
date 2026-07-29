@@ -207,3 +207,15 @@ names/promises anywhere in the curriculum.
 tickers/brands in the curriculum, advisor line present in code, routing
 correct for school/map/map_update including definition-shaped questions.
 PASSED — one round.
+
+### Round 10 — Codex review-then-build: opportunity_radar + update_radar_themes
+Pre-build audit hardened the spec substantially: scraped text (titles,
+snippets, hostnames, numbers) fully excluded from speech/persistence —
+findings use code-owned wording with opaque source ordinals; run/replay
+derived from registry patterns and dispatched before any LLM; theme
+confirmation upgraded to a prepared→approved→consumed capability flow;
+staleness distinguishes missing vs corrupt state; atomic mutation with
+revision snapshots.
+
+### Claude's verdict
+18 suites + 19/19 eval green on my re-run. PASSED — one round.

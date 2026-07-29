@@ -21,11 +21,12 @@ import {
   confirmPromptFor,
   precheckSkill,
   createPending,
-  getPending,
-  dropPending,
+  consumePending,
+  confirmationOutcomeReply,
   assembleDailyBrief,
   claimDailyBriefOffer,
   isDailyBriefOfferTime,
+  isOpportunityRadarDue,
   confirmedNudgeResponse
 } from "./skills.js";
 import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, listUnread } from "./gmail.js";
@@ -927,7 +928,11 @@ async function streamFirstResponse(convo, system, tools, model, onText) {
 // fetch_page (executed here). Runs an agentic loop until a final text reply.
 async function callClaude(messages, tone) {
   const system = ARTEMIS_SYSTEM_PROMPT + (TONE[tone] || "");
-  const tools = [WEB_SEARCH_TOOL, FETCH_PAGE_TOOL, ...skillToolDefs()];
+  const tools = [
+    WEB_SEARCH_TOOL,
+    FETCH_PAGE_TOOL,
+    ...skillToolDefs({ includeDirect: false })
+  ];
   const convo = messages.map((m) => ({ role: m.role, content: m.content }));
   const sources = [];
   const clientActions = []; // things for the browser to do (e.g. open a tab)
@@ -1041,6 +1046,17 @@ async function callClaude(messages, tone) {
           toolResults.push({ type: "tool_result", tool_use_id: block.id, content, is_error: isError });
         } else if (isSkill(block.name)) {
           // only non-confirm skills reach here (confirm ones returned above)
+          const meta = toolByName(block.name, currentCaps());
+          if (meta && meta.directOnly) {
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: block.id,
+              content:
+                "Tool call rejected: this skill is available only through code-owned direct dispatch.",
+              is_error: true
+            });
+            continue;
+          }
           try {
             if (UNTRUSTED_SKILLS.has(block.name)) readUntrusted = true;
             if (MAIL_UNTRUSTED_SKILLS.has(block.name)) mailUntrusted = true;
@@ -1906,8 +1922,68 @@ async function callNvidia(messages, tone, opts = {}) {
   return finishTurn("That took too many steps — try rephrasing?", { roundsExhausted: true });
 }
 
+// Opportunity Radar's run/replay distinction changes whether the network is
+// touched, so it is not a judgment we delegate to either model provider. The
+// registry derives the action from the user's explicit phrase and this
+// code-built path executes it directly. Mail-tainted turns stay in the ordinary
+// guarded loop, where the radar tool is blocked.
+function opportunityRadarIntent(messages) {
+  if (historyHasMailTaint(messages)) return null;
+  const intent = classifyIntent(lastUserText(messages), currentCaps(), messages);
+  if (
+    intent.intent !== "executable_action" ||
+    intent.family !== "radar" ||
+    !["run", "replay"].includes(intent.radarAction)
+  ) {
+    return null;
+  }
+  return intent;
+}
+
+async function dispatchOpportunityRadar(messages, opts = {}) {
+  const intent = opts.intent || opportunityRadarIntent(messages);
+  if (!intent) return null;
+  const skill = getSkill("opportunity_radar");
+  if (!skill) return null;
+  const params = { action: intent.radarAction };
+  let result;
+  if (FAKE_TOOLS) {
+    const synthetic = fakeToolResult("opportunity_radar", params);
+    result = {
+      ok: synthetic.ok,
+      summary: synthetic.content,
+      sources: []
+    };
+  } else {
+    const ctx = opts.signal ? { ...skillCtx, signal: opts.signal } : skillCtx;
+    result = await skill.execute(params, ctx);
+    if (!(opts.signal && opts.signal.aborted)) {
+      try {
+        await skillCtx.appendAction({
+          skill: "opportunity_radar",
+          params,
+          result: { ok: result.ok, summary: result.summary }
+        });
+      } catch (error) {
+        console.error("opportunity radar action log error:", error.message);
+      }
+    }
+  }
+  const clientActions = [];
+  if (result.panel) clientActions.push({ type: "panel", card: result.panel });
+  return {
+    ok: result.ok !== false,
+    reply: result.summary,
+    sources: Array.isArray(result.sources) ? result.sources : [],
+    clientActions,
+    toolsUsed: ["opportunity_radar"],
+    intent: intent.intent,
+    mailUntrusted: false
+  };
+}
+
 // the active brain
-function callLLM(messages, tone) {
+async function callLLM(messages, tone) {
   return openAiCompatActive() ? callNvidia(messages, tone) : callClaude(messages, tone);
 }
 
@@ -2376,6 +2452,24 @@ async function handleRequest(req, res) {
     const greeting = `Good ${timeGreeting()}, ${ADDRESS}. Welcome back.`;
     const claimDaily = url.searchParams.get("claimDaily") === "1";
     const now = new Date();
+    let radarDue = null;
+    try {
+      radarDue = await isOpportunityRadarDue(now, skillCtx);
+    } catch (e) {
+      console.error("opportunity radar offer state error:", e.message);
+    }
+    if (radarDue === true) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({
+        greeting,
+        offer: "My weekly opportunity scan is due — want it?",
+        offerSkill: "opportunity_radar",
+        offerCommand: "run the radar",
+        news: "",
+        cachedAt: briefingCache.at
+      }));
+      return;
+    }
     if (claimDaily && isDailyBriefOfferTime(now)) {
       let offered = false;
       try {
@@ -2388,6 +2482,7 @@ async function handleRequest(req, res) {
         greeting,
         offer: offered ? "Want your brief?" : "",
         offerSkill: offered ? "daily_brief" : "",
+        offerCommand: offered ? "give me my brief" : "",
         news: "",
         cachedAt: briefingCache.at
       }));
@@ -2400,13 +2495,20 @@ async function handleRequest(req, res) {
         greeting,
         offer: briefingCache.text ? "Would you like a quick brief on the news around the world?" : "",
         offerSkill: "",
+        offerCommand: "",
         news: briefingCache.text,
         cachedAt: briefingCache.at
       }));
     } catch (e) {
       console.error("/api/briefing error:", e.message);
       res.writeHead(200, { "Content-Type": "application/json" }); // never block the boot
-      res.end(JSON.stringify({ greeting, offer: "", offerSkill: "", news: "" }));
+      res.end(JSON.stringify({
+        greeting,
+        offer: "",
+        offerSkill: "",
+        offerCommand: "",
+        news: ""
+      }));
     }
     return;
   }
@@ -2446,12 +2548,6 @@ async function handleRequest(req, res) {
 
   // Conversation with the active LLM (+ web search)
   if (url.pathname === "/api/chat" && req.method === "POST") {
-    // same gate as /api/chat/stream: EITHER provider being configured is enough
-    if (!anthropicApiKey && !openAiCompatActive()) {
-      res.writeHead(503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No LLM key set — add GROQ_API_KEY, NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env" }));
-      return;
-    }
     const ip = (req.socket && req.socket.remoteAddress) || "unknown";
     if (rateLimited(ip)) {
       res.writeHead(429, { "Content-Type": "application/json" });
@@ -2461,6 +2557,32 @@ async function handleRequest(req, res) {
     try {
       const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
       const messages = sanitizeMessages(body.messages); // block role:"system" injection
+      const radarIntent = opportunityRadarIntent(messages);
+      if (radarIntent) {
+        const directAbort = new AbortController();
+        res.on("close", () => {
+          if (!res.writableEnded) {
+            directAbort.abort(new Error("client disconnected"));
+          }
+        });
+        const result = await dispatchOpportunityRadar(messages, {
+          intent: radarIntent,
+          signal: directAbort.signal
+        });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+      // Direct radar replay needs no model. Every other chat request still
+      // requires one configured provider.
+      if (!anthropicApiKey && !openAiCompatActive()) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          error:
+            "No LLM key set — add GROQ_API_KEY, NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env"
+        }));
+        return;
+      }
       bumpUsage("llm");
       const result = await callLLM(messages, body.tone);
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -2553,17 +2675,26 @@ async function handleRequest(req, res) {
     };
     try {
       const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
-      const pending = getPending(body.confirmId);
-      if (!pending) {
+      const outcome = consumePending(body.confirmId, body.decision);
+      const pending = outcome.pending;
+      if (outcome.status === "missing") {
         res.writeHead(200, confirmHeaders);
         res.end(JSON.stringify({ reply: "That action expired — just ask me again." }));
         return;
       }
-      dropPending(body.confirmId);
-      if (body.decision !== "yes") {
+      if (outcome.status === "expired") {
+        res.writeHead(200, confirmHeaders);
+        res.end(JSON.stringify({
+          reply: confirmationOutcomeReply(pending.name, "expired")
+        }));
+        return;
+      }
+      if (outcome.status !== "approved") {
         await skillCtx.appendAction({ skill: pending.name, params: pending.params, cancelled: true });
         res.writeHead(200, confirmHeaders);
-        res.end(JSON.stringify({ reply: "Okay, cancelled — nothing done." }));
+        res.end(JSON.stringify({
+          reply: confirmationOutcomeReply(pending.name, "cancelled")
+        }));
         return;
       }
       const skill = getSkill(pending.name);
@@ -2594,15 +2725,30 @@ async function handleRequest(req, res) {
   // fetch_page tool turn it resets and falls back to the full non-streamed answer.
   if (url.pathname === "/api/chat/stream" && req.method === "POST") {
     const nvidiaActive = openAiCompatActive();
-    if (!anthropicApiKey && !nvidiaActive) {
-      res.writeHead(503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "No LLM key set — add GROQ_API_KEY, NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env" }));
-      return;
-    }
     const ip = (req.socket && req.socket.remoteAddress) || "unknown";
     if (rateLimited(ip)) {
       res.writeHead(429, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Too many requests — slow down a moment." }));
+      return;
+    }
+    let messages;
+    let tone;
+    try {
+      const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
+      messages = sanitizeMessages(body.messages); // block role:"system" injection
+      tone = body.tone;
+    } catch (error) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid chat request." }));
+      return;
+    }
+    const radarIntent = opportunityRadarIntent(messages);
+    if (!radarIntent && !anthropicApiKey && !nvidiaActive) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        error:
+          "No LLM key set — add GROQ_API_KEY, NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env"
+      }));
       return;
     }
     res.writeHead(200, {
@@ -2617,10 +2763,38 @@ async function handleRequest(req, res) {
       } catch (e) {}
     };
     try {
-      const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
-      const messages = sanitizeMessages(body.messages); // block role:"system" injection
+      if (radarIntent) {
+        const directAbort = new AbortController();
+        res.on("close", () => {
+          if (!res.writableEnded) {
+            directAbort.abort(new Error("client disconnected"));
+          }
+        });
+        send("intent_pending", { intent: radarIntent.intent, family: "radar" });
+        send("tool", { name: "opportunity_radar", family: "radar", phase: "start" });
+        const directRadar = await dispatchOpportunityRadar(messages, {
+          intent: radarIntent,
+          signal: directAbort.signal
+        });
+        send("tool", {
+          name: "opportunity_radar",
+          family: "radar",
+          phase: "end",
+          ok: directRadar.ok
+        });
+        send("token", { t: directRadar.reply });
+        send("done", {
+          sources: directRadar.sources,
+          model: "local-code",
+          clientActions: directRadar.clientActions,
+          toolsUsed: directRadar.toolsUsed,
+          intent: directRadar.intent,
+          mailUntrusted: false
+        });
+        try { res.end(); } catch (e) {}
+        return;
+      }
       bumpUsage("llm");
-      const tone = body.tone;
 
       // NVIDIA brain: stream the answer token-by-token so she starts speaking the
       // first sentence while the rest generates (tool rounds run silently first).
@@ -2679,7 +2853,11 @@ async function handleRequest(req, res) {
       // Fast path: simple commands -> Haiku with NO tools (lowest time-to-first-token).
       // Complex -> Opus with web_search + fetch_page (Opus/Sonnet-only tools).
       const tools = model === ANTHROPIC_MODEL
-        ? [WEB_SEARCH_TOOL, FETCH_PAGE_TOOL, ...skillToolDefs()]
+        ? [
+            WEB_SEARCH_TOOL,
+            FETCH_PAGE_TOOL,
+            ...skillToolDefs({ includeDirect: false })
+          ]
             .filter((tool) => !blockedAfterMailRead(tool.name, historicMailTaint))
         : undefined;
 

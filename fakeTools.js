@@ -56,6 +56,15 @@ export function fakeToolResult(name, args = {}) {
       };
     case "web_research":
       return { ok: true, content: "Synthetic research summary for evaluation. Sources: example.test." };
+    case "opportunity_radar":
+      return {
+        ok: true,
+        content:
+          "I'm a research assistant, not a licensed financial advisor. " +
+          "This is education and planning, not a promise of returns or a recommendation to buy anything. " +
+          `Synthetic Opportunity Radar ${args.action || "request"} completed in evaluation mode. ` +
+          "No network request or state write occurred."
+      };
     case "open_url": {
       const url = String(args.url || "");
       if (!/^https?:\/\//i.test(url)) return { ok: false, content: "Only http(s) links can be opened." };
