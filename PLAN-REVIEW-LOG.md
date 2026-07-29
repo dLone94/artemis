@@ -230,3 +230,15 @@ mic lifecycle (closes an open-mic leak race), no new audio plumbing.
 19 suites + 19/19 eval green on my re-run; engine diff read (81 lines,
 all lifecycle guards); no model-visible recording tool; audio never
 persisted. PASSED — one round.
+
+### Round 12 — Triple-check (Claude solo: Codex quota exhausted until Aug 5)
+Codex's joint pass died on its ChatGPT usage limit, so the cross-skill
+audit ran Claude-side: routing probe 20/20 utterances → expected families
+(incl. ambiguous/negative cases); confirm gate verified single-use with
+5-min expiry and prepared→approved capability handshake (consumePending,
+skills.js:4238) — one pending's yes structurally cannot fire another;
+untrusted wrap sites present on all mail/web/transcript seams (untrusted
+suite green); shared .data stores go through the mutation seam; voice
+pipeline post-meeting verified via followup+meeting suites. Floor: 19
+suites + 19/19 eval. VERDICT: PASS. A Codex re-audit is worth running
+when quota resets.
