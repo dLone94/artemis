@@ -29,6 +29,7 @@ import {
   isOpportunityRadarDue,
   confirmedNudgeResponse
 } from "./skills.js";
+import { inspirationForDay } from "./inspiration.js";
 import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, listUnread } from "./gmail.js";
 import { wsConnect } from "./wsClient.js";
 import { edgeTtsSynthesize } from "./edgeTts.js";
@@ -2700,15 +2701,35 @@ async function handleRequest(req, res) {
       }));
       return;
     }
+    // Default entry (user request 2026-07-29): no news question every launch.
+    // Greet with the inbox state (COUNT ONLY — no sender text, no injection
+    // surface) and one inspiring line. News stays a voice-ask away via the
+    // brief. Mail failure is omitted honestly, never zeroed.
     try {
-      await getCachedBriefingText();
-      res.writeHead(200, { "Content-Type": "application/json" });
+      let mailClause = null;
+      if (gmailConfigured()) {
+        try {
+          const mails = await Promise.race([
+            listUnread(10),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("mail timeout")), 4000))
+          ]);
+          const n = Array.isArray(mails) ? mails.length : 0;
+          mailClause = n === 0 ? "Inbox is clear."
+            : n === 1 ? "You've got one unread email."
+            : n >= 10 ? "You've got at least ten unread emails."
+            : `You've got ${n} unread emails.`;
+        } catch (e) { /* unreadable mail → say nothing about mail */ }
+      }
+      const inspire = inspirationForDay();
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify({
         greeting,
-        offer: briefingCache.text ? "Would you like a quick brief on the news around the world?" : "",
+        mail: mailClause,
+        inspire,
+        offer: "",
         offerSkill: "",
         offerCommand: "",
-        news: briefingCache.text,
+        news: "",
         cachedAt: briefingCache.at
       }));
     } catch (e) {

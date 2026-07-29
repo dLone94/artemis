@@ -40,6 +40,15 @@ function deliverBriefing(spoken) {
       if (spoken && window.ArtemisSpeak) {
         window.ArtemisSpeak(ask);
       }
+    } else if (b.inspire) {
+      // mail state + a line for the day — no question, no monologue
+      const parts = [b.greeting];
+      if (b.mail) parts.push(b.mail);
+      parts.push(b.inspire);
+      const say = parts.join(" ");
+      addLine("artemis", say);
+      addCard({ title: "TODAY", lines: [b.mail || "", b.inspire].filter(Boolean) });
+      if (spoken && window.ArtemisSpeak) window.ArtemisSpeak(say);
     } else if (spoken && b.news && window.ArtemisSpeak) {
       const ask = b.greeting + " " + b.offer;
       window.__pendingBriefing = b.news; // a bare "yes" within the next turn plays it
