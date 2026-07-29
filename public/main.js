@@ -2,7 +2,7 @@
 // Wires the audio-reactive VoiceOrb to the real backend: mic → Deepgram STT →
 // Claude (+ web search) → Deepgram TTS, plus an "Artemis …" wake word. The orb
 // reacts to YOUR voice (listening) and ARTEMIS's voice (speaking) via real audio.
-import { VoiceOrb } from "./voiceOrb.js";
+import { VoiceOrb, MOON_INFO } from "./voiceOrb.js";
 import { resolveOpenIntent } from "./siteRegistry.js";
 import { isClosingPhrase, loadFollowUpEnabled, matchWake, saveFollowUpEnabled } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
@@ -2502,13 +2502,40 @@ const EXPLAINER =
   "I search the web and read pages to answer with real sources, dig through Hacker News or GitHub when you want to go deeper, and open any site for you by voice. " +
   "I keep notes, remember your contacts, and can act on your behalf — drafting and sending messages — but anything that actually sends, pays, or changes something, I always confirm with you first. " +
   "So… what can I do for you?";
+// CAPABILITIES: an animated overlay of every skill — the same data that
+// labels the moons, so the two can never drift apart. Click a card to hear
+// the example command; Esc or the backdrop closes it.
 const explainBtn = $("explainBtn");
-if (explainBtn) explainBtn.addEventListener("click", () => {
-  orb._ensureAudio();
-  conversation.push({ role: "assistant", content: EXPLAINER });
-  saveConversation();
-  speak(EXPLAINER);
-});
+let skillsOverlay = null;
+function toggleSkillsOverlay() {
+  if (skillsOverlay) { skillsOverlay.remove(); skillsOverlay = null; return; }
+  const ov = document.createElement("div");
+  ov.className = "skills-overlay";
+  const panel = document.createElement("div");
+  panel.className = "skills-panel";
+  panel.innerHTML = '<div class="skills-title">SKILLS · ' + MOON_INFO.length + ' ONLINE</div>';
+  MOON_INFO.forEach((m, i) => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "skills-card";
+    card.style.setProperty("--i", i);
+    card.innerHTML =
+      '<span class="skills-dot" data-moon="' + i + '"></span>' +
+      '<span class="skills-name">' + m.title + '</span>' +
+      '<span class="skills-what">' + m.what + '</span>' +
+      '<span class="skills-say">“' + m.say + '”</span>';
+    card.addEventListener("click", () => {
+      hud("context", { title: m.title, lines: [m.what, "Try: " + m.say] });
+    });
+    panel.appendChild(card);
+  });
+  ov.appendChild(panel);
+  ov.addEventListener("click", (e) => { if (e.target === ov) toggleSkillsOverlay(); });
+  document.body.appendChild(ov);
+  skillsOverlay = ov;
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && skillsOverlay) toggleSkillsOverlay(); });
+if (explainBtn) explainBtn.addEventListener("click", toggleSkillsOverlay);
 
 // ---- revenue celebrations (carried over; orb surges on a payment) ----
 const CELEB_KEY = "artemisCelebratedV2";
