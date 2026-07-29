@@ -8,6 +8,25 @@
 
 import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
+import { MOON_INFO } from "./voiceOrb.js";
+
+// ---- skills section: the same registry data that labels the hero moons ----
+(function renderSkills() {
+  const grid = document.getElementById("bpSkillsGrid");
+  if (!grid) return;
+  MOON_INFO.forEach((m, i) => {
+    const card = document.createElement("div");
+    card.className = "bp-skill-card";
+    card.style.setProperty("--i", i);
+    card.innerHTML =
+      '<span class="bp-skill-dot"></span>' +
+      '<span class="bp-skill-name">' + m.title + "</span>" +
+      '<span class="bp-skill-what">' + m.what + "</span>" +
+      '<span class="bp-skill-say">\u201c' + m.say + '\u201d</span>';
+    grid.appendChild(card);
+  });
+})();
+
 
 const $ = (id) => document.getElementById(id);
 const reduced = prefersReducedMotion();

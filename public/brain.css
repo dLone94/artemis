@@ -384,3 +384,34 @@
   .bp-run-dots i { animation: none; opacity: 0.7; } /* static "···" still reads active */
   .bp-thinking i { animation: none; opacity: 0.7; }
 }
+
+
+/* ---- skills section ---- */
+.bp-skills { max-width: 1180px; margin: 26px auto 60px; padding: 0 24px; }
+.bp-skills-title {
+  font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: 0.3em;
+  color: var(--teal, #22d3ee); padding-bottom: 8px; margin-bottom: 14px;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.25);
+}
+.bp-skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.bp-skill-card {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 12px 14px; border: 1px solid rgba(34, 211, 238, 0.16); border-radius: 3px;
+  background: rgba(6, 22, 32, 0.6);
+  opacity: 0; transform: translateY(8px);
+  animation: bp-skill-in 340ms ease forwards;
+  animation-delay: calc(var(--i) * 45ms);
+  transition: border-color 160ms, box-shadow 160ms;
+}
+.bp-skill-card:hover { border-color: rgba(34, 211, 238, 0.6); box-shadow: 0 0 18px rgba(34, 211, 238, 0.25); }
+@keyframes bp-skill-in { to { opacity: 1; transform: none; } }
+.bp-skill-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--teal, #22d3ee); box-shadow: 0 0 8px var(--teal, #22d3ee);
+  animation: bp-skill-pulse 2.4s ease-in-out infinite; animation-delay: calc(var(--i) * 200ms);
+}
+@keyframes bp-skill-pulse { 50% { opacity: 0.45; } }
+.bp-skill-name { font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: 0.18em; color: var(--teal, #22d3ee); }
+.bp-skill-what { font-size: 12px; line-height: 1.45; color: #e8f7fb; }
+.bp-skill-say { font-family: var(--font-mono, monospace); font-size: 10px; color: #5f8996; }
+@media (prefers-reduced-motion: reduce) { .bp-skill-card { animation: none; opacity: 1; transform: none; } .bp-skill-dot { animation: none; } }
