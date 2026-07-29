@@ -219,3 +219,14 @@ revision snapshots.
 
 ### Claude's verdict
 18 suites + 19/19 eval green on my re-run. PASSED — one round.
+
+### Round 11 — Codex review-then-build: meeting_capture
+Audit produced a full interleaving table (wake/follow-up/TTS/mic-tap/
+visibility/deadline vs capture) and the build implements ownership
+generations across the voice pipeline; engine diff is a generation-guarded
+mic lifecycle (closes an open-mic leak race), no new audio plumbing.
+
+### Claude's verdict
+19 suites + 19/19 eval green on my re-run; engine diff read (81 lines,
+all lifecycle guards); no model-visible recording tool; audio never
+persisted. PASSED — one round.

@@ -22,8 +22,9 @@ import { resolveWakeProfile, FALLBACK_PROFILE } from "./wakeProfile.js";
 let ort = null;
 let melSess = null, embSess = null, wwSess = null;
 let ctx = null, node = null, micStream = null;
+let pendingMicStream = null, pendingMicContext = null;
 let keepAlive = null;   // silent sink — see openMic
-let running = false, loading = null;
+let running = false, loading = null, startupWork = null, cancelLoading = null;
 let mode = "detect"; // "detect" | "capture" | "idle" (idle: her speech — keep mic, don't listen)
 let onDetectCb = null;
 let lastFire = 0;
@@ -248,19 +249,29 @@ export function captureCommand(opts = {}) {
 
 // ---- mic plumbing ----
 
-async function openMic() {
+async function openMic(startupGeneration = micGen) {
   // Build into LOCALS and only commit to the module globals at the end, gated
   // on micGen: if closeMic ran while we were awaiting (a stop during startup),
   // committing would leak a live mic.
-  const g = micGen;
+  const g = startupGeneration;
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
   });
-  const c = new (window.AudioContext || window.webkitAudioContext)();
+  if (g !== micGen) {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    throw new Error("superseded");
+  }
+  pendingMicStream = stream;
+  let c = null;
   let n = null;
+  let pendingKeepAlive = null;
   try {
+    c = new (window.AudioContext || window.webkitAudioContext)();
+    pendingMicContext = c;
     await c.audioWorklet.addModule("/oww/mic-worklet.js");
-    if (g !== micGen) throw new Error("superseded"); // closed while opening — discard
+    if (g !== micGen || pendingMicStream !== stream) {
+      throw new Error("superseded"); // closed while opening — discard
+    }
     const src = c.createMediaStreamSource(stream);
     n = new AudioWorkletNode(c, "mic-downsampler");
     n.port.onmessage = (e) => pushFrame(e.data);
@@ -272,14 +283,17 @@ async function openMic() {
     // silicon is audible as a constant faint buzz. A MediaStreamDestination
     // pulls the graph just the same and never touches the speakers.
     const sink = c.createGain(); sink.gain.value = 0;
-    keepAlive = c.createMediaStreamDestination();
-    n.connect(sink).connect(keepAlive);
+    pendingKeepAlive = c.createMediaStreamDestination();
+    n.connect(sink).connect(pendingKeepAlive);
   } catch (e) {
     try { stream.getTracks().forEach((t) => t.stop()); } catch (e2) {}
-    try { if (c.state !== "closed") c.close(); } catch (e2) {}
+    try { if (c && c.state !== "closed") c.close(); } catch (e2) {}
+    if (pendingMicStream === stream) pendingMicStream = null;
+    if (pendingMicContext === c) pendingMicContext = null;
     throw e;
   }
-  micStream = stream; ctx = c; node = n;
+  pendingMicStream = null; pendingMicContext = null;
+  micStream = stream; ctx = c; node = n; keepAlive = pendingKeepAlive;
   filled = 0; sinceInfer = 0;
 }
 
@@ -288,37 +302,70 @@ async function closeMic() {
   // detach the globals SYNCHRONOUSLY, then tear down the captured locals —
   // nothing this function awaits can touch state a concurrent openMic commits
   const n = node, s = micStream, c = ctx;
+  const pendingStream = pendingMicStream, pendingContext = pendingMicContext;
   node = null; micStream = null; ctx = null; keepAlive = null; filled = 0;
+  pendingMicStream = null; pendingMicContext = null;
   try { n && (n.port.onmessage = null); n && n.disconnect(); } catch (e) {}
   try { s && s.getTracks().forEach((t) => t.stop()); } catch (e) {}
+  try { pendingStream && pendingStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
   try { if (c && c.state !== "closed") await c.close(); } catch (e) {}
+  try {
+    if (pendingContext && pendingContext.state !== "closed") {
+      void pendingContext.close().catch(() => {});
+    }
+  } catch (e) {}
 }
 
 export async function startLocalWake(_cfg, onDetect) {
   if (running) return true;
   if (loading) return loading;
+  // A cancelled model load may still be unwinding in the background. Report
+  // failure immediately so callers can use their browser fallback, and do not
+  // start a second local pipeline over the first one's shared model globals.
+  if (startupWork) return false;
   onDetectCb = onDetect;
-  loading = (async () => {
+  // Capture this BEFORE model loading. A stop while ensureModels() is pending
+  // must invalidate the eventual openMic too, not merely an already-open mic.
+  const startupGeneration = micGen;
+  let cancel;
+  const cancelled = new Promise((resolve) => {
+    cancel = () => resolve(false);
+  });
+  cancelLoading = cancel;
+  const work = (async () => {
     try {
       await ensureModels();
-      await openMic();
+      if (startupGeneration !== micGen) throw new Error("superseded");
+      await openMic(startupGeneration);
       mode = "detect"; running = true;
       return true;
     } catch (e) {
       console.warn("openWakeWord failed to start — falling back:", e && e.message);
       await stopLocalWake();
       return false;
-    } finally {
-      loading = null;
     }
   })();
+  startupWork = work;
+  void work.finally(() => {
+    if (startupWork === work) startupWork = null;
+  });
+  const publicLoading = Promise.race([work, cancelled]).finally(() => {
+    if (loading === publicLoading) loading = null;
+    if (cancelLoading === cancel) cancelLoading = null;
+  });
+  loading = publicLoading;
   return loading;
 }
 
-export async function stopLocalWake() {
+export async function stopLocalWake({ preserveCapture = false } = {}) {
   running = false; mode = "idle";
-  if (capResolve) finishCapture(false); // never leave a caller hanging
-  await closeMic();
+  if (cancelLoading) cancelLoading();
+  // closeMic stops tracks synchronously before its first await, so even when a
+  // meeting keeps the already-buffered partial WAV, the hard mic stop is not
+  // delayed by WAV encoding.
+  const closing = closeMic();
+  if (capResolve) finishCapture(preserveCapture && capHeard);
+  await closing;
 }
 
 // During her speech: stop LISTENING but KEEP the mic + audio graph. Releasing

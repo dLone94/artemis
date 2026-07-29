@@ -21,15 +21,18 @@ export function wrapUntrusted(tag, attrs, body) {
   return `<${tag}${safeAttrs ? " " + safeAttrs : ""}>\n` + stripSentinels(body) + `\n</${tag}>`;
 }
 
-// Mail/message-controlled text gets a stricter taint: once read, a generic
-// browser or network request could turn an injected header into an exfiltration
-// query before the existing client-open guard gets a chance to drop it.
+// Persisted third-party-controlled text gets a stricter taint: once read, a
+// generic browser or network request could turn an injected header, message, or
+// meeting utterance into an exfiltration query before the existing client-open
+// guard gets a chance to drop it. The historical export name remains for server
+// compatibility, but this set now means "carry provenance into history".
 export const MAIL_UNTRUSTED_SKILLS = new Set([
   "check_email",
   "check_followups",
   "daily_brief",
   "read_email",
-  "check_messages"
+  "check_messages",
+  "meeting_notes"
 ]);
 
 // Skills whose output feeds text controlled by somebody outside this process
@@ -62,7 +65,7 @@ export function historyHasMailTaint(messages) {
 
 export function mailSafeHistoryContent(content, mailUntrusted) {
   if (!mailUntrusted) return String(content == null ? "" : content);
-  return "[Earlier assistant reply derived from untrusted mail/message data; details omitted from model history.]";
+  return "[Earlier assistant reply derived from untrusted third-party data; details omitted from model history.]";
 }
 
 // Browser-open actions produced in a tainted turn are a prompt-injection

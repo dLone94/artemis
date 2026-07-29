@@ -10,6 +10,7 @@ import { BrainOrb } from "./brainOrb.js";
 import { PAL, prefersReducedMotion } from "./orbShared.js";
 import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand, activeWakeProfile } from "./wakeLocal.js";
 import { confirmationDecision } from "./confirmDecision.js";
+import { isMeetingStartPhrase, isMeetingStopPhrase } from "./meetingCapture.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -50,9 +51,25 @@ let followUpGeneration = 0;
 let followUpStarting = false;
 let followUpAbort = null;
 
+const MEETING_MAX_MS = 30 * 60 * 1000;
+const MEETING_WAIT_FOR_SPEECH_MS = 20000;
+const MEETING_STT_TIMEOUT_MS = 30000;
+const MEETING_LOCAL_START_TIMEOUT_MS = 15000;
+// The slowest server provider is itself bounded at 60s; leave enough room for
+// its raw fallback write and response instead of aborting at the same instant.
+const MEETING_SAVE_TIMEOUT_MS = 70000;
+let meetingSession = null;
+let meetingGeneration = 0;
+let deferredMeetingReply = null;
+
+function meetingVoiceActive() {
+  return !!meetingSession;
+}
+
 // celebration.js checks this before playing its jingle / hijacking the orb —
 // a payment landing mid-conversation must not talk over Artemis or the user
-window.celebrationVoiceActive = () => speaking || recording || talkStarting || followUpInFlight || busy;
+window.celebrationVoiceActive = () =>
+  speaking || recording || talkStarting || followUpInFlight || busy || meetingVoiceActive();
 
 // On the cockpit page the orb sits dead-center; on the landing it offsets
 // right to make room for the hero copy (VoiceOrb's default).
@@ -193,6 +210,7 @@ function addMsg(role, text, sources) {
 // ---- speaking (Artemis voice → orb) ----
 const ttsEl = new Audio();
 let speaking = false;
+let ttsGeneration = 0;
 
 // Streaming TTS URL — the browser plays it progressively (first frames ~0.5s).
 // Voice values: "aura-*" → Deepgram; "eleven:<id>" → that ElevenLabs voice;
@@ -222,25 +240,46 @@ function ttsUrl(text) {
 let BARGE_IN_ENABLED = false;
 try { BARGE_IN_ENABLED = localStorage.getItem("artemisBargeIn") === "1"; } catch (e) {}
 let bargeStream = null, bargeAnalyser = null, bargeFreq = null, bargeRaf = 0, bargeHot = 0;
-async function startBargeIn() {
-  if (!BARGE_IN_ENABLED || bargeStream) return; // disabled, or already listening
+let bargeGeneration = 0, bargeStartingGeneration = null;
+async function startBargeIn(expectedTtsGeneration = ttsGeneration) {
+  if (!BARGE_IN_ENABLED || bargeStream ||
+      bargeStartingGeneration === bargeGeneration) return;
   const ctx = orb._ensureAudio();
   if (!ctx || !navigator.mediaDevices) return;
+  const generation = bargeGeneration;
+  bargeStartingGeneration = generation;
+  let stream = null;
   try {
-    bargeStream = await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
-  } catch (e) { bargeStream = null; return; }
-  if (!speaking) { bargeStream.getTracks().forEach((t) => t.stop()); bargeStream = null; return; }
-  const src = ctx.createMediaStreamSource(bargeStream);
-  bargeAnalyser = ctx.createAnalyser();
-  bargeAnalyser.fftSize = 512;
-  bargeFreq = new Uint8Array(bargeAnalyser.frequencyBinCount);
-  src.connect(bargeAnalyser); // analyse only — never routed to the speakers
+  } catch (e) {
+    if (bargeStartingGeneration === generation) bargeStartingGeneration = null;
+    return;
+  }
+  if (bargeStartingGeneration === generation) bargeStartingGeneration = null;
+  if (generation !== bargeGeneration ||
+      expectedTtsGeneration !== ttsGeneration ||
+      meetingVoiceActive() || !speaking || bargeStream) {
+    stream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+  bargeStream = stream;
+  try {
+    const src = ctx.createMediaStreamSource(bargeStream);
+    bargeAnalyser = ctx.createAnalyser();
+    bargeAnalyser.fftSize = 512;
+    bargeFreq = new Uint8Array(bargeAnalyser.frequencyBinCount);
+    src.connect(bargeAnalyser); // analyse only — never routed to the speakers
+  } catch (e) {
+    try { stream.getTracks().forEach((t) => t.stop()); } catch (e2) {}
+    if (bargeStream === stream) bargeStream = null;
+    return;
+  }
   bargeHot = 0;
   const startedAt = performance.now();
   const tick = () => {
-    if (!bargeStream) return;
+    if (generation !== bargeGeneration || !bargeStream) return;
     bargeRaf = requestAnimationFrame(tick);
     if (performance.now() - startedAt < 350) return; // brief settle window
     bargeAnalyser.getByteFrequencyData(bargeFreq);
@@ -253,6 +292,8 @@ async function startBargeIn() {
   bargeRaf = requestAnimationFrame(tick);
 }
 function stopBargeIn() {
+  bargeGeneration++;
+  bargeStartingGeneration = null;
   if (bargeRaf) { cancelAnimationFrame(bargeRaf); bargeRaf = 0; }
   if (bargeStream) { bargeStream.getTracks().forEach((t) => t.stop()); bargeStream = null; }
   bargeAnalyser = null; bargeFreq = null; bargeHot = 0;
@@ -272,28 +313,48 @@ function bargeIn() {
 window.ArtemisSpeak = (t) => { try { orb._ensureAudio(); speak(String(t || "")); } catch (e) {} };
 
 async function speak(text) {
+  // Meeting capture owns the microphone continuously. pauseLocalWake() cannot
+  // interrupt mode="capture" (by design), so playing TTS here would transcribe
+  // Artemis into the user's notes. Meeting completion speaks only after it has
+  // closed the mic and released meetingSession.
+  if (meetingVoiceActive()) return;
   // speak() and the streaming pumpTts() share one <audio> element; take sole
   // ownership first so a still-draining streamed reply (or a poller-triggered
   // announce) can't leave a stale onended handler that wedges `speaking`.
   if (followUpInFlight || followUpStarting) void abortFollowUp();
+  stopBargeIn();
   resetTtsPipe();
+  const generation = ttsGeneration;
   pauseWakeForSpeech();
   orb.connectMediaElement(ttsEl); // route Artemis's voice into the orb's analyser
   orb.setStatus("speaking");
   setLiveStatus("Artemis is responding…  (Esc to stop)");
   speaking = true;
-  startBargeIn();
-  ttsEl.onended = ttsEl.onerror = () => afterSpeak();
+  startBargeIn(generation);
+  const settle = () => {
+    if (settle.done || generation !== ttsGeneration) return;
+    settle.done = true;
+    afterSpeak();
+  };
+  ttsEl.onended = ttsEl.onerror = settle;
   try {
     ttsEl.src = ttsUrl(cleanForSpeech(text));
     ttsEl.currentTime = 0;
     await ttsEl.play();
   } catch (e) {
-    afterSpeak();
+    settle();
   }
 }
 
 function restoreWakeListening() {
+  if (meetingVoiceActive()) {
+    showMeetingPhaseUi(meetingSession);
+    return;
+  }
+  if (document.hidden) {
+    window.__wakeLive = false;
+    return;
+  }
   if (recording || talkStarting || speaking) return;
   if (wakeOn) {
     orb.setStatus("listening");
@@ -312,10 +373,13 @@ async function abortFollowUp({ endConversation = false, resumeWakeAfter = false 
   if (followUpAbort) {
     try { followUpAbort.abort(); } catch (e) {}
   }
-  if ((followUpCaptureOpen || followUpStarting) && (localWakeRunning() || wakeStarting)) {
+  if (!meetingVoiceActive() &&
+      (followUpCaptureOpen || followUpStarting) &&
+      (localWakeRunning() || wakeStarting)) {
     await stopLocalWake();
   }
-  if (resumeWakeAfter && wakeOn && !recording && !talkStarting && !speaking && !busy) {
+  if (resumeWakeAfter && wakeOn && !meetingVoiceActive() &&
+      !document.hidden && !recording && !talkStarting && !speaking && !busy) {
     restoreWakeListening();
   }
 }
@@ -324,12 +388,18 @@ function canStartFollowUp() {
   return wakeOn && conversationLive && followUpEnabled && !document.hidden &&
     !recording && !talkStarting && !busy && !speaking &&
     !ttsPlaying && !ttsQueue.length && !wakeCapturing && !followUpInFlight &&
-    localWakeRunning();
+    !meetingVoiceActive() && localWakeRunning();
 }
 
 async function afterSpeak() {
   stopBargeIn();
   speaking = false;
+  // A stale audio onended/error callback can land after meeting capture claimed
+  // the mic. It must not stop the orb, resume wake detection, or open follow-up.
+  if (meetingVoiceActive()) {
+    showMeetingPhaseUi(meetingSession);
+    return;
+  }
   if (recording || talkStarting) return; // user already barged in — don't clobber the live mic UI
   orb.stopAudio();
   micStream = null; // stopAudio killed the tracks; resumeWake must reacquire
@@ -420,6 +490,7 @@ function stopThinking() {
 // server on a block: the one-tap Open pill is already on screen, and a second
 // pass would queue a duplicate open.)
 function handleOpenIntent(text) {
+  if (meetingVoiceActive()) return false;
   const r = resolveOpenIntent(text);
   if (!r) return false;
   // new tab if pop-ups are allowed, else the one-tap Open pill (never this tab)
@@ -438,6 +509,7 @@ function handleOpenIntent(text) {
 
 // ---- confirm-before-act: intercept the user's yes/no for a pending action ----
 let pendingConfirm = null;
+let confirmCompletionGeneration = 0;
 function cancelPendingConfirmation() {
   if (!pendingConfirm) return;
   const pendingAction = pendingConfirm;
@@ -492,6 +564,12 @@ function handleConfirmIfPending(text) {
   // hold the turn: the /api/confirm POST can send an email / take seconds, and
   // without busy a mic click or a wake command would start an overlapping turn
   busy = true;
+  const completionGeneration = ++confirmCompletionGeneration;
+  const completionMeetingGeneration = meetingGeneration;
+  const ownsCompletion = () =>
+    completionGeneration === confirmCompletionGeneration &&
+    completionMeetingGeneration === meetingGeneration &&
+    !meetingVoiceActive();
   if (wakeOn) pauseWakeForSpeech();
   orb.setStatus("thinking");
   setLiveStatus(yes ? "On it…" : "Cancelling…");
@@ -506,6 +584,7 @@ function handleConfirmIfPending(text) {
       return data;
     })
     .then((d) => {
+      if (!ownsCompletion()) return;
       const reply = d.reply || (yes ? "Done." : "Cancelled.");
       addMsg("artemis", reply);
       conversation.push({ role: "assistant", content: reply });
@@ -515,6 +594,7 @@ function handleConfirmIfPending(text) {
       speak(reply);
     })
     .catch(() => {
+      if (!ownsCompletion()) return;
       setLiveStatus("Confirm failed.");
       const reply = "I couldn't verify that action completed.";
       addMsg("artemis", reply);
@@ -522,7 +602,12 @@ function handleConfirmIfPending(text) {
       saveConversation();
       speak(reply);
     })
-    .finally(() => { busy = false; });
+    .finally(() => {
+      if (completionGeneration === confirmCompletionGeneration &&
+          completionMeetingGeneration === meetingGeneration) {
+        busy = false;
+      }
+    });
   return true;
 }
 
@@ -584,6 +669,7 @@ function fetchTtsBlob(text) {
   return fetch(ttsUrl(text)).then((r) => (r.ok ? r.blob() : null)).catch(() => null);
 }
 function resetTtsPipe() {
+  ttsGeneration++;
   ttsQueue = [];
   sentenceBuf = "";
   firstChunkPending = true;
@@ -593,6 +679,7 @@ function resetTtsPipe() {
   ttsPlaying = false;
 }
 function feedTts(t) {
+  if (meetingVoiceActive()) return;
   sentenceBuf += t;
   let m;
   while ((m = sentenceBuf.match(/^([\s\S]*?[.!?…]+["')\]]?)(\s|$)/))) {
@@ -620,29 +707,45 @@ function feedTts(t) {
   }
 }
 function flushTts() {
+  if (meetingVoiceActive()) { sentenceBuf = ""; return; }
   const r = sentenceBuf.trim();
   sentenceBuf = "";
   if (r) enqueueTts(r);
 }
 function enqueueTts(text) {
+  if (meetingVoiceActive()) return;
   text = cleanForSpeech(text);
   if (text) {
     firstChunkPending = false; // once anything is queued, revert to whole-sentence chunks
-    ttsQueue.push({ text, blobP: fetchTtsBlob(text) }); // start fetching NOW (overlaps playback)
+    ttsQueue.push({
+      text,
+      generation: ttsGeneration,
+      blobP: fetchTtsBlob(text)
+    }); // start fetching NOW (overlaps playback)
     pumpTts();
   }
 }
 async function pumpTts() {
+  if (meetingVoiceActive()) {
+    resetTtsPipe();
+    speaking = false;
+    return;
+  }
   if (ttsPlaying || !ttsQueue.length) return;
+  const generation = ttsGeneration;
   ttsPlaying = true;
   const item = ttsQueue.shift();
+  if (item.generation !== generation) {
+    ttsPlaying = false;
+    return;
+  }
   // Exactly-once advance for this clip. A decode error can fire BOTH the
   // play() rejection and the element's async error event — without the guard
   // that spawned two interleaved pump loops fighting over ttsEl. And every
   // exit path must end the turn when the queue is dry, or `speaking` sticks
   // true forever and the wake word never restarts.
   const settle = () => {
-    if (settle.done) return;
+    if (settle.done || generation !== ttsGeneration) return;
     settle.done = true;
     ttsPlaying = false;
     if (ttsQueue.length) { pumpTts(); return; }
@@ -655,8 +758,10 @@ async function pumpTts() {
     orb.connectMediaElement(ttsEl);
     orb.setStatus("speaking");
     speaking = true;
-    startBargeIn(); // listen for you to interrupt
+    startBargeIn(generation); // listen for you to interrupt
     const blob = await item.blobP; // usually already resolved → no gap before this clip
+    // Capture may have started while this fetch was in flight.
+    if (generation !== ttsGeneration || meetingVoiceActive()) return;
     if (!blob) { settle(); return; } // fetch failed → skip clip, still end the turn
     if (ttsObjUrl) { try { URL.revokeObjectURL(ttsObjUrl); } catch (e) {} }
     ttsObjUrl = URL.createObjectURL(blob);
@@ -695,7 +800,7 @@ if (cmdForm && cmdInput) {
 }
 async function ask(text) {
   text = (text || "").trim();
-  if (!text || busy) return;
+  if (!text || busy || meetingVoiceActive()) return;
   const shownText = text;
 
   // A pending welcome offer is answered locally. The daily-brief marker turns a
@@ -743,30 +848,37 @@ async function ask(text) {
   let toolsUsed = null;
   let mailUntrusted = false;
   const t0 = performance.now(); // real time-to-first-word for the HUD
+  const turnMeetingGeneration = meetingGeneration;
+  const turnAbort = new AbortController();
+  currentAbort = turnAbort;
+  const ownsTurn = () =>
+    turnMeetingGeneration === meetingGeneration &&
+    currentAbort === turnAbort &&
+    !meetingVoiceActive();
   // The server tells us what kind of turn this is (intent_pending) before it
   // invokes the model. Until that arrives the class is unknown — and unknown
   // means SILENT. Speaking "let me check" on a turn that turns out to execute
   // nothing is exactly how she used to sound busy while doing nothing.
   let intentClass = null;
   const execTimer = setTimeout(() => {
-    if (!busy || gotToken) return;
+    if (!busy || gotToken || !ownsTurn()) return;
     hud("state", "executing");
     hud("log", "status", "running tools…");
     // Show the wait, never announce it. See shouldSpeakFiller.
     orb.setStatus("thinking");
     setLiveStatus("Working…");
   }, 1200);
-  currentAbort = new AbortController();
   const timer = setTimeout(() => {
-    try { currentAbort.abort(); } catch (e) {}
+    try { turnAbort.abort(); } catch (e) {}
   }, 60000);
   try {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: conversation, tone: settings.tone }),
-      signal: currentAbort.signal
+      signal: turnAbort.signal
     });
+    if (!ownsTurn()) return;
     if (!res.ok || !res.body) throw new Error("no stream");
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -774,6 +886,10 @@ async function ask(text) {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (!ownsTurn()) {
+        try { await reader.cancel(); } catch (e) {}
+        return;
+      }
       buf += dec.decode(value, { stream: true });
       let i;
       while ((i = buf.indexOf("\n\n")) >= 0) {
@@ -830,6 +946,10 @@ async function ask(text) {
         }
       }
     }
+    // A fresh explicit voice phrase may have interrupted this older stream and
+    // claimed meeting capture. Its late terminal metadata must not install a
+    // stale confirmation, open a URL, append model output, or restart TTS.
+    if (!ownsTurn()) return;
     stopThinking();
     if (toolsUsed && toolsUsed.length) {
       toolsUsed.forEach((t) => hud("log", "tool", t + " ✓"));
@@ -864,19 +984,22 @@ async function ask(text) {
     // opens its follow-up window and a bare "yes" is accepted.
     if (!ttsPlaying && !ttsQueue.length) { speaking = false; queueMicrotask(afterSpeak); }
   } catch (e) {
+    if (!ownsTurn()) return;
     stopThinking();
     resetTtsPipe();
     setLiveStatus(
-      currentAbort && currentAbort.signal.aborted ? "Stopped." : "Couldn't reach the server — try again."
+      turnAbort.signal.aborted ? "Stopped." : "Couldn't reach the server — try again."
     );
     hud("state", "error");
-    hud("log", "error", currentAbort && currentAbort.signal.aborted ? "stopped by user" : "couldn't reach the server");
+    hud("log", "error", turnAbort.signal.aborted ? "stopped by user" : "couldn't reach the server");
     afterSpeak();
   } finally {
     clearTimeout(timer);
     clearTimeout(execTimer);
-    currentAbort = null;
-    busy = false;
+    if (currentAbort === turnAbort) {
+      currentAbort = null;
+      busy = false;
+    }
   }
 }
 
@@ -884,25 +1007,47 @@ async function ask(text) {
 let mediaRecorder = null;
 let chunks = [];
 let micStream = null;
+let talkMeetingGeneration = 0;
 
 async function startTalk({ suppressClosingAck = false } = {}) {
-  if (busy || recording || talkStarting) return;
+  if (busy || recording || talkStarting || meetingVoiceActive()) return;
+  wakeStartGeneration++;
   talkStarting = true;
+  const turnMeetingGeneration = meetingGeneration;
+  talkMeetingGeneration = turnMeetingGeneration;
   talkSuppressClosingAck = suppressClosingAck;
   await abortFollowUp({ endConversation: true });
+  if (meetingVoiceActive() || turnMeetingGeneration !== meetingGeneration) {
+    talkStarting = false;
+    talkSuppressClosingAck = false;
+    return;
+  }
   stopBargeIn(); // we're recording now — no need for the barge-in listener
   // manual recording needs EXCLUSIVE mic access — a second stream on the same
   // device can come back silent (iPhone). resumeWake() restarts the engine.
   if (localWakeRunning() || wakeStarting) await stopLocalWake();
+  if (meetingVoiceActive() || turnMeetingGeneration !== meetingGeneration) {
+    talkStarting = false;
+    talkSuppressClosingAck = false;
+    return;
+  }
   orb._ensureAudio(); // unlock audio in this gesture
   try {
     // stop the wake-mode viz stream first — overwriting it leaks a live mic
     // (browser "mic in use" indicator never clears)
     if (micStream) { try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {} micStream = null; }
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (meetingVoiceActive() || turnMeetingGeneration !== meetingGeneration) {
+      try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+      micStream = null;
+      talkStarting = false;
+      talkSuppressClosingAck = false;
+      return;
+    }
   } catch (e) {
     talkStarting = false;
     talkSuppressClosingAck = false;
+    if (turnMeetingGeneration !== meetingGeneration) return;
     setLiveStatus("Microphone permission denied.");
     restoreWakeListening();
     return;
@@ -939,6 +1084,7 @@ let livePending = []; // chunks recorded before the session opened (incl. the we
 let liveSendQ = Promise.resolve(); // serializes chunk POSTs — parallel fetches can arrive OUT OF ORDER
 
 async function openLiveStt() {
+  const turnMeetingGeneration = talkMeetingGeneration;
   liveFinal = "";
   liveSid = null;
   livePending = [];
@@ -947,7 +1093,13 @@ async function openLiveStt() {
     const r = await fetch("/api/stt/live/start", { method: "POST" });
     if (!r.ok) return;
     const { sid } = await r.json();
-    if (!recording && !mediaRecorder) return; // user already stopped — don't open a dead session
+    if (turnMeetingGeneration !== meetingGeneration ||
+        meetingVoiceActive() || (!recording && !mediaRecorder)) {
+      // The relay session exists server-side already; close it even though this
+      // stale manual turn must not attach an EventSource or touch meeting UI.
+      fetch("/api/stt/live/stop?sid=" + sid, { method: "POST" }).catch(() => {});
+      return;
+    }
     liveSid = sid;
     // Flush everything recorded before the session was ready — IN ORDER, so
     // Deepgram gets a valid webm stream starting with its header chunk. Without
@@ -955,9 +1107,14 @@ async function openLiveStt() {
     // of the command and only the tail ("…please") ever gets transcribed.
     const backlog = livePending; livePending = [];
     for (const b of backlog) liveSendChunk(b);
-    liveEs = new EventSource("/api/stt/live/events?sid=" + sid);
+    const eventSource = new EventSource("/api/stt/live/events?sid=" + sid);
+    liveEs = eventSource;
     let interim = "";
-    liveEs.onmessage = (ev) => {
+    eventSource.onmessage = (ev) => {
+      if (turnMeetingGeneration !== meetingGeneration || meetingVoiceActive()) {
+        try { eventSource.close(); } catch (e) {}
+        return;
+      }
       let m;
       try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (m.done) {
@@ -976,7 +1133,7 @@ async function openLiveStt() {
         setLiveStatus("“" + (shown.length > 90 ? "…" + shown.slice(-87) : shown) + "”");
       }
     };
-    liveEs.onerror = () => {}; // relay hiccup → batch fallback still runs
+    eventSource.onerror = () => {}; // relay hiccup → batch fallback still runs
   } catch (e) { /* no live transcript this turn — batch handles it */ }
 }
 function liveSendChunk(blob) {
@@ -1010,6 +1167,7 @@ function closeLiveStt() {
 }
 
 async function onTalkStop() {
+  const turnMeetingGeneration = talkMeetingGeneration;
   recording = false;
   const suppressClosingAck = talkSuppressClosingAck;
   talkSuppressClosingAck = false;
@@ -1023,6 +1181,11 @@ async function onTalkStop() {
     micStream.getTracks().forEach((t) => t.stop());
     micStream = null;
   }
+  if (turnMeetingGeneration !== meetingGeneration) {
+    void closeLiveStt();
+    if (meetingVoiceActive()) showMeetingPhaseUi(meetingSession);
+    return;
+  }
   if (!blob.size) {
     closeLiveStt();
     afterSpeak();
@@ -1031,6 +1194,10 @@ async function onTalkStop() {
   // prefer the STREAMED transcript (already on screen, zero extra latency);
   // fall back to the batch POST only when streaming produced nothing
   const streamed = await closeLiveStt();
+  if (turnMeetingGeneration !== meetingGeneration) {
+    if (meetingVoiceActive()) showMeetingPhaseUi(meetingSession);
+    return;
+  }
   if (streamed) {
     if (!dispatchUtterance(streamed, { suppressClosingAck })) {
       setLiveStatus("Didn't catch that — try again.");
@@ -1042,11 +1209,13 @@ async function onTalkStop() {
   try {
     const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": type }, body: blob });
     const data = await res.json();
+    if (turnMeetingGeneration !== meetingGeneration) return;
     if (!dispatchUtterance(data.transcript, { suppressClosingAck })) {
       setLiveStatus("Didn't catch that — try again.");
       afterSpeak();
     }
   } catch (e) {
+    if (turnMeetingGeneration !== meetingGeneration) return;
     setLiveStatus("Transcription failed.");
     afterSpeak();
   }
@@ -1057,6 +1226,13 @@ function stopTalk() {
 }
 
 micToggle.addEventListener("click", () => {
+  // During meeting capture the primary mic remains the truthful stop control.
+  // Never fall through to startTalk(), which would close the shared local engine
+  // and open the unrelated MediaRecorder pipeline.
+  if (meetingVoiceActive()) {
+    requestMeetingStop(meetingSession, "mic");
+    return;
+  }
   // barge-in: if Artemis is talking (or has speech queued/streaming), cut her off
   if (speaking || ttsPlaying || ttsQueue.length) {
     resetTtsPipe();
@@ -1176,7 +1352,7 @@ if (textForm && textInput) {
   textForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const v = textInput.value.trim();
-    if (!v || busy) return;
+    if (!v || busy || meetingVoiceActive()) return;
     orb._ensureAudio();
     textInput.value = "";
     if (handleConfirmIfPending(v)) return;
@@ -1202,14 +1378,29 @@ const WAKE_ACKS = [
 let wakeRec = null;
 let wakeOn = false;
 let wakeRunning = false;      // is the recognizer ACTUALLY live right now (onstart/onend)
+let wakeRecStarting = false;  // start() returned, but onstart/onerror has not landed yet
+let wakeVizStarting = false;  // browser wake visualization getUserMedia is pending
+let wakeStartGeneration = 0;  // invalidates async engine/viz starts on mic-owner changes
+let wakeRecStartGeneration = 0;
+let wakeRecMeetingGeneration = 0;
 let wakeArmed = false;        // true after "Artemis" with no command → next phrase is the command
 let wakeArmedTimer = null;
 let wakeWatchdog = 0;
 
 // Start the recognizer safely — swallow "already started" / throttle errors.
 function safeStartRec() {
-  if (!wakeRec || wakeRunning) return;
-  try { wakeRec.start(); } catch (e) { /* already started, or throttled — the watchdog retries */ }
+  if (!wakeRec || wakeRunning || wakeRecStarting ||
+      wakeVizStarting || !wakeOn || speaking || busy ||
+      document.hidden ||
+      meetingVoiceActive() || localWakeRunning()) return;
+  try {
+    wakeRecStartGeneration = wakeStartGeneration;
+    wakeRecMeetingGeneration = meetingGeneration;
+    wakeRecStarting = true;
+    wakeRec.start();
+  } catch (e) {
+    wakeRecStarting = false; // already started, or throttled — the watchdog retries
+  }
 }
 // Watchdog: Chrome's SpeechRecognition dies silently (network blip, long
 // silence, throttled restart) and then she goes DEAF with no indication. This
@@ -1218,9 +1409,14 @@ function safeStartRec() {
 function startWakeWatchdog() {
   if (wakeWatchdog) return;
   wakeWatchdog = setInterval(() => {
-    if (wakeOn && !wakeRunning && !speaking && !busy) safeStartRec();
+    if (wakeOn && !document.hidden && !wakeRunning && !speaking && !busy &&
+        !meetingVoiceActive() && !localWakeRunning()) safeStartRec();
     // keep the live indicator honest
-    if (wakeOn) window.__wakeLive = wakeRunning && !speaking && !busy;
+    if (wakeOn) {
+      window.__wakeLive = !document.hidden && !meetingVoiceActive() &&
+        ((localWakeRunning() && !speaking && !busy) ||
+         (wakeRunning && !speaking && !busy));
+    }
   }, 2500);
 }
 function stopWakeWatchdog() { if (wakeWatchdog) { clearInterval(wakeWatchdog); wakeWatchdog = 0; } window.__wakeLive = false; }
@@ -1233,7 +1429,9 @@ function armWake() {
   if (wakeArmedTimer) clearTimeout(wakeArmedTimer);
   wakeArmedTimer = setTimeout(() => {
     wakeArmed = false;
-    if (wakeOn && !busy && !speaking) setLiveStatus("Listening for “Artemis…”");
+    if (wakeOn && !busy && !speaking && !meetingVoiceActive()) {
+      setLiveStatus("Listening for “Artemis…”");
+    }
   }, 12000); // listen ~12s for the follow-up (the greeting eats a second or two)
 }
 
@@ -1269,12 +1467,566 @@ function scrubWakePrefix(text) {
   return String(text || "").replace(wakePrefixRe(), "").trim();
 }
 
+function currentMeeting(session) {
+  return !!session && meetingSession === session && session.generation === meetingGeneration;
+}
+
+function meetingWordCount(session) {
+  let count = 0;
+  for (const [seq, text] of session.transcripts) {
+    if (seq >= session.cutoffSeq) continue;
+    const words = String(text || "").trim().match(/\S+/g);
+    if (words) count += words.length;
+  }
+  return count;
+}
+
+function meetingElapsedMinutes(session) {
+  if (!session.startedAt) return 0;
+  return Math.max(0, Math.floor((performance.now() - session.startedAt) / 60000));
+}
+
+function showMeetingRecordingUi(session) {
+  if (!currentMeeting(session) || session.phase !== "capturing") return;
+  const minutes = meetingElapsedMinutes(session);
+  const words = meetingWordCount(session);
+  orb.setStatus("listening");
+  micToggle.classList.add("recording");
+  micToggle.setAttribute("aria-label", "Stop meeting notes");
+  setLiveStatus(
+    `Recording meeting notes… ${minutes} min, ${words} words — tap mic or say “stop taking notes”`
+  );
+  window.__wakeLive = false;
+  if (window.__dockOnWake) window.__dockOnWake(true);
+}
+
+function showMeetingStartingUi(session) {
+  if (!currentMeeting(session) || session.phase !== "starting") return;
+  orb.setStatus("listening");
+  micToggle.classList.add("recording");
+  micToggle.setAttribute("aria-label", "Stop meeting notes");
+  setLiveStatus("Opening meeting microphone… tap the mic to cancel");
+  window.__wakeLive = false;
+  if (window.__dockOnWake) window.__dockOnWake(true);
+}
+
+function showMeetingPhaseUi(session) {
+  if (!currentMeeting(session)) return;
+  if (session.phase === "capturing") {
+    showMeetingRecordingUi(session);
+  } else if (session.phase === "starting") {
+    showMeetingStartingUi(session);
+  } else if (session.phase === "stopping") {
+    setLiveStatus("Finishing meeting notes…");
+  } else if (session.phase === "finalizing") {
+    orb.setStatus("thinking");
+    setLiveStatus("Structuring and saving meeting notes…");
+  }
+  window.__wakeLive = false;
+}
+
+function clearMeetingTimers(session) {
+  if (session.deadlineTimer) {
+    clearTimeout(session.deadlineTimer);
+    session.deadlineTimer = 0;
+  }
+  if (session.minuteTimer) {
+    clearInterval(session.minuteTimer);
+    session.minuteTimer = 0;
+  }
+}
+
+function setMeetingControlsLocked(session, locked) {
+  if (locked) {
+    session.wakeToggleWasDisabled = wakeToggle.disabled;
+    session.followUpToggleWasDisabled = followUpToggle ? followUpToggle.disabled : false;
+    wakeToggle.disabled = true;
+    if (followUpToggle) followUpToggle.disabled = true;
+    return;
+  }
+  wakeToggle.disabled = session.wakeToggleWasDisabled;
+  if (followUpToggle) followUpToggle.disabled = session.followUpToggleWasDisabled;
+}
+
+function requestMeetingStop(session, reason) {
+  if (!currentMeeting(session)) return Promise.resolve();
+  if (session.phase === "stopping" || session.phase === "finalizing") {
+    return session.stopPromise || Promise.resolve();
+  }
+
+  session.stopReason = reason || "stop";
+  session.phase = "stopping";
+  clearMeetingTimers(session);
+  window.__wakeLive = false;
+  setLiveStatus("Finishing meeting notes…");
+  hud("log", "status", `notes: stopping (${session.stopReason})`);
+  if (session.cancelLocalStart) session.cancelLocalStart();
+  session.preserveActiveCapture = [
+    "mic",
+    "page hidden",
+    "30 minute limit",
+  ].includes(session.stopReason);
+
+  // stopLocalWake is the existing capture cancellation seam. It closes the
+  // shared mic immediately and optionally returns the already-buffered partial.
+  session.stopPromise = stopLocalWake({
+    preserveCapture: session.preserveActiveCapture,
+  }).catch(() => {});
+  return session.stopPromise;
+}
+
+async function transcribeMeetingChunk(session, seq, wav) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MEETING_STT_TIMEOUT_MS);
+  session.sttControllers.set(seq, controller);
+  try {
+    const res = await fetch("/api/stt", {
+      method: "POST",
+      headers: { "Content-Type": "audio/wav" },
+      body: wav,
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "STT failed");
+    if (!currentMeeting(session)) return;
+
+    const raw = typeof data.transcript === "string" ? data.transcript.trim() : "";
+    if (!raw) return;
+
+    // Match on a scrubbed copy only. The actual transcript remains verbatim and
+    // is never sent through dispatchUtterance or added to model conversation.
+    if (isMeetingStopPhrase(scrubWakePrefix(raw))) {
+      session.cutoffSeq = Math.min(session.cutoffSeq, seq);
+      for (const [otherSeq, otherController] of session.sttControllers) {
+        if (otherSeq > session.cutoffSeq) otherController.abort();
+      }
+      for (const otherSeq of session.transcripts.keys()) {
+        if (otherSeq >= session.cutoffSeq) session.transcripts.delete(otherSeq);
+      }
+      requestMeetingStop(session, "spoken phrase");
+      return;
+    }
+
+    if (seq < session.cutoffSeq) {
+      session.transcripts.set(seq, raw);
+      showMeetingRecordingUi(session);
+    }
+  } catch (e) {
+    if (currentMeeting(session) && !controller.signal.aborted) {
+      hud("log", "error", `notes: chunk ${seq + 1} transcription failed`);
+    }
+  } finally {
+    clearTimeout(timeout);
+    session.sttControllers.delete(seq);
+  }
+}
+
+function launchMeetingStt(session, seq, wav) {
+  const task = transcribeMeetingChunk(session, seq, wav);
+  session.sttTasks.set(seq, task);
+  // The task owns its error handling. Removing it only after settlement retains
+  // a bounded promise for finalization without retaining the WAV afterward.
+  void task.finally(() => {
+    if (session.sttTasks.get(seq) === task) session.sttTasks.delete(seq);
+  });
+}
+
+async function meetingCaptureLoop(session) {
+  while (currentMeeting(session) && session.phase === "capturing") {
+    const remaining = session.deadlineAt - performance.now();
+    if (remaining <= 0) {
+      requestMeetingStop(session, "30 minute limit");
+      break;
+    }
+
+    const captureStarted = performance.now();
+    const wav = await captureCommand({
+      // Reusing the wake pre-roll in a loop duplicates the previous utterance.
+      preRollMs: 0,
+      waitForSpeechMs: Math.min(MEETING_WAIT_FOR_SPEECH_MS, remaining),
+      onLevel: (rms) => {
+        if (!currentMeeting(session) || session.phase !== "capturing") return;
+        orb.feed(Math.min(1, rms * 10));
+        // AudioWorklet frames remain a useful deadline backstop when background
+        // timer throttling delays the wall-clock timeout.
+        if (performance.now() >= session.deadlineAt) {
+          requestMeetingStop(session, "30 minute limit");
+        }
+      },
+    });
+
+    if (!currentMeeting(session)) break;
+    if (session.phase !== "capturing") {
+      if (session.phase === "stopping" &&
+          session.preserveActiveCapture && wav) {
+        const seq = session.nextSeq++;
+        launchMeetingStt(session, seq, wav);
+      }
+      break;
+    }
+    if (!wav) {
+      // Ordinary silence consumes the configured wait and simply reopens. An
+      // immediate null means the engine stopped or another capture stole the
+      // single capResolve owner; fail closed instead of spinning.
+      const immediate = performance.now() - captureStarted < 250;
+      if (!localWakeRunning() || immediate) {
+        session.captureError = "The local microphone engine stopped.";
+        requestMeetingStop(session, "capture unavailable");
+        break;
+      }
+      continue;
+    }
+
+    const seq = session.nextSeq++;
+    // Do not await STT here. finishCapture left the engine idle, so the next
+    // loop iteration must reclaim mode="capture" before network work completes.
+    launchMeetingStt(session, seq, wav);
+  }
+}
+
+async function restoreEngineAfterMeeting(session) {
+  // The normal post-TTS/visibility path restores the saved wake preference via
+  // resumeWake(), including its local-to-browser fallback. Here only ensure a
+  // meeting-owned local engine cannot survive when wake was originally off.
+  if (session.localCaptureStarted && !session.wakeWasOn && localWakeRunning()) {
+    await stopLocalWake();
+  }
+}
+
+async function startMeetingLocalWake(session) {
+  if (localWakeRunning()) return true;
+  let timeout = 0;
+  let cancel;
+  const cancelled = new Promise((resolve) => {
+    cancel = () => resolve(false);
+  });
+  session.cancelLocalStart = cancel;
+  const boundedStart = new Promise((resolve) => {
+    timeout = setTimeout(() => resolve(false), MEETING_LOCAL_START_TIMEOUT_MS);
+  });
+  try {
+    const ok = await Promise.race([
+      startLocalWake(localWakeCfg, onLocalWake),
+      cancelled,
+      boundedStart,
+    ]);
+    if (!ok) await stopLocalWake();
+    return ok === true;
+  } finally {
+    clearTimeout(timeout);
+    if (session.cancelLocalStart === cancel) session.cancelLocalStart = null;
+  }
+}
+
+async function saveMeetingTranscript(session, transcriptText) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MEETING_SAVE_TIMEOUT_MS);
+  try {
+    const res = await fetch("/api/meeting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript: transcriptText }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Meeting save failed");
+    const reply = typeof data.reply === "string" && data.reply.trim()
+      ? data.reply.trim()
+      : "I saved the meeting notes.";
+    const candidate = data.pendingAction;
+    const pendingAction = candidate &&
+      typeof candidate.confirmId === "string" &&
+      candidate.name === "set_meeting_reminders"
+      ? candidate
+      : null;
+    // The reply may contain transcript-derived action text and the server marks
+    // it mailUntrusted. It is intentionally not appended to conversation/model
+    // history; it is only displayed and spoken to the user who supplied it.
+    return { reply, pendingAction };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function waitForMeetingReleaseTick() {
+  return new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+async function releaseCompetingMicsForMeeting(session) {
+  pauseWakeForSpeech();
+  if (wakeRec && wakeRunning) {
+    try { wakeRec.stop(); } catch (e) {}
+  }
+
+  // Normally the queueMicrotask handoff lets the originating local-wake or
+  // follow-up turn clear these owners first. If a different stale voice result
+  // claimed meeting mode, explicitly settle its capture before taking capResolve.
+  const ownerDeadline = performance.now() + 500;
+  while (currentMeeting(session) && session.phase === "starting" &&
+         (wakeCapturing || followUpInFlight || followUpStarting) &&
+         performance.now() < ownerDeadline) {
+    await waitForMeetingReleaseTick();
+  }
+  if (!currentMeeting(session) || session.phase !== "starting") return;
+  if (wakeCapturing || followUpCaptureOpen) {
+    await stopLocalWake();
+  }
+  const ownerCloseDeadline = performance.now() + 1000;
+  while (currentMeeting(session) && session.phase === "starting" &&
+         (wakeCapturing || followUpInFlight || followUpStarting) &&
+         performance.now() < ownerCloseDeadline) {
+    await waitForMeetingReleaseTick();
+  }
+  if (!currentMeeting(session) || session.phase !== "starting") return;
+  if (wakeCapturing || followUpInFlight || followUpStarting) {
+    throw new Error("another voice capture did not close");
+  }
+
+  // A stale browser-wake result can claim meeting mode while a manual mic tap
+  // is still acquiring or stopping its MediaRecorder. Wait for that existing
+  // cleanup path rather than opening a second input stream.
+  const manualDeadline = performance.now() + 3000;
+  while (currentMeeting(session) && session.phase === "starting" &&
+         (recording || talkStarting || liveEs ||
+          (mediaRecorder && mediaRecorder.state !== "inactive")) &&
+         performance.now() < manualDeadline) {
+    if (recording) stopTalk();
+    await waitForMeetingReleaseTick();
+  }
+  if (!currentMeeting(session) || session.phase !== "starting") return;
+  if (recording || talkStarting || liveEs ||
+      (mediaRecorder && mediaRecorder.state !== "inactive")) {
+    throw new Error("manual microphone did not close");
+  }
+
+  const browserDeadline = performance.now() + 1500;
+  while (currentMeeting(session) && session.phase === "starting" &&
+         (wakeRunning || wakeRecStarting || wakeVizStarting) &&
+         performance.now() < browserDeadline) {
+    await waitForMeetingReleaseTick();
+  }
+  if (!currentMeeting(session) || session.phase !== "starting") return;
+  if (wakeRunning || wakeRecStarting || wakeVizStarting) {
+    throw new Error("browser wake microphone did not close");
+  }
+
+  // Release the browser wake visualization/manual stream before the local
+  // AudioWorklet engine acquires exclusive ownership.
+  if (micStream) {
+    try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    micStream = null;
+  }
+  orb.stopAudio();
+}
+
+async function finalizeMeetingCapture(session) {
+  if (!currentMeeting(session) || session.finalizeStarted) return;
+  session.finalizeStarted = true;
+  session.phase = "finalizing";
+  clearMeetingTimers(session);
+
+  if (session.stopPromise) await session.stopPromise;
+  micToggle.classList.remove("recording");
+  micToggle.setAttribute("aria-label", session.micAriaLabel || "Talk to Artemis");
+  orb.setStatus("thinking");
+  setLiveStatus("Structuring and saving meeting notes…");
+
+  // Every STT request is individually bounded, so finalization cannot be held
+  // forever by a missing early sequence.
+  await Promise.allSettled(Array.from(session.sttTasks.values()));
+  const transcriptText = Array.from(session.transcripts.entries())
+    .filter(([seq]) => seq < session.cutoffSeq)
+    .sort(([a], [b]) => a - b)
+    .map(([, text]) => text)
+    .join("\n")
+    .trim();
+
+  let reply;
+  let groupedPending = null;
+  if (session.startError) {
+    reply = "I couldn't start meeting capture because the local microphone engine isn't available.";
+  } else if (session.captureError && !transcriptText) {
+    reply = "The microphone stopped before I could save any meeting notes.";
+  } else if (!transcriptText) {
+    reply = "I didn't catch any meeting notes to save.";
+  } else {
+    try {
+      const saved = await saveMeetingTranscript(session, transcriptText);
+      reply = saved.reply;
+      groupedPending = saved.pendingAction;
+    } catch (e) {
+      reply = "I couldn't save the meeting notes.";
+    }
+  }
+
+  await restoreEngineAfterMeeting(session);
+  if (!currentMeeting(session)) return;
+
+  setMeetingControlsLocked(session, false);
+  meetingSession = null;
+  conversationLive = !!groupedPending;
+  if (groupedPending) {
+    pendingConfirm = groupedPending;
+    hud("log", "confirm", "meeting reminders awaiting your yes / no");
+    hud("context", {
+      title: "CONFIRM REQUIRED",
+      lines: ["Set the grouped meeting reminders?"],
+      confirm: true,
+    });
+  }
+  addMsg("artemis", reply);
+  hud("log", "artemis", reply.length > 120 ? reply.slice(0, 117) + "…" : reply);
+  if (document.hidden) {
+    deferredMeetingReply = reply;
+    orb.setStatus("idle");
+    setLiveStatus(groupedPending
+      ? "Meeting notes saved — return to Artemis to confirm the reminders."
+      : "Meeting capture finished — return to Artemis for details.");
+    return;
+  }
+  orb._ensureAudio();
+  speak(reply);
+}
+
+async function runMeetingCapture(session) {
+  try {
+    // Browser SpeechRecognition also has restart callbacks; meeting guards below
+    // keep it dormant while this explicit session owns the microphone.
+    await releaseCompetingMicsForMeeting(session);
+    if (!currentMeeting(session) || session.phase !== "starting") return;
+    const localWasRunning = localWakeRunning();
+    if (!localWakeRunning()) {
+      const ok = await startMeetingLocalWake(session);
+      if (!currentMeeting(session) || session.phase !== "starting") return;
+      if (!ok) throw new Error("local capture unavailable");
+    }
+    session.localCaptureStarted = !localWasRunning;
+
+    if (!currentMeeting(session) || session.phase !== "starting") {
+      await stopLocalWake();
+      return;
+    }
+
+    session.phase = "capturing";
+    hud("log", "status", "notes: recording started");
+    showMeetingRecordingUi(session);
+    await meetingCaptureLoop(session);
+  } catch (e) {
+    if (currentMeeting(session)) {
+      const message = e && e.message ? e.message : "capture unavailable";
+      const captureBegan = session.phase === "capturing";
+      if (captureBegan) session.captureError = message;
+      else session.startError = message;
+      requestMeetingStop(session, captureBegan ? "capture failed" : "start failed");
+    }
+  } finally {
+    if (currentMeeting(session) &&
+        session.phase !== "stopping" &&
+        session.phase !== "finalizing") {
+      requestMeetingStop(session, "capture ended");
+    }
+    if (currentMeeting(session) && session.stopPromise) await session.stopPromise;
+    if (currentMeeting(session)) await finalizeMeetingCapture(session);
+  }
+}
+
+function beginMeetingCapture() {
+  if (meetingVoiceActive()) {
+    setLiveStatus("Already taking meeting notes.");
+    return false;
+  }
+  if (document.hidden) {
+    hud("log", "error", "notes: open the Artemis tab before recording");
+    return false;
+  }
+
+  const claimedAt = performance.now();
+  const session = {
+    generation: ++meetingGeneration,
+    phase: "starting",
+    wakeWasOn: wakeOn,
+    micAriaLabel: micToggle.getAttribute("aria-label"),
+    wakeToggleWasDisabled: false,
+    followUpToggleWasDisabled: false,
+    deadlineTimer: 0,
+    minuteTimer: 0,
+    deadlineAt: claimedAt + MEETING_MAX_MS,
+    startedAt: claimedAt,
+    stopPromise: null,
+    stopReason: null,
+    startError: null,
+    captureError: null,
+    cancelLocalStart: null,
+    localCaptureStarted: false,
+    preserveActiveCapture: false,
+    finalizeStarted: false,
+    nextSeq: 0,
+    cutoffSeq: Number.POSITIVE_INFINITY,
+    transcripts: new Map(),
+    sttTasks: new Map(),
+    sttControllers: new Map(),
+  };
+  meetingSession = session;
+  wakeStartGeneration++;
+  confirmCompletionGeneration++;
+  session.deadlineTimer = setTimeout(
+    () => requestMeetingStop(session, "30 minute limit"),
+    MEETING_MAX_MS
+  );
+  session.minuteTimer = setInterval(() => {
+    if (!currentMeeting(session) || session.phase !== "capturing") return;
+    const minutes = meetingElapsedMinutes(session);
+    const words = meetingWordCount(session);
+    hud("log", "status", `notes: ${minutes} min, ${words} words`);
+    showMeetingRecordingUi(session);
+  }, 60000);
+
+  // Claim every competing voice loop synchronously. The actual async runner is
+  // deferred so an originating wake/follow-up dispatcher reaches its finally
+  // and releases wakeCapturing/followUpInFlight first.
+  conversationLive = false;
+  followUpGeneration++;
+  disarmWake();
+  if (followUpAbort) {
+    try { followUpAbort.abort(); } catch (e) {}
+  }
+  cancelPendingConfirmation();
+  if (recording) stopTalk();
+  stopBargeIn();
+  resetTtsPipe();
+  speaking = false;
+  if (currentAbort) {
+    try { currentAbort.abort(); } catch (e) {}
+  }
+  currentAbort = null;
+  busy = false;
+  stopThinking();
+  setMeetingControlsLocked(session, true);
+  window.__wakeLive = false;
+  showMeetingStartingUi(session);
+  hud("log", "status", "notes: preparing local microphone");
+  queueMicrotask(() => {
+    if (currentMeeting(session) && session.phase === "starting") {
+      void runMeetingCapture(session);
+    }
+  });
+  return true;
+}
+
 // Every voice entry point lands here after STT. Keep the safety-sensitive
 // ordering shared: scrub any captured wake prefix, then confirmation, local
 // open intent, and finally the assistant.
 function dispatchUtterance(text, { suppressClosingAck = false } = {}) {
   const command = scrubWakePrefix(text);
+  // Meeting speech is consumed only by the capture loop. A stale wake/STT
+  // completion — including a second exact start phrase — must not touch its UI
+  // or become a normal assistant command.
+  if (meetingVoiceActive()) return true;
   if (!command) return false;
+  if (isMeetingStartPhrase(command)) {
+    beginMeetingCapture();
+    return true;
+  }
   if (isClosingPhrase(command)) {
     conversationLive = false;
     cancelPendingConfirmation();
@@ -1297,7 +2049,9 @@ function dispatchUtterance(text, { suppressClosingAck = false } = {}) {
 // batch STT (the reliable path); no MediaRecorder, no chunk streaming.
 let wakeCapturing = false;
 async function onLocalWake() {
-  if (recording || talkStarting || busy || wakeCapturing || followUpInFlight) return; // already handling a turn
+  if (recording || talkStarting || busy || wakeCapturing ||
+      followUpInFlight || meetingVoiceActive()) return; // already handling a turn
+  const turnMeetingGeneration = meetingGeneration;
   const interruptedTts = speaking || ttsPlaying || ttsQueue.length > 0;
   if (interruptedTts) window.ArtemisBargeIn.interrupt(); // she was talking → interrupt
   wakeCapturing = true;
@@ -1308,10 +2062,12 @@ async function onLocalWake() {
   window.__wakeLive = false;
   try {
     const wav = await captureCommand({ onLevel: (rms) => orb.feed(Math.min(1, rms * 10)) });
+    if (turnMeetingGeneration !== meetingGeneration) return;
     if (!wav) { setLiveStatus("Didn't catch that — try again."); afterSpeak(); return; }
     setLiveStatus("Transcribing…");
     const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav });
     const data = await res.json();
+    if (turnMeetingGeneration !== meetingGeneration) return;
     // the pre-roll may include the tail of the wake phrase; the shared
     // dispatcher scrubs it using the active profile's declared mishearings.
     if (!dispatchUtterance(data.transcript, { suppressClosingAck: interruptedTts })) {
@@ -1319,6 +2075,7 @@ async function onLocalWake() {
       afterSpeak();
     }
   } catch (e) {
+    if (turnMeetingGeneration !== meetingGeneration) return;
     setLiveStatus("Transcription failed.");
     afterSpeak();
   } finally {
@@ -1329,7 +2086,7 @@ async function onLocalWake() {
 function followUpStillCurrent(generation) {
   return generation === followUpGeneration && wakeOn && conversationLive &&
     followUpEnabled && !document.hidden && !recording && !talkStarting &&
-    !busy && !speaking && localWakeRunning();
+    !busy && !speaking && !meetingVoiceActive() && localWakeRunning();
 }
 
 async function followUpListen() {
@@ -1416,11 +2173,21 @@ async function followUpListen() {
   }
 }
 
-async function startWakeLocal() {
+async function startWakeLocal(
+  expectedWakeGeneration = wakeStartGeneration,
+  expectedMeetingGeneration = meetingGeneration
+) {
+  if (document.hidden || meetingVoiceActive()) return false;
   wakeStarting = true;
   orb._ensureAudio();
   const ok = await startLocalWake(localWakeCfg, onLocalWake);
   wakeStarting = false;
+  if (expectedWakeGeneration !== wakeStartGeneration ||
+      expectedMeetingGeneration !== meetingGeneration ||
+      meetingVoiceActive()) {
+    if (ok) pauseLocalWake();
+    return false;
+  }
   if (!ok) return false;
   setWakeUi(true);
   orb.setStatus("listening");
@@ -1429,37 +2196,114 @@ async function startWakeLocal() {
   return true;
 }
 
-async function startWake() {
-  if (wakeOn || wakeStarting) return;
+async function acquireBrowserWakeViz({ allowWakeOff = false } = {}) {
+  if (wakeVizStarting) return false;
+  const turnMeetingGeneration = meetingGeneration;
+  const turnWakeStartGeneration = wakeStartGeneration;
+  let stream = null;
+  let accepted = false;
+  wakeVizStarting = true;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (turnMeetingGeneration !== meetingGeneration ||
+        turnWakeStartGeneration !== wakeStartGeneration ||
+        document.hidden || meetingVoiceActive() || localWakeRunning() ||
+        speaking || busy || recording || talkStarting ||
+        (!allowWakeOff && !wakeOn)) {
+      return false;
+    }
+    if (micStream && micStream !== stream) {
+      try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    }
+    micStream = stream;
+    orb.connectMic(stream);
+    accepted = true;
+    return true;
+  } catch (e) {
+    return false;
+  } finally {
+    wakeVizStarting = false;
+    if (!accepted && stream) {
+      try { stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+      if (micStream === stream) micStream = null;
+    }
+  }
+}
+
+async function startWake({ resumeBrowser = false } = {}) {
+  if (document.hidden || (!resumeBrowser && wakeOn) ||
+      wakeStarting || meetingVoiceActive()) return false;
+  const turnMeetingGeneration = meetingGeneration;
+  const turnWakeStartGeneration = wakeStartGeneration;
   // Prefer the reliable local engine when it's set up; else the browser recognizer.
-  if (localWakeCfg && localWakeCfg.ready) {
-    if (await startWakeLocal()) return;
+  if (!resumeBrowser && localWakeCfg && localWakeCfg.ready) {
+    if (await startWakeLocal(turnWakeStartGeneration, turnMeetingGeneration)) return true;
+    if (turnWakeStartGeneration !== wakeStartGeneration ||
+        turnMeetingGeneration !== meetingGeneration ||
+        meetingVoiceActive()) return false;
     // on-device engine failed to load → fall through to the browser recognizer if present
   }
   if (!SpeechRec) {
     setLiveStatus("Wake word needs Chrome or Edge (or set up the on-device engine — see README).");
-    return;
+    if (resumeBrowser) setWakeUi(false);
+    return false;
   }
   wakeStarting = true;
   orb._ensureAudio();
   // a viz mic so the orb reacts to your voice while waiting
-  try {
-    if (micStream) { try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {} } // never leak the old one
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    orb.connectMic(micStream);
-  } catch (e) {}
+  if (micStream) {
+    try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    micStream = null;
+  }
+  await acquireBrowserWakeViz({ allowWakeOff: true });
+  if (turnWakeStartGeneration !== wakeStartGeneration ||
+      turnMeetingGeneration !== meetingGeneration ||
+      document.hidden || meetingVoiceActive() ||
+      speaking || busy || recording || talkStarting) {
+    wakeStarting = false;
+    return false;
+  }
   wakeStarting = false;
-  wakeRec = new SpeechRec();
-  wakeRec.continuous = true;
-  wakeRec.interimResults = false;
-  wakeRec.lang = "en-US";
-  wakeRec.onresult = (e) => {
+  const recognizer = new SpeechRec();
+  wakeRec = recognizer;
+  recognizer.continuous = true;
+  recognizer.interimResults = false;
+  recognizer.lang = "en-US";
+  recognizer.onresult = (e) => {
+    if (wakeRec !== recognizer ||
+        wakeRecStartGeneration !== wakeStartGeneration ||
+        wakeRecMeetingGeneration !== meetingGeneration ||
+        speaking || busy || document.hidden) return;
     for (let i = e.resultIndex; i < e.results.length; i++) {
       if (e.results[i].isFinal) handleWake(e.results[i][0].transcript);
     }
   };
-  wakeRec.onstart = () => { wakeRunning = true; window.__wakeLive = !speaking && !busy; };
-  wakeRec.onerror = (e) => {
+  recognizer.onstart = () => {
+    if (wakeRec !== recognizer) {
+      try { recognizer.stop(); } catch (e) {}
+      return;
+    }
+    wakeRecStarting = false;
+    wakeRunning = true;
+    if (wakeRecStartGeneration !== wakeStartGeneration ||
+        wakeRecMeetingGeneration !== meetingGeneration ||
+        !wakeOn || document.hidden ||
+        meetingVoiceActive() || localWakeRunning()) {
+      window.__wakeLive = false;
+      // safeStartRec may have run one tick before meeting/local ownership was
+      // claimed, while onstart was still pending and wakeRunning was false.
+      // Shut that recognizer down as soon as the browser reports it live.
+      try { recognizer.stop(); } catch (e) {}
+      return;
+    }
+    window.__wakeLive = !speaking && !busy;
+  };
+  recognizer.onerror = (e) => {
+    if (wakeRec !== recognizer) return;
+    wakeRecStarting = false;
+    if (wakeRecStartGeneration !== wakeStartGeneration ||
+        wakeRecMeetingGeneration !== meetingGeneration) return;
+    if (meetingVoiceActive()) return;
     if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
       // fatal: without stopping, onend would restart instantly → error → onend,
       // an infinite tight loop while the toggle claims the wake word is ON
@@ -1472,21 +2316,29 @@ async function startWake() {
     // 'no-speech' / 'aborted' / 'network' are transient — onend + the watchdog
     // bring it back, so we DON'T tear down (that was making her go deaf).
   };
-  wakeRec.onend = () => {
+  recognizer.onend = () => {
+    if (wakeRec !== recognizer) return;
+    wakeRecStarting = false;
     wakeRunning = false;
     window.__wakeLive = false;
     // restart shortly (a tiny delay avoids Chrome's "already started" throttle);
     // the watchdog is the backstop if this restart is dropped.
-    if (wakeOn && !speaking && !busy) setTimeout(safeStartRec, 300);
+    if (wakeOn && !document.hidden && !speaking && !busy &&
+        !meetingVoiceActive() && !localWakeRunning()) {
+      setTimeout(safeStartRec, 300);
+    }
   };
   setWakeUi(true);
   orb.setStatus("listening");
   setLiveStatus("● Listening for “Artemis…”");
   startWakeWatchdog();
   safeStartRec();
+  return true;
 }
 
 function stopWake() {
+  if (meetingVoiceActive()) return;
+  wakeStartGeneration++;
   setWakeUi(false);
   conversationLive = false;
   followUpGeneration++;
@@ -1496,10 +2348,13 @@ function stopWake() {
   disarmWake();
   stopWakeWatchdog();
   wakeRunning = false;
+  wakeRecStarting = false;
   if (localWakeRunning() || wakeStarting) stopLocalWake();
-  if (wakeRec) {
-    wakeRec.onend = null; // don't auto-restart after an intentional stop
-    try { wakeRec.stop(); } catch (e) {}
+  const recognizer = wakeRec;
+  wakeRec = null;
+  if (recognizer) {
+    recognizer.onend = null; // don't auto-restart after an intentional stop
+    try { recognizer.stop(); } catch (e) {}
   }
   orb.stopAudio();
   orb.setStatus("idle");
@@ -1507,6 +2362,7 @@ function stopWake() {
 }
 
 function runWakeCommand(cmd, { suppressClosingAck = false } = {}) {
+  if (meetingVoiceActive()) return;
   cmd = (cmd || "").trim();
   if (!cmd) return;
   disarmWake();
@@ -1517,6 +2373,7 @@ function runWakeCommand(cmd, { suppressClosingAck = false } = {}) {
 }
 
 function handleWake(raw) {
+  if (meetingVoiceActive()) return;
   const w = matchWake(raw);
   let interruptedTts = false;
   // If she's mid-sentence when you say her name, that's an interrupt — stop her
@@ -1560,6 +2417,9 @@ function handleWake(raw) {
 }
 
 function pauseWakeForSpeech() {
+  // Invalidate a browser recognizer whose start/result event is still queued.
+  // Otherwise Artemis's own TTS could be heard as a fresh wake command.
+  wakeStartGeneration++;
   window.__wakeLive = false;
   if (localWakeRunning()) { pauseLocalWake(); return; } // local engine: stop hearing during her speech
   if (wakeRec) {
@@ -1567,20 +2427,25 @@ function pauseWakeForSpeech() {
   }
 }
 async function resumeWake() {
-  if (!wakeOn) return false;
+  if (!wakeOn || document.hidden || meetingVoiceActive()) return false;
+  const turnWakeStartGeneration = wakeStartGeneration;
+  const turnMeetingGeneration = meetingGeneration;
   if (localWakeRunning()) { resumeLocalWake(); window.__wakeLive = true; return true; } // local engine: re-arm detection
-  if (localWakeCfg && localWakeCfg.ready) return startWakeLocal(); // a manual talk stopped the engine — restart it
+  if (localWakeCfg && localWakeCfg.ready) {
+    if (await startWakeLocal(turnWakeStartGeneration, turnMeetingGeneration)) return true; // a manual talk stopped the engine — restart it
+    if (turnWakeStartGeneration !== wakeStartGeneration ||
+        turnMeetingGeneration !== meetingGeneration ||
+        !wakeOn || meetingVoiceActive()) return false;
+    // The preference is still ON, so a failed local restart must use the same
+    // browser fallback as initial startup instead of leaving the UI "on" but deaf.
+    return startWake({ resumeBrowser: true });
+  }
+  if (!wakeRec) return startWake({ resumeBrowser: true });
   // a stream whose tracks were stopped (orb.stopAudio) is useless — check
   // liveness, not just presence, or the orb never reacts after the 1st turn
   const live = micStream && micStream.getTracks().some((t) => t.readyState === "live");
   if (!live) {
-    navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((s) => {
-        micStream = s;
-        orb.connectMic(s);
-      })
-      .catch(() => {});
+    void acquireBrowserWakeViz();
   }
   // small delay so the just-stopped recognizer has fully ended before restart
   // (avoids the "already started" throttle); the watchdog is the backstop.
@@ -1588,17 +2453,20 @@ async function resumeWake() {
   return false;
 }
 
-wakeToggle.addEventListener("click", () => (wakeOn ? stopWake() : startWake()));
+wakeToggle.addEventListener("click", () => {
+  if (meetingVoiceActive()) return;
+  return wakeOn ? stopWake() : startWake();
+});
 window.__handleWake = handleWake; // debug/test handle (preview verification)
 
 // Cockpit continuity: after the boot tap (a real gesture), re-arm the wake
 // word automatically if it was ON last session — she's just listening again.
-window.ArtemisArmWake = () => { if (!wakeOn) startWake(); };
+window.ArtemisArmWake = () => { if (!wakeOn && !meetingVoiceActive()) startWake(); };
 
 // ---- hero CTAs + nav CTA (voice-first: tap = start talking) ----
 function startTalkGesture() {
   orb._ensureAudio();
-  if (!recording && !busy && !speaking) startTalk();
+  if (!recording && !busy && !speaking && !meetingVoiceActive()) startTalk();
 }
 // The dock's mic is now the single primary "Talk to Artemis" CTA. Any legacy
 // in-page talk buttons still start a turn if present, but the nav no longer
@@ -1928,8 +2796,38 @@ document.querySelectorAll(".features, .team, .demo").forEach((el) => pauseIo.obs
 // freeze every CSS animation while the tab is hidden (the orb's rAF already pauses)
 document.addEventListener("visibilitychange", () => {
   document.body.classList.toggle("tab-hidden", document.hidden);
-  if (document.hidden && conversationLive) {
-    void abortFollowUp({ endConversation: true, resumeWakeAfter: true });
+  if (document.hidden && meetingVoiceActive()) {
+    // The in-page orb/status can no longer make an open mic visible. Close it
+    // and save everything captured so far rather than running a hidden hot mic.
+    requestMeetingStop(meetingSession, "page hidden");
+    return;
+  }
+  if (document.hidden) {
+    conversationLive = false;
+    wakeStartGeneration++;
+    void abortFollowUp({ endConversation: true, resumeWakeAfter: false });
+    stopBargeIn();
+    if (localWakeRunning() || wakeStarting) void stopLocalWake();
+    if (wakeRec) {
+      try { wakeRec.stop(); } catch (e) {}
+    }
+    if (micStream) {
+      try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+      micStream = null;
+    }
+    window.__wakeLive = false;
+    return;
+  }
+  if (!document.hidden && !meetingVoiceActive() && deferredMeetingReply) {
+    const reply = deferredMeetingReply;
+    deferredMeetingReply = null;
+    orb._ensureAudio();
+    speak(reply);
+    return;
+  }
+  if (!document.hidden && !meetingVoiceActive() && wakeOn &&
+      !recording && !talkStarting && !speaking && !busy) {
+    restoreWakeListening();
   }
 });
 
@@ -1960,9 +2858,13 @@ document.addEventListener("visibilitychange", () => {
   let idleTimer = 0;
   // keep the panel open while it's genuinely in use
   const inUse = () =>
-    wakeOn || recording || busy || speaking || dock.contains(document.activeElement);
+    wakeOn || recording || busy || speaking || meetingVoiceActive() ||
+    dock.contains(document.activeElement);
 
   const setState = (s) => {
+    // The expanded dock carries the persistent recording status and stop mic.
+    // Escape and the explicit collapse chevron cannot hide them mid-meeting.
+    if (s === "idle" && meetingVoiceActive()) s = "expanded";
     if (dock.dataset.state === s) return;
     dock.dataset.state = s;
     if (toggle) {
@@ -2028,6 +2930,10 @@ if (toneSelect) {
 }
 if (clearBtn) {
   clearBtn.addEventListener("click", () => {
+    if (meetingVoiceActive()) {
+      showMeetingPhaseUi(meetingSession);
+      return;
+    }
     conversation.length = 0;
     saveConversation();
     transcript.innerHTML = "";
@@ -2040,7 +2946,9 @@ restoreConversation();
 fetch("/api/status")
   .then((r) => r.json())
   .then((s) => {
-    if (!s.chatEnabled) setLiveStatus("Set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in .env to enable conversation.");
+    if (!s.chatEnabled && !meetingVoiceActive()) {
+      setLiveStatus("Set NVIDIA_API_KEY (or ANTHROPIC_API_KEY) in .env to enable conversation.");
+    }
     // Local openWakeWord engine ready? Then the wake word works reliably — and
     // on iPhone — regardless of the browser recognizer. The phrase shown is the
     // server's view of the active profile; once the engine loads and verifies
@@ -2054,6 +2962,12 @@ fetch("/api/status")
     } else if (!SpeechRec) {
       wakeToggle.disabled = true;
       wakeToggle.title = "Wake word needs Chrome or Edge (or the on-device engine — see README)";
+    }
+    // A status response can land after an explicit meeting start. Preserve the
+    // capability-derived post-meeting value without re-enabling the live toggle.
+    if (meetingVoiceActive()) {
+      meetingSession.wakeToggleWasDisabled = wakeToggle.disabled;
+      wakeToggle.disabled = true;
     }
     // Email triage card flips to Live once Gmail is authorized (see .env.example)
     const emailStatus = $("emailStatus");

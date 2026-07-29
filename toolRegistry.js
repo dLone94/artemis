@@ -85,10 +85,20 @@ const META = {
   check_messages:  { family: "messages", effect: "read" },
   research_investment: { family: "research", effect: "read", requires: "search" },
   set_reminder:    { family: "reminder", effect: "mutate" },
+  set_meeting_reminders: {
+    family: "reminder",
+    effect: "mutation",
+    confirm: "always",
+    directOnly: true,
+    // Code creates this pending batch after meeting finalisation. It must never
+    // widen an ordinary reminder turn's model-visible or force-selected tools.
+    forceFamilies: []
+  },
   cancel_reminder: { family: "reminder", effect: "mutate" },
   list_reminders:  { family: "reminder", effect: "read" },
   remember_note:   { family: "memory",   effect: "mutate" },
   recall_notes:    { family: "memory",   effect: "read" },
+  meeting_notes:   { family: "meeting",  effect: "read" },
   add_contact:     { family: "contacts", effect: "mutate" },
   send_message:    { family: "message",  effect: "mutate", external: true }
 };
@@ -104,6 +114,7 @@ export const ACTIONABLE_FAMILIES = new Set([
   "school",
   "map",
   "map_update",
+  "meeting",
   "navigate",
   "media",
   "email",
@@ -252,6 +263,8 @@ const FAMILY_PATTERNS = {
   followups_nudge: FOLLOWUPS_NUDGE_PATTERN,
   followups: FOLLOWUPS_READ_PATTERN,
   email:    /\b(e-?mails?|inbox|unread|my\s+mail|check\s+my\s+mail)\b/i,
+  meeting:
+    /\b(?:what\s+(?:were|are)\s+(?:my|the|our)\s+meeting\s+notes|what\s+did\s+we\s+(?:decide|discuss)\s+(?:in|at|during)\s+(?:the|our)\s+meeting|(?:read|show|replay|recall|find)\s+(?:me\s+)?(?:(?:my|the|our)\s+)?meeting\s+notes)\b|^\s*(?:my\s+)?meeting\s+notes(?:\s+(?:from|for|on)\b[^.?!]*)?[?.!]*$/i,
   reminder: /\b(remind\s+me|set\s+a\s+reminder|cancel\s+(the|my)\s+reminder|my\s+reminders|wake\s+me)\b/i,
   memory:   /\b(remember\s+that|note\s+that|make\s+a\s+note|my\s+notes|what\s+did\s+i\s+(save|note))\b/i,
   contacts: /\b(save\s+(this\s+)?contact|add\s+(a\s+)?contact|new\s+contact)\b/i,
@@ -269,7 +282,9 @@ const PRONOUN_ONLY_RE =
 // edge: "don't open anything" contains "open". An explicitly negated action is
 // conversation, and forcing a tool there would be acting against instruction.
 const NEGATED_ACTION_RE =
-  /\b(don['’]?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|send|text|message|remind|remember|check|save|add|cancel|delete|trash|move|nudge|chase|follow(?:[ -]?up)|teach|build|update|change|correct)\w*\b/i;
+  /\b(don['’]?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|replay|recall|find|send|text|message|remind|remember|check|save|add|cancel|delete|trash|move|nudge|chase|follow(?:[ -]?up)|teach|build|update|change|correct)\w*\b/i;
+const NEGATED_MEETING_ACTION_RE =
+  /\b(?:don['’]?t|do\s+not|never|no\s+need\s+to|rather\s+not|without)\b[^.?!;]{0,80}\b(?:read|show|replay|recall|find)\w*\b[^.?!;]{0,50}\bmeeting\s+notes\b/i;
 const NEGATED_FOLLOWUP_ACTION_RE =
   /\b(?:don['’]?t|do\s+not|never|without|no\s+need(?:\s+for\s+you)?\s+to|i(?:['’]d|\s+would)?\s+rather\s+not|i(?:['’]m|\s+am)\s+not\s+asking\s+you\s+to)\b[^.?!;]{0,80}\b(?:nudge|chase|follow(?:[ -]?up))\w*\b/i;
 
@@ -466,6 +481,7 @@ export function classifyIntent(text, caps = {}, history = []) {
   if (!s) return { intent: "chat", family: null, expected: [], reason: "empty" };
   if (
     NEGATED_ACTION_RE.test(s) ||
+    NEGATED_MEETING_ACTION_RE.test(s) ||
     NEGATED_FOLLOWUP_ACTION_RE.test(s) ||
     NEGATED_RADAR_ACTION_RE.test(s)
   ) {
@@ -475,11 +491,19 @@ export function classifyIntent(text, caps = {}, history = []) {
   const tools = routableTools(caps);
   const families = new Set(tools.flatMap((t) => t.forceFamilies));
 
-  let matched = null;
-  for (const family of Object.keys(FAMILY_PATTERNS)) {
-    if (!families.has(family)) continue; // nothing in that family is configured
-    if (!ACTIONABLE_FAMILIES.has(family)) continue;
-    if (FAMILY_PATTERNS[family].test(s)) { matched = family; break; }
+  // Meeting retrieval is an explicit private-data request. Topic words inside
+  // that request ("portfolio", "unread email", "play") must not steal routing
+  // precedence and trigger research, inbox, or media tools instead.
+  let matched = families.has("meeting") && FAMILY_PATTERNS.meeting.test(s)
+    ? "meeting"
+    : null;
+  if (!matched) {
+    for (const family of Object.keys(FAMILY_PATTERNS)) {
+      if (family === "meeting") continue;
+      if (!families.has(family)) continue; // nothing in that family is configured
+      if (!ACTIONABLE_FAMILIES.has(family)) continue;
+      if (FAMILY_PATTERNS[family].test(s)) { matched = family; break; }
+    }
   }
 
   if (!matched) return { intent: "chat", family: null, expected: [], reason: "no actionable family matched" };
