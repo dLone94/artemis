@@ -746,19 +746,19 @@ html.hud-paused .hud-aurora { animation-play-state: paused; }
 /* ---- InterLink staging: the panels are glass slabs on a curved wall ---- */
 /* Perspective tilt: left panel angles right, right panel angles left — the
    room curves around the globe. transform-only; hover flattens for reading. */
-.hud-left {
+/* body.hud-in .hud-panel sets transform:none for the assemble-in — these
+   selectors must OUTRANK it or the tilt silently never applies (it didn't). */
+body.hud-in .hud-panel.hud-left {
   transform: perspective(1100px) rotateY(12deg);
   transform-origin: right center;
-  transition: transform 0.45s ease, opacity 0.5s ease;
 }
-.hud-right {
+body.hud-in .hud-panel.hud-right {
   transform: perspective(1100px) rotateY(-12deg);
   transform-origin: left center;
-  transition: transform 0.45s ease, opacity 0.5s ease;
 }
-.hud-left:hover, .hud-right:hover { transform: perspective(1100px) rotateY(0deg); }
-/* assemble-in still wins while booting */
-body:not(.hud-in) .hud-left, body:not(.hud-in) .hud-right { transform: translateY(10px); }
+body.hud-in .hud-panel.hud-left:hover,
+body.hud-in .hud-panel.hud-right:hover { transform: perspective(1100px) rotateY(0deg); }
+.hud-left, .hud-right { transition: transform 0.45s ease, opacity 0.5s ease; }
 
 /* glass: brighter edge light + inner sheen, like the reference's slabs */
 .hud-panel {
@@ -800,3 +800,33 @@ body:not(.hud-in) .hud-left, body:not(.hud-in) .hud-right { transform: translate
 @keyframes hud-pedestal-breathe { 50% { opacity: 0.65; } }
 html.hud-paused .hud-pedestal, html.hud-paused .hud-beam { animation-play-state: paused; }
 @media (prefers-reduced-motion: reduce) { .hud-pedestal, .hud-beam { animation: none; } }
+
+
+/* ---- the wall: panels dissolve into discrete floating glass slabs ---- */
+.hud-panel {
+  border: 0; background: transparent; clip-path: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  box-shadow: none; padding: 0; gap: 12px;
+}
+.hud-panel::before, .hud-panel::after { display: none; }
+.hud-panel-title {
+  border-bottom: 0; margin-bottom: 0; padding: 6px 12px;
+  background: rgba(6, 24, 34, 0.78);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+  align-self: flex-start;
+}
+/* each functional block = one slab, like the reference's stat panels */
+.hud-log, .hud-gauges, .hud-telemetry, .hud-card {
+  background: rgba(5, 20, 30, 0.72);
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 3px;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  box-shadow: inset 0 1px 0 rgba(146, 220, 255, 0.1), inset 0 0 30px rgba(10, 44, 62, 0.35);
+  padding: 10px 12px;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.hud-gauges { border-top: 1px solid rgba(34, 211, 238, 0.22); margin-top: 0; }
+.hud-telemetry { border-top: 1px solid rgba(34, 211, 238, 0.22); margin-top: 0; }
+.hud-cards { display: flex; flex-direction: column; gap: 12px; }
+.hud-card { border: 1px solid rgba(34, 211, 238, 0.22) !important; }
