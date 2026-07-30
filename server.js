@@ -30,6 +30,7 @@ import {
   confirmedNudgeResponse
 } from "./skills.js";
 import { inspirationForDay } from "./inspiration.js";
+import { specialistPrompt } from "./specialistPrompts.js";
 import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, listUnread } from "./gmail.js";
 import { wsConnect } from "./wsClient.js";
 import { edgeTtsSynthesize } from "./edgeTts.js";
@@ -1572,15 +1573,17 @@ export function lastUserText(messages) {
 async function streamNvidia(messages, tone, onText, opts = {}) {
   const caps = opts.caps || currentCaps();
   const signal = opts.signal;
-  const system = "detailed thinking off\n\n" + ARTEMIS_SYSTEM_PROMPT + (TONE[tone] || "");
+  // Sub-agents Phase 1: a routed action turn ships the lean specialist prompt
+  // (CORE + that family's craft) instead of the full master prompt — the
+  // master keeps chat turns, where personality earns its tokens.
+  const turnIntent = opts.intent || classifyIntent(lastUserText(messages), caps, messages);
+  const specialist = turnIntent.intent === "executable_action" ? specialistPrompt(turnIntent.family) : null;
+  const system = "detailed thinking off\n\n" + (specialist || ARTEMIS_SYSTEM_PROMPT) + (TONE[tone] || "");
   const tools = nvidiaTools(caps);
   const convo = [{ role: "system", content: system }, ...messages.map((m) => ({ role: m.role, content: m.content }))];
   const sources = [];
   const clientActions = [];
-  const state = newTurnState(
-    opts.intent || classifyIntent(lastUserText(messages), caps, messages),
-    historyHasMailTaint(messages)
-  );
+  const state = newTurnState(turnIntent, historyHasMailTaint(messages));
   const toolOpts = {
     caps,
     signal,
@@ -1854,15 +1857,17 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
 async function callNvidia(messages, tone, opts = {}) {
   const caps = opts.caps || currentCaps();
   const signal = opts.signal;
-  const system = "detailed thinking off\n\n" + ARTEMIS_SYSTEM_PROMPT + (TONE[tone] || "");
+  // Sub-agents Phase 1: a routed action turn ships the lean specialist prompt
+  // (CORE + that family's craft) instead of the full master prompt — the
+  // master keeps chat turns, where personality earns its tokens.
+  const turnIntent = opts.intent || classifyIntent(lastUserText(messages), caps, messages);
+  const specialist = turnIntent.intent === "executable_action" ? specialistPrompt(turnIntent.family) : null;
+  const system = "detailed thinking off\n\n" + (specialist || ARTEMIS_SYSTEM_PROMPT) + (TONE[tone] || "");
   const tools = nvidiaTools(caps);
   const convo = [{ role: "system", content: system }, ...messages.map((m) => ({ role: m.role, content: m.content }))];
   const sources = [];
   const clientActions = [];
-  const state = newTurnState(
-    opts.intent || classifyIntent(lastUserText(messages), caps, messages),
-    historyHasMailTaint(messages)
-  );
+  const state = newTurnState(turnIntent, historyHasMailTaint(messages));
   const toolOpts = { caps, signal };
   const isAction = state.intent.intent === "executable_action";
 
