@@ -6,7 +6,7 @@
   <title>ARTEMIS · Command Center</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Rajdhani:wght@500;600;700&family=Orbitron:wght@500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="cockpit.css" />
@@ -25,6 +25,7 @@
   <!-- annotation/instrument ring around the orb: ticks, degrees, rotation -->
   <canvas class="hud-ring" id="hudRing" width="620" height="620" aria-hidden="true"></canvas>
   <!-- live state caption under the orb -->
+  <script type="module">import { mountOpsWall } from "/statPanels.js"; addEventListener("DOMContentLoaded", mountOpsWall);</script>
   <div class="hud-state" id="hudState" aria-live="polite"><i></i> STANDBY</div>
   <!-- live tool activity: SVG stays composited while the existing orb remains canvas -->
   <div class="hud-tool-orb" id="hudToolOrb" role="status" aria-live="polite" aria-atomic="true" data-phase="idle">
