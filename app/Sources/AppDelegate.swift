@@ -41,7 +41,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         controller.add(bridge, name: BrowserBridge.messageName)
         cfg.userContentController = controller
 
+        // UA marker: tells the page it runs in our shell (autoplay already
+        // allowed above), so the boot may enter itself without the tap gate.
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1180, height: 820), configuration: cfg)
+        webView.customUserAgent = (WKWebView().value(forKey: "userAgent") as? String ?? "Mozilla/5.0") + " ArtemisShell/1.0"
         webView.navigationDelegate = self
         webView.uiDelegate = bridge
 

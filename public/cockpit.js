@@ -113,6 +113,10 @@ function deliverBriefing(spoken) {
     }
   };
   el.addEventListener("click", () => dismiss(true)); // gesture → she speaks
+  // Inside our own app shell autoplay is allowed, so the boot enters ITSELF —
+  // full audio, no tap. Browsers still get the tap gate (their rule, not ours).
+  const inShell = /ArtemisShell/.test(navigator.userAgent);
+  if (inShell) setTimeout(() => dismiss(true), 2400);
   // safety: if the user never taps, enter silently after 30s (no gesture, no audio)
   setTimeout(() => dismiss(false), 30000);
   setTimeout(step, 120);
