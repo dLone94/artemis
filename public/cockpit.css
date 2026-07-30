@@ -111,7 +111,7 @@
 .hud-meta { display: flex; align-items: center; gap: 18px; }
 .hud-ttfw {
   padding: 3px 10px;
-  border: 1px solid rgba(34, 211, 238, 0.35);
+  border: 1px solid rgba(34, 211, 238, 0.6);
   border-radius: var(--radius-pill);
   color: var(--teal);
   font-size: 10px;
@@ -668,7 +668,7 @@ html.hud-paused .hud-gauge-sweep { animation-play-state: paused; }
 .skills-panel {
   width: min(880px, 92vw); max-height: 82vh; overflow-y: auto;
   padding: 22px 26px 26px;
-  border: 1px solid rgba(34, 211, 238, 0.35); border-radius: 4px;
+  border: 1px solid rgba(34, 211, 238, 0.6); border-radius: 4px;
   clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
   background: rgba(4, 16, 24, 0.92);
   display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px;
@@ -747,16 +747,16 @@ html.hud-paused .hud-aurora { animation-play-state: paused; }
 /* Perspective tilt: left panel angles right, right panel angles left — the
    room curves around the globe. transform-only; hover flattens for reading. */
 .hud-left {
-  transform: perspective(1400px) rotateY(7deg);
+  transform: perspective(1100px) rotateY(12deg);
   transform-origin: right center;
   transition: transform 0.45s ease, opacity 0.5s ease;
 }
 .hud-right {
-  transform: perspective(1400px) rotateY(-7deg);
+  transform: perspective(1100px) rotateY(-12deg);
   transform-origin: left center;
   transition: transform 0.45s ease, opacity 0.5s ease;
 }
-.hud-left:hover, .hud-right:hover { transform: perspective(1400px) rotateY(0deg); }
+.hud-left:hover, .hud-right:hover { transform: perspective(1100px) rotateY(0deg); }
 /* assemble-in still wins while booting */
 body:not(.hud-in) .hud-left, body:not(.hud-in) .hud-right { transform: translateY(10px); }
 
@@ -770,30 +770,30 @@ body:not(.hud-in) .hud-left, body:not(.hud-in) .hud-right { transform: translate
 
 /* ---- the pedestal: a platform of light under the globe ---- */
 .hud-pedestal {
-  position: fixed; left: 50%; top: calc(50% + min(300px, 38vmin));
-  width: min(560px, 66vmin); height: min(120px, 15vmin);
+  position: fixed; left: 50%; top: calc(50% + min(150px, 19vmin));
+  width: min(620px, 74vmin); height: min(150px, 19vmin);
   transform: translateX(-50%);
-  z-index: 2; pointer-events: none;
+  z-index: 3; pointer-events: none;
   background:
-    radial-gradient(ellipse 50% 42% at 50% 50%, rgba(34, 211, 238, 0.28), rgba(34, 211, 238, 0.08) 55%, transparent 75%);
-  filter: blur(2px);
+    radial-gradient(ellipse 50% 42% at 50% 50%, rgba(34, 211, 238, 0.5), rgba(34, 211, 238, 0.14) 55%, transparent 75%);
+  filter: blur(1px);
   animation: hud-pedestal-breathe 5.5s ease-in-out infinite;
 }
 /* concentric platform rings */
 .hud-pedestal::before, .hud-pedestal::after {
   content: ""; position: absolute; left: 50%; top: 50%;
   transform: translate(-50%, -50%) scaleY(0.28);
-  border-radius: 50%; border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 50%; border: 1px solid rgba(34, 211, 238, 0.6);
 }
 .hud-pedestal::before { width: 78%; height: 78%; }
-.hud-pedestal::after { width: 100%; height: 100%; border-color: rgba(34, 211, 238, 0.16); }
+.hud-pedestal::after { width: 100%; height: 100%; border-color: rgba(34, 211, 238, 0.3); }
 /* the light cone rising to the globe */
 .hud-beam {
-  position: fixed; left: 50%; top: calc(50% - min(120px, 15vmin));
-  width: min(400px, 48vmin); height: min(430px, 54vmin);
+  position: fixed; left: 50%; top: calc(50% - min(90px, 11vmin));
+  width: min(420px, 50vmin); height: min(280px, 32vmin);
   transform: translateX(-50%);
   z-index: 2; pointer-events: none;
-  background: linear-gradient(180deg, transparent 0%, rgba(34, 211, 238, 0.025) 40%, rgba(34, 211, 238, 0.07) 100%);
+  background: linear-gradient(180deg, transparent 0%, rgba(34, 211, 238, 0.05) 40%, rgba(34, 211, 238, 0.14) 100%);
   clip-path: polygon(38% 0, 62% 0, 100% 100%, 0 100%);
   animation: hud-pedestal-breathe 5.5s ease-in-out infinite;
 }
