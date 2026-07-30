@@ -696,11 +696,23 @@ async function serveStatic(req, res, urlPath) {
 
   try {
     const body = await fs.readFile(filePath);
+    let out = body;
+    // WKWebView has been caught serving stale stylesheets despite no-store.
+    // Version-stamp asset references in HTML at serve time so a changed build
+    // is a changed URL — caches cannot disagree about a URL they've never seen.
+    const ext = extname(filePath);
+    if (ext === ".html") {
+      const fp = codeFingerprint();
+      const v = typeof fp === "string" ? fp : (fp && (fp.fingerprint || fp.hash)) || Date.now();
+      out = Buffer.from(
+        body.toString("utf8").replace(/(href|src)="([^"?]+\.(?:css|js))"/g, `$1="$2?v=${v}"`)
+      );
+    }
     res.writeHead(200, {
-      "Content-Type": MIME[extname(filePath)] || "application/octet-stream",
+      "Content-Type": MIME[ext] || "application/octet-stream",
       "Cache-Control": "no-cache, no-store, must-revalidate" // always serve fresh JS/CSS/HTML
     });
-    res.end(body);
+    res.end(out);
   } catch (error) {
     res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
   }
