@@ -446,7 +446,8 @@ const music = (() => {
     // so the two never race and the wrong bed can't win.
     startIfWanted(ambientFallback) {
       probeP.then(() => {
-        if (available && localStorage.getItem(KEY) === "1") play();
+        // Default ON once a track exists — the toggle records an explicit OFF.
+        if (available && localStorage.getItem(KEY) !== "0") play();
         else if (ambientFallback && ambient.wanted()) { ambient.start(); window.__ambientLabel && window.__ambientLabel(); }
       });
     }
