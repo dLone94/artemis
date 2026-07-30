@@ -2730,7 +2730,9 @@ async function handleRequest(req, res) {
               .replace(/<[^>]*>/g, " ")
               .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
               .replace(/\s+/g, " ").trim().slice(0, cap);
-            const who = clean((m.from || "").split("<")[0].replace(/["']/g, ""), 40) || "someone";
+            let who = clean((m.from || "").split("<")[0].replace(/["']/g, ""), 40) || "someone";
+            // bare address (no display name): speak only the part before the @
+            if (who.includes("@")) who = who.split("@")[0].replace(/[._-]+/g, " ").trim() || "someone";
             const about = clean(m.subject, 46);
             return about ? `from ${who}, about ${about}` : `from ${who}`;
           };
