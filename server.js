@@ -30,7 +30,7 @@ import {
   confirmedNudgeResponse
 } from "./skills.js";
 import { inspirationForDay } from "./inspiration.js";
-import { specialistPrompt } from "./specialistPrompts.js";
+import { specialistPrompt, SPECIALISTS, CORE } from "./specialistPrompts.js";
 import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, listUnread } from "./gmail.js";
 import { wsConnect } from "./wsClient.js";
 import { edgeTtsSynthesize } from "./edgeTts.js";
@@ -2722,13 +2722,26 @@ async function handleRequest(req, res) {
           ]);
           const n = Array.isArray(mails) ? mails.length : 0;
           const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+          // A small gist, not the whole subject: sender's display name plus a
+          // few sanitized words. Spoken as data to the USER only — sentinels,
+          // tags and control chars stripped, hard-capped.
+          const gist = (m) => {
+            const clean = (v, cap) => String(v || "")
+              .replace(/<[^>]*>/g, " ")
+              .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+              .replace(/\s+/g, " ").trim().slice(0, cap);
+            const who = clean((m.from || "").split("<")[0].replace(/["']/g, ""), 40) || "someone";
+            const about = clean(m.subject, 46);
+            return about ? `from ${who}, about ${about}` : `from ${who}`;
+          };
+          const first = n > 0 ? gist(mails[0]) : "";
           mailClause = n === 0
             ? pick(["Inbox is quiet, nothing waiting.", "Nothing new in the mail.", "Your inbox is all clear."])
             : n === 1
-              ? pick(["One email came in while you were away.", "There's a single email waiting when you're ready.", "Just one new email for you."])
+              ? pick([`One email came in — ${first}.`, `There's one email waiting, ${first}.`])
               : n >= 10
-                ? "The inbox piled up a bit — at least ten waiting."
-                : pick([`${n} emails came in while you were away.`, `${n} new emails, whenever you're ready.`]);
+                ? `The inbox piled up a bit — at least ten waiting, the newest ${first}.`
+                : pick([`${n} emails came in — the newest ${first}.`, `${n} new emails, the latest ${first}.`]);
         } catch (e) { /* unreadable mail → say nothing about mail */ }
       }
       const inspire = inspirationForDay();
@@ -2909,6 +2922,20 @@ async function handleRequest(req, res) {
     if (cachedFx) out.fx = cachedFx;
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify(out));
+    return;
+  }
+
+  // Sub-agents roster: family, craft one-liner, prompt size — the data behind
+  // the AGENTS window. Read-only, derived from specialistPrompts at request time.
+  if (url.pathname === "/api/agents") {
+    const roster = Object.entries(SPECIALISTS).map(([family, craft]) => ({
+      family,
+      title: family.replace(/_/g, " ").toUpperCase(),
+      craft: craft.split(". ")[0].replace(/^You /, "").trim() + ".",
+      tokens: Math.round((CORE.length + craft.length) / 4)
+    }));
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ orchestrator: { title: "ORCHESTRATOR", craft: "Routes every request to its specialist; keeps her voice and personality.", tokens: Math.round(6573 / 4) }, agents: roster }));
     return;
   }
 

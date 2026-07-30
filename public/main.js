@@ -2537,6 +2537,40 @@ function toggleSkillsOverlay() {
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && skillsOverlay) toggleSkillsOverlay(); });
 if (explainBtn) explainBtn.addEventListener("click", toggleSkillsOverlay);
 
+// AGENTS: the sub-agent roster — orchestrator + every specialist, live from
+// the server so the window can never drift from what actually runs.
+let agentsOverlay = null;
+async function toggleAgentsOverlay() {
+  if (agentsOverlay) { agentsOverlay.remove(); agentsOverlay = null; return; }
+  let data = null;
+  try { data = await (await fetch("/api/agents", { cache: "no-store" })).json(); } catch (e) {}
+  if (!data || !data.agents) return;
+  const ov = document.createElement("div");
+  ov.className = "skills-overlay";
+  const panel = document.createElement("div");
+  panel.className = "skills-panel";
+  panel.innerHTML = '<div class="skills-title">SUB-AGENTS · 1 ORCHESTRATOR + ' + data.agents.length + " SPECIALISTS</div>";
+  const all = [data.orchestrator, ...data.agents];
+  all.forEach((a, i) => {
+    const card = document.createElement("div");
+    card.className = "skills-card";
+    card.style.setProperty("--i", i);
+    card.innerHTML =
+      '<span class="skills-dot"></span>' +
+      '<span class="skills-name">' + (a.title || a.family) + "</span>" +
+      '<span class="skills-what">' + a.craft + "</span>" +
+      '<span class="skills-say">' + a.tokens + " tokens per turn</span>";
+    panel.appendChild(card);
+  });
+  ov.appendChild(panel);
+  ov.addEventListener("click", (e) => { if (e.target === ov) toggleAgentsOverlay(); });
+  document.body.appendChild(ov);
+  agentsOverlay = ov;
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && agentsOverlay) toggleAgentsOverlay(); });
+const agentsBtn = $("agentsBtn");
+if (agentsBtn) agentsBtn.addEventListener("click", toggleAgentsOverlay);
+
 // ---- revenue celebrations (carried over; orb surges on a payment) ----
 const CELEB_KEY = "artemisCelebratedV2";
 function loadCeleb() {
