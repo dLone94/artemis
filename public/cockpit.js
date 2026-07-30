@@ -373,28 +373,6 @@ const music = (() => {
   let el = null, available = false, ready = false;
   const FULL = 0.42;
 
-  // Intro mode: the track plays only its first minute, then fades itself out
-  // over the last five seconds. An anthem is an entrance, not wallpaper.
-  const INTRO_MS = 60000;
-  const FADE_MS = 5000;
-  let introTimer = 0, fadeTimer = 0;
-  function clearIntro() {
-    clearTimeout(introTimer); introTimer = 0;
-    clearInterval(fadeTimer); fadeTimer = 0;
-  }
-  function armIntroCap() {
-    clearIntro();
-    introTimer = setTimeout(() => {
-      if (!el || el.paused) return;
-      const step = 150;
-      const drop = (el.volume * step) / FADE_MS;
-      fadeTimer = setInterval(() => {
-        if (!el || el.paused) { clearIntro(); return; }
-        el.volume = Math.max(0, el.volume - drop);
-        if (el.volume <= 0.005) { clearIntro(); stop(); el.volume = FULL; }
-      }, step);
-    }, INTRO_MS - FADE_MS);
-  }
   function ensure() {
     if (el) return el;
     el = new Audio("/assets/music.mp3");
@@ -407,14 +385,12 @@ const music = (() => {
   function play() {
     ensure();
     if (ambient.running) { ambient.stop(); window.__ambientLabel && window.__ambientLabel(); } // one bed at a time
-    el.currentTime = 0;
     el.volume = FULL;
     const p = el.play();
     if (p && p.catch) p.catch(() => {});
-    armIntroCap();
     label();
   }
-  function stop() { clearIntro(); if (el) { el.pause(); el.volume = FULL; } label(); }
+  function stop() { if (el) { el.pause(); el.volume = FULL; } label(); }
   const btn = $("musicToggle");
   function label() {
     if (!btn) return;
