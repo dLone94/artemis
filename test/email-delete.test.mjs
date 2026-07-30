@@ -75,7 +75,7 @@ async function offerConfirmation(params) {
   assert.equal(precheck.ok, true);
   assert.equal(
     confirmPromptFor("delete_email", params),
-    "Move 2 emails to trash: 1) Alice <alice@example.com> — Quarterly report, 2) Bob <bob@example.com> — Dinner plans? They stay recoverable in the Trash for 30 days."
+    "Move 2 emails to trash: 1) Alice, about Quarterly report, 2) Bob, about Dinner plans? They stay recoverable in the Trash for 30 days."
   );
 
   const denied = createPending("delete_email", params);

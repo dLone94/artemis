@@ -137,6 +137,19 @@ const GMAIL_DELETE_REAUTH =
 // last list_reminders listing, so "cancel the second one" can resolve an id
 let lastReminderList = [];
 
+// A spoken GIST, not the whole header: display-name (or the part before @),
+// and the subject trimmed to a few words. Full subjects read aloud made every
+// confirmation a paragraph.
+function spokenEmailGist(item) {
+  let who = cleanEmailField((item.from || "").split("<")[0].replace(/["']/g, ""), "", 40);
+  if (!who || who.includes("@")) {
+    who = cleanEmailField((item.from || "").split("@")[0].replace(/[._-]+/g, " "), "someone", 30);
+  }
+  let about = cleanEmailField(item.subject, "", 44);
+  if (about.length === 44) about = about.replace(/\s+\S*$/, "") + "…";
+  return about ? `${who}, about ${about}` : who;
+}
+
 function cleanEmailField(value, fallback, maxLength = 200) {
   const cleaned = stripSentinels(value)
     .replace(/[\p{Cc}\p{Cf}]/gu, " ")
@@ -3673,8 +3686,7 @@ const SKILLS = [
       const named = selection.items
         .map(
           (item, index) =>
-            `${index + 1}) ${cleanEmailField(item.from, "unknown sender")} — ` +
-            cleanEmailField(item.subject, "(no subject)")
+            `${index + 1}) ${spokenEmailGist(item)}`
         )
         .join(", ");
       const noun = selection.items.length === 1 ? "email" : "emails";
