@@ -26,9 +26,27 @@ function panel(id, label, spot) {
   const cv = document.createElement("canvas");
   cv.className = "ops-chart";
   cv.width = 220; cv.height = 44;
-  p.append(num, sub, cv);
+  p.append(num, sub, cv, el("div", "ops-scan"));
   document.body.appendChild(p);
   return { root: p, num, sub, cv: cv.getContext("2d"), cvEl: cv, hist: [] };
+}
+
+// count-up: the number rolls to its value on first paint (reference behavior)
+function setNum(pn, text) {
+  const target = parseFloat(text);
+  if (!pn._counted && Number.isFinite(target)) {
+    pn._counted = true;
+    const suffix = String(text).replace(/^[\d.]+/, "");
+    const t0 = performance.now(), DUR = 900;
+    const tick = (now) => {
+      const k = Math.min(1, (now - t0) / DUR);
+      pn.num.textContent = Math.round(target * (1 - Math.pow(1 - k, 3))) + suffix;
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } else {
+    pn.num.textContent = text;
+  }
 }
 
 function spark(g, cvEl, hist, color) {
@@ -76,6 +94,8 @@ const VIOLET = "rgb(167,139,250)";
 export function mountOpsWall() {
   if (!document.body.classList.contains("cockpit")) return;
 
+  const uptime = panel("opsUp", "UPTIME", "b3");
+  const skills = panel("opsSkills", "SUBSYSTEMS", "b4");
   const cpu = panel("opsCpu", "SYSTEM LOAD", "t1");
   const mem = panel("opsMem", "MEMORY", "t2");
   const ttfw = panel("opsTtfw", "RESPONSE MS", "t3");
@@ -94,20 +114,20 @@ export function mountOpsWall() {
 
     if (t.cpu) {
       const pct = Math.min(100, Math.round((t.cpu.load1 / (t.cpu.cores || 1)) * 100));
-      cpu.num.textContent = pct + "%";
+      setNum(cpu, pct + "%");
       cpu.sub.textContent = t.cpu.cores + " CORES · LOAD " + t.cpu.load1.toFixed(2);
       cpu.hist.push(pct); if (cpu.hist.length > HIST) cpu.hist.shift();
       spark(cpu.cv, cpu.cvEl, cpu.hist, CYAN);
     }
     if (t.memory && t.memory.totalBytes) {
       const pct = Math.round((t.memory.usedBytes / t.memory.totalBytes) * 100);
-      mem.num.textContent = pct + "%";
+      setNum(mem, pct + "%");
       mem.sub.textContent = (t.memory.usedBytes / 1e9).toFixed(1) + " / " + (t.memory.totalBytes / 1e9).toFixed(0) + " GB";
       mem.hist.push(pct); if (mem.hist.length > HIST) mem.hist.shift();
       spark(mem.cv, mem.cvEl, mem.hist, BLUE);
     }
     if (t.latency && t.latency.lastFirstWordMs != null) {
-      ttfw.num.textContent = Math.round(t.latency.lastFirstWordMs);
+      setNum(ttfw, String(Math.round(t.latency.lastFirstWordMs)));
       ttfw.sub.textContent = "TIME TO FIRST WORD";
       ttfw.hist.push(t.latency.lastFirstWordMs); if (ttfw.hist.length > HIST) ttfw.hist.shift();
       spark(ttfw.cv, ttfw.cvEl, ttfw.hist, VIOLET);
@@ -120,7 +140,7 @@ export function mountOpsWall() {
     }
     if (t.budget && t.budget.limitTokens) {
       const left = Math.round((t.budget.remainingTokens / t.budget.limitTokens) * 100);
-      tokens.num.textContent = left + "%";
+      setNum(tokens, left + "%");
       tokens.sub.textContent = "OF FREE DAILY POOL REMAINING";
       bars(tokens.cv, tokens.cvEl, [left / 100, 1 - left / 100], left < 25 ? VIOLET : CYAN);
     } else { tokens.sub.textContent = "NO BUDGET HEADERS YET"; }
@@ -132,6 +152,18 @@ export function mountOpsWall() {
     counts.sub.textContent = parts.join(" · ") || "NO SIGNALS READABLE";
     bars(counts.cv, counts.cvEl, [(c.unreadMail || 0) / 10, (c.reminders || 0) / 10].map((v) => Math.min(1, v + 0.06)), BLUE);
   }
+
+  // static-ish panels
+  let upSec = 0;
+  setInterval(() => {
+    upSec += 1;
+    const h = Math.floor(upSec / 3600), m = Math.floor((upSec % 3600) / 60);
+    uptime.num.textContent = (h ? h + "h " : "") + m + "m";
+    uptime.sub.textContent = "SESSION ONLINE";
+  }, 1000);
+  skills.num.textContent = "19";
+  skills.sub.textContent = "SKILLS ONLINE · 18 SPECIALISTS";
+  bars(skills.cv, skills.cvEl, Array.from({ length: 9 }, (_, i) => 0.4 + (i % 3) * 0.22), CYAN);
 
   poll();
   setInterval(() => { if (!document.hidden) poll(); }, POLL_MS);

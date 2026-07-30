@@ -6,10 +6,10 @@
 
 // Cyan-on-black palette shared across every orb.
 export const PAL = {
-  O: "rgba(34,211,238,",    // primary cyan (rings, ticks base)
+  O: "rgba(72,140,250,",    // electric blue primary (ops redesign)
   B: "rgba(140,236,255,",   // bright cyan (satellites, scanner)
   Hl: "rgba(214,248,255,",  // highlight ice (labels, inner reticle)
-  D: "rgba(64,150,170,",    // dim cyan (background ticks)
+  D: "rgba(58,110,190,",    // dim blue (background ticks)
   V: "rgba(183,166,255,",        // Artemis globe violet (#b7a6ff)
   MAIL: "rgba(45,212,191,",      // teal-green agent moon
   MESSAGES: "rgba(74,222,128,",  // green agent moon
