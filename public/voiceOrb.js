@@ -5,13 +5,19 @@
 import { PAL, prefersReducedMotion } from "./orbShared.js";
 
 const TAU = Math.PI * 2;
-const DOT_LATITUDES = 7;
-const DOTS_PER_LATITUDE = 100;
-const DOT_LONGITUDES = 11;
-const DOTS_PER_LONGITUDE = 64;
-const DOT_COUNT =
-  DOT_LATITUDES * DOTS_PER_LATITUDE +
-  DOT_LONGITUDES * DOTS_PER_LONGITUDE;
+const DEG = Math.PI / 180;
+const LEGACY_DOT_COUNT = 7 * 100 + 11 * 64;
+const DOT_COUNT = Math.floor(LEGACY_DOT_COUNT * 1.6);
+const EARTH_MASK_WIDTH = 96;
+const EARTH_MASK_HEIGHT = 48;
+const EARTH_FRONT_LONGITUDE = 10 * DEG;
+const CAGE_LATITUDE_COUNT = 8;
+const CAGE_LONGITUDE_COUNT = 12;
+const CAGE_LINE_COUNT = CAGE_LATITUDE_COUNT + CAGE_LONGITUDE_COUNT;
+const CAGE_SEGMENTS_PER_LINE = 48;
+const CAGE_POINTS_PER_LINE = CAGE_SEGMENTS_PER_LINE + 1;
+const CAGE_POINT_COUNT = CAGE_LINE_COUNT * CAGE_POINTS_PER_LINE;
+const CAGE_SEGMENT_COUNT = CAGE_LINE_COUNT * CAGE_SEGMENTS_PER_LINE;
 const DOT_TONE_BUCKETS = 5;
 const DOT_ALPHA_BUCKETS = 10;
 const DOT_STYLE_GROUPS = DOT_TONE_BUCKETS * DOT_ALPHA_BUCKETS;
@@ -42,6 +48,71 @@ const ATMOSPHERE_SPRITE_SIZE = 256;
 const MOON_LABEL_FONT = '600 9px "JetBrains Mono", monospace';
 const FILAMENT_DASH = Object.freeze([5, 8]);
 const SOLID_LINE = Object.freeze([]);
+
+// Authored 96×48 equirectangular land mask, north-to-south and west-to-east.
+// Each row is 96 packed bits (24 hex digits): Greenland, the Americas,
+// Europe/Africa, Eurasia, island chains, Australia, and Antarctica are all
+// represented explicitly. It is decoded once per orb; the frame loop never
+// performs a mask lookup.
+const EARTH_MASK_HEX = Object.freeze([
+  "000000000000000000000000",
+  "000000001c00000000000000",
+  "00000000ff80000000000000",
+  "00000003fc00000000000000",
+  "06000007f00000001fff8000",
+  "fffff80fe00007cffffffc00",
+  "ffffffefc0780fffffffffe0",
+  "fffffc1f00001bffffffffff",
+  "fe1ff80f000393ffffffffff",
+  "f007f81f8007f3ffffffffff",
+  "0003fe7f8003ffffffffff03",
+  "0001ff1f0001ffbffffffc00",
+  "0001fe1800061f1bffffe200",
+  "0001fff00000177bfff0cc00",
+  "0000ffe0000e00ffffe05800",
+  "00007fe0000ffc7fffe03000",
+  "00003f00000ffff9ffc02000",
+  "00000c00000fff997f802000",
+  "00000400001fff9e3e03e000",
+  "00000100001fff9c1e07c000",
+  "000000c0000fffa01c0f8000",
+  "0000003c000ffff80c0f8000",
+  "0000001f8007fff8045f0000",
+  "0000001fe007fff0003f0000",
+  "0000003ff003fff0003f9c00",
+  "0000001ffc03ffe0001f1f00",
+  "0000001ffc01ffe000000100",
+  "0000001ffe01ffe80000f200",
+  "0000001ffc00ffcc0001f300",
+  "0000000ff8007f880003ff00",
+  "0000000ff0003f880003ff80",
+  "00000007f0003f000001ff80",
+  "00000007e0001e000001ff00",
+  "00000007c000000000003e08",
+  "00000007c000000000000004",
+  "0000000f8000000000000200",
+  "0000000f8000000000000000",
+  "000000070000000000000000",
+  "000000060000000000000000",
+  "000000000000000000000000",
+  "000000000000000000000000",
+  "000000000000000000000000",
+  "0000000000007c1fff800000",
+  "1fc03fffffffffffffff83f8",
+  "ffffffffffffffffffffffff",
+  "ffffffffffffffffffffffff",
+  "ffffffffffffffffffffffff",
+  "ffffffffffffffffffffffff"
+]);
+
+// lon, lat, longitudinal spread, latitudinal spread. Every plexus node is
+// mask-validated inside one of these four real population regions.
+const POPULATION_REGIONS = new Float32Array([
+  5, 50, 18, 9,       // Western Europe
+  118, 33, 20, 13,    // East Asia
+  -77, 40, 14, 12,    // eastern North America
+  -3, 9, 15, 11       // West Africa
+]);
 
 const MOON_LABELS = Object.freeze([
   "RESEARCH",
@@ -103,27 +174,14 @@ function makeAlphaStyles(prefix, count = STYLE_ALPHA_BUCKETS) {
   return Object.freeze(styles);
 }
 
-function paletteChannels(prefix) {
-  const parts = prefix.slice(5, -1).split(",");
-  return new Float32Array([
-    Number(parts[0]),
-    Number(parts[1]),
-    Number(parts[2])
-  ]);
-}
-
 function makeDotTonePrefixes() {
-  const cyan = paletteChannels(PAL.O);
-  const violet = paletteChannels(PAL.V);
-  const prefixes = new Array(DOT_TONE_BUCKETS);
-  for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
-    const mix = tone / (DOT_TONE_BUCKETS - 1);
-    const r = Math.round(cyan[0] + (violet[0] - cyan[0]) * mix);
-    const g = Math.round(cyan[1] + (violet[1] - cyan[1]) * mix);
-    const b = Math.round(cyan[2] + (violet[2] - cyan[2]) * mix);
-    prefixes[tone] = "rgba(" + r + "," + g + "," + b + ",";
-  }
-  return Object.freeze(prefixes);
+  return Object.freeze([
+    PAL.Hl,                    // coastline / brightest city lights
+    PAL.B,                     // inhabited land
+    PAL.O,                     // quieter inland structure
+    "rgba(132,153,249,",      // ocean transition
+    PAL.V                      // sparse deep-ocean lattice
+  ]);
 }
 
 function makeDotStyles(prefixes) {
@@ -211,9 +269,98 @@ function makeNebulaSprite(prefix, size, variant) {
   return canvas;
 }
 
+function makeProjectorFloorSprite(prefix) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  const glow = ctx.createRadialGradient(128, 32, 0, 128, 32, 128);
+  glow.addColorStop(0, prefix + "0.14)");
+  glow.addColorStop(0.36, prefix + "0.075)");
+  glow.addColorStop(1, prefix + "0)");
+  ctx.save();
+  ctx.translate(128, 32);
+  ctx.scale(1, 0.24);
+  ctx.translate(-128, -32);
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, -96, 256, 256);
+  ctx.restore();
+  return canvas;
+}
+
+function makeProjectorBeamSprite(prefix) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 192;
+  canvas.height = 192;
+  const ctx = canvas.getContext("2d");
+  const beam = ctx.createLinearGradient(0, 192, 0, 0);
+  beam.addColorStop(0, prefix + "0.18)");
+  beam.addColorStop(1, prefix + "0)");
+  ctx.fillStyle = beam;
+  ctx.beginPath();
+  ctx.moveTo(0, 192);
+  ctx.lineTo(192, 192);
+  ctx.lineTo(144, 0);
+  ctx.lineTo(48, 0);
+  ctx.closePath();
+  ctx.fill();
+  return canvas;
+}
+
+function decodeEarthMask() {
+  const mask = new Uint8Array(EARTH_MASK_WIDTH * EARTH_MASK_HEIGHT);
+  for (let row = 0; row < EARTH_MASK_HEIGHT; row++) {
+    const encoded = EARTH_MASK_HEX[row];
+    for (let nibble = 0; nibble < encoded.length; nibble++) {
+      const value = parseInt(encoded[nibble], 16);
+      const column = nibble * 4;
+      mask[row * EARTH_MASK_WIDTH + column] = (value >> 3) & 1;
+      mask[row * EARTH_MASK_WIDTH + column + 1] = (value >> 2) & 1;
+      mask[row * EARTH_MASK_WIDTH + column + 2] = (value >> 1) & 1;
+      mask[row * EARTH_MASK_WIDTH + column + 3] = value & 1;
+    }
+  }
+  return mask;
+}
+
+function earthMaskValue(mask, column, row) {
+  if (row < 0 || row >= EARTH_MASK_HEIGHT) return 0;
+  let wrappedColumn = column % EARTH_MASK_WIDTH;
+  if (wrappedColumn < 0) wrappedColumn += EARTH_MASK_WIDTH;
+  return mask[row * EARTH_MASK_WIDTH + wrappedColumn];
+}
+
+function earthMaskValueAtGeo(mask, longitude, latitude) {
+  let normalizedLongitude = (longitude + 180) % 360;
+  if (normalizedLongitude < 0) normalizedLongitude += 360;
+  const column = Math.min(
+    EARTH_MASK_WIDTH - 1,
+    Math.floor((normalizedLongitude / 360) * EARTH_MASK_WIDTH)
+  );
+  const row = Math.max(
+    0,
+    Math.min(
+      EARTH_MASK_HEIGHT - 1,
+      Math.floor(((90 - latitude) / 180) * EARTH_MASK_HEIGHT)
+    )
+  );
+  return mask[row * EARTH_MASK_WIDTH + column];
+}
+
+function isPopulationRegion(longitude, latitude) {
+  return (
+    (longitude >= -13 && longitude <= 28 && latitude >= 39 && latitude <= 61) ||
+    (longitude >= 100 && longitude <= 145 && latitude >= 18 && latitude <= 48) ||
+    (longitude >= -93 && longitude <= -63 && latitude >= 27 && latitude <= 53) ||
+    (longitude >= -20 && longitude <= 14 && latitude >= -2 && latitude <= 22) ||
+    (longitude >= 67 && longitude <= 92 && latitude >= 7 && latitude <= 31)
+  );
+}
+
 const DOT_TONE_PREFIXES = makeDotTonePrefixes();
 const DOT_STYLES = makeDotStyles(DOT_TONE_PREFIXES);
 const O_STYLES = makeAlphaStyles(PAL.O);
+const B_STYLES = makeAlphaStyles(PAL.B);
 const V_STYLES = makeAlphaStyles(PAL.V);
 const HL_STYLES = makeAlphaStyles(PAL.Hl);
 const MAIL_STYLES = makeAlphaStyles(PAL.MAIL);
@@ -292,10 +439,29 @@ export class VoiceOrb {
     this._lastFrameAt = 0;
     this._elapsed = 0;
 
-    // ---- Particle wireframe: 700 latitude dots + 704 longitude dots ----
+    // ---- Digital Earth surface: authored mask + constructor-only reseed ----
+    this._earthMask = decodeEarthMask();
+    const earthCoast = new Uint8Array(
+      EARTH_MASK_WIDTH * EARTH_MASK_HEIGHT
+    );
+    for (let row = 0; row < EARTH_MASK_HEIGHT; row++) {
+      for (let column = 0; column < EARTH_MASK_WIDTH; column++) {
+        if (!earthMaskValue(this._earthMask, column, row)) continue;
+        earthCoast[row * EARTH_MASK_WIDTH + column] =
+          !earthMaskValue(this._earthMask, column - 1, row) ||
+          !earthMaskValue(this._earthMask, column + 1, row) ||
+          !earthMaskValue(this._earthMask, column, row - 1) ||
+          !earthMaskValue(this._earthMask, column, row + 1)
+            ? 1
+            : 0;
+      }
+    }
+
     this._dotBase = new Float32Array(DOT_COUNT * 3);
     this._dotLatitude = new Float32Array(DOT_COUNT);
     this._dotTwinkle = new Float32Array(DOT_COUNT);
+    this._dotShimmer = new Float32Array(DOT_COUNT);
+    this._dotIntensity = new Float32Array(DOT_COUNT);
     this._dotDelay = new Float32Array(DOT_COUNT);
     this._dotScatter = new Float32Array(DOT_COUNT * 3);
     this._dotScreenX = new Float32Array(DOT_COUNT);
@@ -305,6 +471,9 @@ export class VoiceOrb {
     this._dotDepth = new Float32Array(DOT_COUNT);
     this._dotRadius = new Float32Array(DOT_COUNT);
     this._dotBaseSize = new Float32Array(DOT_COUNT);
+    this._dotSurface = new Uint8Array(DOT_COUNT);
+    this._dotCity = new Uint8Array(DOT_COUNT);
+    this._dotToneBase = new Uint8Array(DOT_COUNT);
     this._dotWireKind = new Uint8Array(DOT_COUNT);
     this._dotWireChain = new Uint8Array(DOT_COUNT);
     this._dotWireParam = new Float32Array(DOT_COUNT);
@@ -317,45 +486,136 @@ export class VoiceOrb {
     this._lightBucketIndices = new Uint16Array(6 * DOT_COUNT);
 
     let dot = 0;
-    for (let ring = 0; ring < DOT_LATITUDES; ring++) {
-      const latitude =
-        -Math.PI * 0.5 + ((ring + 1) / (DOT_LATITUDES + 1)) * Math.PI;
-      const y = Math.sin(latitude);
+    let landDots = 0;
+    let oceanDots = 0;
+    let coastDots = 0;
+    const longitudeStep = 360 / EARTH_MASK_WIDTH;
+    const latitudeStep = 180 / EARTH_MASK_HEIGHT;
+    const addEarthDot = (
+      longitudeDegrees,
+      latitudeDegrees,
+      surface,
+      seed,
+      extraLand
+    ) => {
+      if (dot >= DOT_COUNT) return;
+      const longitude = longitudeDegrees * DEG - EARTH_FRONT_LONGITUDE;
+      const latitude = latitudeDegrees * DEG;
       const latitudeRadius = Math.cos(latitude);
-      for (let point = 0; point < DOTS_PER_LATITUDE; point++) {
-        const longitude = (point / DOTS_PER_LATITUDE) * TAU;
-        const offset = dot * 3;
-        this._dotBase[offset] = Math.cos(longitude) * latitudeRadius;
-        this._dotBase[offset + 1] = y;
-        this._dotBase[offset + 2] = Math.sin(longitude) * latitudeRadius;
-        this._dotLatitude[dot] = latitude;
-        this._dotWireKind[dot] = 0;
-        this._dotWireChain[dot] = ring;
-        this._dotWireParam[dot] = point / DOTS_PER_LATITUDE;
-        dot++;
+      const offset = dot * 3;
+      const populated = surface &&
+        isPopulationRegion(longitudeDegrees, latitudeDegrees);
+      const cityChance = populated ? 0.62 : extraLand ? 0.31 : 0.13;
+      const city = surface && hashUnit(seed + 821) < cityChance ? 1 : 0;
+      const longitudeFraction = (longitudeDegrees + 180) / 360;
+      const latitudeFraction = (latitudeDegrees + 90) / 180;
+      const wireKind = hashUnit(seed + 1871) < 0.5 ? 0 : 1;
+
+      this._dotBase[offset] = latitudeRadius * Math.sin(longitude);
+      this._dotBase[offset + 1] = Math.sin(latitude);
+      this._dotBase[offset + 2] = latitudeRadius * Math.cos(longitude);
+      this._dotLatitude[dot] = latitude;
+      this._dotSurface[dot] = surface;
+      this._dotCity[dot] = city;
+      this._dotTwinkle[dot] = hashUnit(seed + 4099) * TAU;
+      this._dotShimmer[dot] = surface
+        ? city ? 0.25 : surface === 2 ? 0.18 : 0.14
+        : 0.055;
+      this._dotIntensity[dot] = surface === 2
+        ? 1.12 + city * 0.1
+        : surface === 1 ? 0.66 + city * 0.34 : 0.2;
+      this._dotToneBase[dot] = city
+        ? 0
+        : surface === 2
+          ? 1
+        : surface === 1
+          ? hashUnit(seed + 541) < 0.7 ? 1 : 2
+          : hashUnit(seed + 727) < 0.22 ? 3 : 4;
+      this._dotBaseSize[dot] = surface
+        ? (surface === 2 ? 1.3 : 0.94) +
+          Math.pow(hashUnit(seed + 5101), 2.6) * 0.98 +
+          city * 0.18
+        : 0.72 + hashUnit(seed + 5101) * 0.48;
+      this._dotWireKind[dot] = wireKind;
+      if (wireKind === 0) {
+        this._dotWireChain[dot] = Math.max(
+          0,
+          Math.min(
+            CAGE_LATITUDE_COUNT - 1,
+            Math.floor(latitudeFraction * CAGE_LATITUDE_COUNT)
+          )
+        );
+        this._dotWireParam[dot] = longitudeFraction;
+      } else {
+        this._dotWireChain[dot] = Math.max(
+          0,
+          Math.min(
+            CAGE_LONGITUDE_COUNT - 1,
+            Math.floor(longitudeFraction * CAGE_LONGITUDE_COUNT)
+          )
+        );
+        this._dotWireParam[dot] = latitudeFraction;
       }
-    }
-    for (let meridian = 0; meridian < DOT_LONGITUDES; meridian++) {
-      const longitude = (meridian / DOT_LONGITUDES) * TAU;
-      const longitudeCos = Math.cos(longitude);
-      const longitudeSin = Math.sin(longitude);
-      for (let point = 0; point < DOTS_PER_LONGITUDE; point++) {
-        const latitude =
-          -Math.PI * 0.5 +
-          ((point + 0.5) / DOTS_PER_LONGITUDE) * Math.PI;
-        const latitudeRadius = Math.cos(latitude);
-        const offset = dot * 3;
-        this._dotBase[offset] = latitudeRadius * longitudeCos;
-        this._dotBase[offset + 1] = Math.sin(latitude);
-        this._dotBase[offset + 2] = latitudeRadius * longitudeSin;
-        this._dotLatitude[dot] = latitude;
-        this._dotWireKind[dot] = 1;
-        this._dotWireChain[dot] = meridian;
-        this._dotWireParam[dot] = point / (DOTS_PER_LONGITUDE - 1);
-        dot++;
+
+      if (surface) {
+        landDots++;
+        if (surface === 2) coastDots++;
+      } else {
+        oceanDots++;
+      }
+      dot++;
+    };
+
+    for (let row = 0; row < EARTH_MASK_HEIGHT; row++) {
+      const latitude = 90 - (row + 0.5) * latitudeStep;
+      for (let column = 0; column < EARTH_MASK_WIDTH; column++) {
+        const cell = row * EARTH_MASK_WIDTH + column;
+        const longitude = -180 + (column + 0.5) * longitudeStep;
+        const land = this._earthMask[cell] !== 0;
+        const coast = earthCoast[cell] !== 0;
+        if (land) {
+          const polar = latitude < -66;
+          if (!polar || hashUnit(cell + 12011) < 0.36) {
+            const jitter = coast ? 0.08 : 0.32;
+            addEarthDot(
+              longitude +
+                (hashUnit(cell + 13001) - 0.5) * longitudeStep * jitter,
+              latitude +
+                (hashUnit(cell + 14009) - 0.5) * latitudeStep * jitter,
+              coast ? 2 : 1,
+              cell + 15013,
+              false
+            );
+          }
+          if (!polar && (coast || hashUnit(cell + 16001) < 0.32)) {
+            const extraJitter = coast ? 0.28 : 0.78;
+            addEarthDot(
+              longitude +
+                (hashUnit(cell + 17011) - 0.5) * longitudeStep * extraJitter,
+              latitude +
+                (hashUnit(cell + 18013) - 0.5) * latitudeStep * extraJitter,
+              coast ? 2 : 1,
+              cell + 19001,
+              true
+            );
+          }
+        } else if (hashUnit(cell + 20011) < 0.08) {
+          addEarthDot(
+            longitude +
+              (hashUnit(cell + 21001) - 0.5) * longitudeStep * 0.84,
+            latitude +
+              (hashUnit(cell + 22003) - 0.5) * latitudeStep * 0.84,
+            0,
+            cell + 23003,
+            false
+          );
+        }
       }
     }
     this._dotCount = dot;
+    this._earthLandDotCount = landDots;
+    this._earthOceanDotCount = oceanDots;
+    this._earthCoastDotCount = coastDots;
 
     // Scatter direction, distance, easing delay, and twinkle phase are stable
     // per dot, so dissolve/reform never creates geometry in the frame loop.
@@ -375,9 +635,72 @@ export class VoiceOrb {
       this._dotScatter[offset + 2] =
         Math.sin(scatterAngle) * scatterRadius * scatterMagnitude;
       this._dotDelay[i] = d * 0.55;
-      this._dotTwinkle[i] = hashUnit(i + 4099) * TAU;
-      this._dotBaseSize[i] =
-        1 + Math.pow(hashUnit(i + 5101), 3.2) * 1.5;
+    }
+
+    const landDotIndices = new Uint16Array(DOT_COUNT);
+    let landDotCount = 0;
+    for (let i = 0; i < this._dotCount; i++) {
+      if (this._dotSurface[i] && this._dotLatitude[i] > -60 * DEG) {
+        landDotIndices[landDotCount++] = i;
+      }
+    }
+
+    // The cage is independent from the masked surface so continent dots never
+    // inherit topology assumptions. All vertices and segment buckets are fixed.
+    this._cageBase = new Float32Array(CAGE_POINT_COUNT * 3);
+    this._cageScreenX = new Float32Array(CAGE_POINT_COUNT);
+    this._cageScreenY = new Float32Array(CAGE_POINT_COUNT);
+    this._cageDepth = new Float32Array(CAGE_POINT_COUNT);
+    this._cageSegmentFrom = new Uint16Array(CAGE_SEGMENT_COUNT);
+    this._cageSegmentTo = new Uint16Array(CAGE_SEGMENT_COUNT);
+    this._cageStyleCounts = new Uint16Array(STYLE_ALPHA_BUCKETS * 2);
+    this._cageStyleIndices = new Uint16Array(
+      STYLE_ALPHA_BUCKETS * 2 * CAGE_SEGMENT_COUNT
+    );
+    let cagePoint = 0;
+    for (let ring = 0; ring < CAGE_LATITUDE_COUNT; ring++) {
+      const latitude =
+        -Math.PI * 0.5 +
+        ((ring + 1) / (CAGE_LATITUDE_COUNT + 1)) * Math.PI;
+      const latitudeRadius = Math.cos(latitude);
+      const y = Math.sin(latitude);
+      for (let point = 0; point < CAGE_POINTS_PER_LINE; point++) {
+        const geographicLongitude =
+          -Math.PI + (point / CAGE_SEGMENTS_PER_LINE) * TAU;
+        const longitude = geographicLongitude - EARTH_FRONT_LONGITUDE;
+        const offset = cagePoint * 3;
+        this._cageBase[offset] = latitudeRadius * Math.sin(longitude);
+        this._cageBase[offset + 1] = y;
+        this._cageBase[offset + 2] = latitudeRadius * Math.cos(longitude);
+        cagePoint++;
+      }
+    }
+    for (let meridian = 0; meridian < CAGE_LONGITUDE_COUNT; meridian++) {
+      const geographicLongitude =
+        -Math.PI + (meridian / CAGE_LONGITUDE_COUNT) * TAU;
+      const longitude = geographicLongitude - EARTH_FRONT_LONGITUDE;
+      const longitudeSin = Math.sin(longitude);
+      const longitudeCos = Math.cos(longitude);
+      for (let point = 0; point < CAGE_POINTS_PER_LINE; point++) {
+        const latitude =
+          -Math.PI * 0.5 +
+          (point / CAGE_SEGMENTS_PER_LINE) * Math.PI;
+        const latitudeRadius = Math.cos(latitude);
+        const offset = cagePoint * 3;
+        this._cageBase[offset] = latitudeRadius * longitudeSin;
+        this._cageBase[offset + 1] = Math.sin(latitude);
+        this._cageBase[offset + 2] = latitudeRadius * longitudeCos;
+        cagePoint++;
+      }
+    }
+    let cageSegment = 0;
+    for (let line = 0; line < CAGE_LINE_COUNT; line++) {
+      const lineBase = line * CAGE_POINTS_PER_LINE;
+      for (let point = 0; point < CAGE_SEGMENTS_PER_LINE; point++) {
+        this._cageSegmentFrom[cageSegment] = lineBase + point;
+        this._cageSegmentTo[cageSegment] = lineBase + point + 1;
+        cageSegment++;
+      }
     }
 
     // ---- Fixed cinematic pools: data arcs, wire packets, and scan plane ----
@@ -400,8 +723,12 @@ export class VoiceOrb {
     this._dataArcPairFrom = new Uint16Array(DATA_ARC_PAIR_COUNT);
     this._dataArcPairTo = new Uint16Array(DATA_ARC_PAIR_COUNT);
     for (let pair = 0; pair < DATA_ARC_PAIR_COUNT; pair++) {
-      const from = (31 + pair * 97) % this._dotCount;
-      let to = (from + 211 + pair * 131) % this._dotCount;
+      const from = landDotIndices[
+        (31 + pair * 97) % landDotCount
+      ];
+      let toPosition =
+        (211 + pair * 131) % landDotCount;
+      let to = landDotIndices[toPosition];
       for (let attempt = 0; attempt < 24; attempt++) {
         const fromOffset = from * 3;
         const toOffset = to * 3;
@@ -410,7 +737,8 @@ export class VoiceOrb {
           this._dotBase[fromOffset + 1] * this._dotBase[toOffset + 1] +
           this._dotBase[fromOffset + 2] * this._dotBase[toOffset + 2];
         if (alignment > -0.18 && alignment < 0.72) break;
-        to = (to + 137) % this._dotCount;
+        toPosition = (toPosition + 137) % landDotCount;
+        to = landDotIndices[toPosition];
       }
       this._dataArcPairFrom[pair] = from;
       this._dataArcPairTo[pair] = to;
@@ -428,8 +756,8 @@ export class VoiceOrb {
       const kind = pulse % 2;
       this._wirePulseKind[pulse] = kind;
       this._wirePulseChain[pulse] = kind
-        ? (pulse * 3 + 1) % DOT_LONGITUDES
-        : (pulse * 2 + 1) % DOT_LATITUDES;
+        ? (pulse * 3 + 1) % CAGE_LONGITUDE_COUNT
+        : (pulse * 2 + 1) % CAGE_LATITUDE_COUNT;
       this._wirePulsePosition[pulse] = hashUnit(pulse + 6203);
       this._wirePulseSpeed[pulse] =
         0.12 + hashUnit(pulse + 6301) * 0.1;
@@ -572,9 +900,9 @@ export class VoiceOrb {
     this._coreGlow.height = 192;
     const glowCtx = this._coreGlow.getContext("2d");
     const glow = glowCtx.createRadialGradient(96, 96, 0, 96, 96, 96);
-    glow.addColorStop(0, "rgba(207,233,255,0.9)");
-    glow.addColorStop(0.4, "rgba(59,130,246,0.5)");
-    glow.addColorStop(0.75, "rgba(124,92,255,0.22)");
+    glow.addColorStop(0, "rgba(207,233,255,0.58)");
+    glow.addColorStop(0.4, "rgba(59,130,246,0.3)");
+    glow.addColorStop(0.75, "rgba(124,92,255,0.12)");
     glow.addColorStop(1, "rgba(124,92,255,0)");
     glowCtx.fillStyle = glow;
     glowCtx.fillRect(0, 0, 192, 192);
@@ -587,25 +915,41 @@ export class VoiceOrb {
     this._plexSY = new Float32Array(PLEX_N);
     this._plexDepth = new Float32Array(PLEX_N);
     {
-      const centers = [];
-      for (let c = 0; c < 4; c++) {
-        const th = hashUnit(c * 131 + 7) * TAU, ph = Math.acos(2 * hashUnit(c * 197 + 3) - 1);
-        centers.push([Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th)]);
-      }
       for (let i = 0; i < PLEX_N; i++) {
-        let x, y, z;
-        if (i < 72) { // clustered: gaussian-ish spread around a center
-          const c = centers[i % 4];
-          x = c[0] + (hashUnit(i * 3 + 11) - 0.5) * 0.62;
-          y = c[1] + (hashUnit(i * 5 + 29) - 0.5) * 0.62;
-          z = c[2] + (hashUnit(i * 7 + 41) - 0.5) * 0.62;
-        } else {      // sparse elsewhere
-          const th = hashUnit(i * 11 + 5) * TAU, ph = Math.acos(2 * hashUnit(i * 13 + 17) - 1);
-          x = Math.sin(ph) * Math.cos(th); y = Math.cos(ph); z = Math.sin(ph) * Math.sin(th);
+        const region = i % 4;
+        const regionOffset = region * 4;
+        const centerLongitude = POPULATION_REGIONS[regionOffset];
+        const centerLatitude = POPULATION_REGIONS[regionOffset + 1];
+        const longitudeSpread = POPULATION_REGIONS[regionOffset + 2];
+        const latitudeSpread = POPULATION_REGIONS[regionOffset + 3];
+        let longitudeDegrees = centerLongitude;
+        let latitudeDegrees = centerLatitude;
+        for (let attempt = 0; attempt < 28; attempt++) {
+          const seed = i * 97 + attempt * 131 + 3109;
+          longitudeDegrees =
+            centerLongitude +
+            (hashUnit(seed) + hashUnit(seed + 17) - 1) * longitudeSpread;
+          latitudeDegrees =
+            centerLatitude +
+            (hashUnit(seed + 31) + hashUnit(seed + 47) - 1) * latitudeSpread;
+          if (
+            earthMaskValueAtGeo(
+              this._earthMask,
+              longitudeDegrees,
+              latitudeDegrees
+            )
+          ) {
+            break;
+          }
         }
-        const n = Math.hypot(x, y, z) || 1;
-        this._plexBase[i * 3] = x / n; this._plexBase[i * 3 + 1] = y / n; this._plexBase[i * 3 + 2] = z / n;
-        this._plexSize[i] = 1 + hashUnit(i * 17 + 23) * 2;
+        const latitude = latitudeDegrees * DEG;
+        const longitude =
+          longitudeDegrees * DEG - EARTH_FRONT_LONGITUDE;
+        const latitudeRadius = Math.cos(latitude);
+        this._plexBase[i * 3] = latitudeRadius * Math.sin(longitude);
+        this._plexBase[i * 3 + 1] = Math.sin(latitude);
+        this._plexBase[i * 3 + 2] = latitudeRadius * Math.cos(longitude);
+        this._plexSize[i] = 0.9 + hashUnit(i * 17 + 23) * 1.55;
       }
       // kNN edges: 2-4 nearest neighbors each, deduplicated
       const edges = new Set();
@@ -619,7 +963,7 @@ export class VoiceOrb {
           dists.push([dx * dx + dy * dy + dz * dz, j]);
         }
         dists.sort((a, b) => a[0] - b[0]);
-        const k = 2 + Math.floor(hashUnit(i * 19 + 31) * 3);
+        const k = 2 + Math.floor(hashUnit(i * 19 + 31) * 2);
         for (let e = 0; e < k; e++) edges.add(i < dists[e][1] ? i * 1000 + dists[e][1] : dists[e][1] * 1000 + i);
       }
       this._plexEdges = Int32Array.from(edges);
@@ -701,6 +1045,8 @@ export class VoiceOrb {
       ATMOSPHERE_SPRITE_SIZE,
       1
     );
+    this._projectorFloor = makeProjectorFloorSprite(PAL.B);
+    this._projectorBeam = makeProjectorBeamSprite(PAL.B);
 
     this._mouse = { x: 0, y: 0 };
     this._mx = 0;
@@ -1375,43 +1721,37 @@ export class VoiceOrb {
       this._dotCameraX[i] = cameraX;
       this._dotCameraY[i] = cameraY;
       this._dotScreenX[i] = cameraX * radius * perspective;
-      this._dotScreenY[i] = cameraY * radius * perspective;
+      this._dotScreenY[i] = -cameraY * radius * perspective;
       this._dotDepth[i] = depth;
 
       const depthLight = Math.max(
         0,
         Math.min(1, (depth + 1.55) / 3.1)
       );
+      const surface = this._dotSurface[i];
       const twinkle =
-        0.78 + 0.22 * Math.sin(time * 1.35 + this._dotTwinkle[i]);
-      // ~15% hero dots at full intensity give the sphere depth; the rest
-      // stay dimmer so it reads as a body, not an even haze
-      const hero = (hashUnit(i + 7717) < 0.15 ? 1.45 : 0.85) * 0.55;
+        1 +
+        this._dotShimmer[i] *
+          Math.sin(time * (surface ? 1.35 : 0.72) + this._dotTwinkle[i]);
+      const baseAlpha = surface
+        ? 0.11 + depthLight * 0.8
+        : 0.025 + depthLight * 0.27;
       const dotAlpha = Math.min(
         1,
-        (0.1 + depthLight * 0.82) *
-            twinkle * hero *
+        baseAlpha *
+            twinkle *
+            this._dotIntensity[i] *
             (1 + this._listeningMix * 0.32) +
           lightBoost * 0.62
       );
       const alphaBucket = Math.max(
-        1,
+        0,
         Math.min(
           DOT_ALPHA_BUCKETS - 1,
           Math.round(dotAlpha * (DOT_ALPHA_BUCKETS - 1))
         )
       );
-      const violetMix = Math.max(
-        0,
-        Math.min(1, 0.5 + cameraX * 0.42 - depth * 0.06)
-      );
-      const toneBucket = Math.max(
-        0,
-        Math.min(
-          DOT_TONE_BUCKETS - 1,
-          Math.round(violetMix * (DOT_TONE_BUCKETS - 1))
-        )
-      );
+      const toneBucket = this._dotToneBase[i];
       this._dotToneBucket[i] = toneBucket;
       const styleGroup =
         toneBucket * DOT_ALPHA_BUCKETS + alphaBucket;
@@ -1421,9 +1761,9 @@ export class VoiceOrb {
       ] = i;
       this._dotStyleCounts[styleGroup] = styleCount + 1;
       this._dotRadius[i] = Math.max(
-        1.4,
+        surface ? 1.05 : 0.65,
         Math.min(
-          3.8,
+          surface ? 3.45 : 1.55,
           this._dotBaseSize[i] *
             (0.9 + depthLight * 0.1) *
             (0.94 + perspective * 0.06) *
@@ -1431,6 +1771,15 @@ export class VoiceOrb {
         )
       );
     }
+
+    this._projectCage(
+      radius,
+      sphereScale,
+      yawCos,
+      yawSin,
+      pitchCos,
+      pitchSin
+    );
 
     if (scanVisible) {
       const scanCos = Math.cos(this._scanLatitude);
@@ -1446,7 +1795,7 @@ export class VoiceOrb {
         const depth = scanY * pitchSin + cameraZ * pitchCos;
         const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
         this._scanRingX[point] = cameraX * radius * perspective;
-        this._scanRingY[point] = cameraY * radius * perspective;
+        this._scanRingY[point] = -cameraY * radius * perspective;
         this._scanRingDepth[point] = depth;
       }
     }
@@ -1530,7 +1879,7 @@ export class VoiceOrb {
         this._dataArcSampleX[sampleOffset] =
           cameraX * radius * perspective;
         this._dataArcSampleY[sampleOffset] =
-          cameraY * radius * perspective;
+          -cameraY * radius * perspective;
         this._dataArcSampleDepth[sampleOffset] = depth;
       }
     }
@@ -1659,7 +2008,7 @@ export class VoiceOrb {
     this._drawOrbitPass(false);
     this._drawMoonTailPass(false);
     this._drawMoonLightPass(false, time, silhouetteRadius);
-    this._drawWirePass(false);
+    this._drawCagePass(false);
     this._drawDotGlowPass(false);
     this._drawDotPass(false);
     this._drawLightPacketPass(false);
@@ -1667,9 +2016,12 @@ export class VoiceOrb {
     this._drawScanPass(false);
 
     const corePulse = this.reduced ? 1 : 1 + 0.06 * (0.5 + 0.5 * Math.sin(time * (TAU / 5)));
-    const glowSize = silhouetteRadius * 0.7 * corePulse;
+    const glowSize = silhouetteRadius * 0.64 * corePulse;
     ctx.globalAlpha =
-      Math.min(1, hudAlpha * (1.0 + this._listeningMix * 0.1 + amp * 0.1));
+      Math.min(
+        0.68,
+        hudAlpha * (0.52 + this._listeningMix * 0.08 + amp * 0.08)
+      );
     ctx.drawImage(
       this._coreGlow,
       -glowSize * 0.5,
@@ -1684,8 +2036,7 @@ export class VoiceOrb {
 
     ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = hudAlpha;
-    this._drawWirePass(true);
-    this._drawLatLongWires(silhouetteRadius);
+    this._drawCagePass(true);
     this._drawPlexus(time, silhouetteRadius);
     this._drawAmbientRise(time, silhouetteRadius);
     this._drawDotGlowPass(true);
@@ -1747,6 +2098,47 @@ export class VoiceOrb {
     }
     ctx.shadowBlur = 0;
     ctx.restore();
+  }
+
+  _projectCage(radius, sphereScale, yawCos, yawSin, pitchCos, pitchSin) {
+    for (let group = 0; group < STYLE_ALPHA_BUCKETS * 2; group++) {
+      this._cageStyleCounts[group] = 0;
+    }
+    for (let point = 0; point < CAGE_POINT_COUNT; point++) {
+      const offset = point * 3;
+      const pointX = this._cageBase[offset] * sphereScale;
+      const pointY = this._cageBase[offset + 1] * sphereScale;
+      const pointZ = this._cageBase[offset + 2] * sphereScale;
+      const cameraX = pointX * yawCos + pointZ * yawSin;
+      const cameraZ = -pointX * yawSin + pointZ * yawCos;
+      const cameraY = pointY * pitchCos - cameraZ * pitchSin;
+      const depth = pointY * pitchSin + cameraZ * pitchCos;
+      const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
+      this._cageScreenX[point] = cameraX * radius * perspective;
+      this._cageScreenY[point] = -cameraY * radius * perspective;
+      this._cageDepth[point] = depth;
+    }
+    for (let segment = 0; segment < CAGE_SEGMENT_COUNT; segment++) {
+      const from = this._cageSegmentFrom[segment];
+      const to = this._cageSegmentTo[segment];
+      const depth = (this._cageDepth[from] + this._cageDepth[to]) * 0.5;
+      const front = depth >= 0 ? 1 : 0;
+      const rim = 1 - Math.min(1, Math.abs(depth) / 0.9);
+      const alpha = front ? 0.12 + rim * 0.22 : 0.035 + rim * 0.08;
+      const bucket = Math.max(
+        1,
+        Math.min(
+          STYLE_ALPHA_BUCKETS - 1,
+          Math.round(alpha * (STYLE_ALPHA_BUCKETS - 1))
+        )
+      );
+      const group = front * STYLE_ALPHA_BUCKETS + bucket;
+      const count = this._cageStyleCounts[group];
+      this._cageStyleIndices[
+        group * CAGE_SEGMENT_COUNT + count
+      ] = segment;
+      this._cageStyleCounts[group] = count + 1;
+    }
   }
 
   _drawNebula(time, silhouetteRadius) {
@@ -1884,66 +2276,25 @@ export class VoiceOrb {
     ctx.lineCap = "butt";
   }
 
-  _drawWirePass(front) {
+  _drawCagePass(front) {
     const ctx = this.ctx;
     ctx.globalAlpha =
       this._sceneAlpha * (1 - this._thinkingMix * 0.78);
-    ctx.lineWidth = front ? 0.55 : 0.45;
-    const alpha = front ? 2 : 1;
-    for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
-      ctx.strokeStyle =
-        DOT_STYLES[tone * DOT_ALPHA_BUCKETS + alpha];
+    ctx.lineWidth = front ? 0.62 : 0.46;
+    const groupOffset = front ? STYLE_ALPHA_BUCKETS : 0;
+    for (let bucket = 1; bucket < STYLE_ALPHA_BUCKETS; bucket++) {
+      const group = groupOffset + bucket;
+      const count = this._cageStyleCounts[group];
+      if (!count) continue;
+      ctx.strokeStyle = B_STYLES[bucket];
       ctx.beginPath();
-
-      for (let ring = 0; ring < DOT_LATITUDES; ring++) {
-        const base = ring * DOTS_PER_LATITUDE;
-        for (let point = 0; point < DOTS_PER_LATITUDE; point++) {
-          const from = base + point;
-          const to =
-            base + ((point + 1) % DOTS_PER_LATITUDE);
-          if (
-            Math.round(
-              (this._dotToneBucket[from] +
-                this._dotToneBucket[to]) *
-                0.5
-            ) !== tone ||
-            ((this._dotDepth[from] + this._dotDepth[to]) * 0.5 >=
-              0) !==
-              front
-          ) {
-            continue;
-          }
-          ctx.moveTo(this._dotScreenX[from], this._dotScreenY[from]);
-          ctx.lineTo(this._dotScreenX[to], this._dotScreenY[to]);
-        }
-      }
-
-      const longitudeBase = DOT_LATITUDES * DOTS_PER_LATITUDE;
-      for (
-        let meridian = 0;
-        meridian < DOT_LONGITUDES;
-        meridian++
-      ) {
-        const base =
-          longitudeBase + meridian * DOTS_PER_LONGITUDE;
-        for (let point = 0; point < DOTS_PER_LONGITUDE - 1; point++) {
-          const from = base + point;
-          const to = from + 1;
-          if (
-            Math.round(
-              (this._dotToneBucket[from] +
-                this._dotToneBucket[to]) *
-                0.5
-            ) !== tone ||
-            ((this._dotDepth[from] + this._dotDepth[to]) * 0.5 >=
-              0) !==
-              front
-          ) {
-            continue;
-          }
-          ctx.moveTo(this._dotScreenX[from], this._dotScreenY[from]);
-          ctx.lineTo(this._dotScreenX[to], this._dotScreenY[to]);
-        }
+      const groupBase = group * CAGE_SEGMENT_COUNT;
+      for (let item = 0; item < count; item++) {
+        const segment = this._cageStyleIndices[groupBase + item];
+        const from = this._cageSegmentFrom[segment];
+        const to = this._cageSegmentTo[segment];
+        ctx.moveTo(this._cageScreenX[from], this._cageScreenY[from]);
+        ctx.lineTo(this._cageScreenX[to], this._cageScreenY[to]);
       }
       ctx.stroke();
     }
@@ -2332,44 +2683,6 @@ export class VoiceOrb {
   // a 1px curved line plus a small bright pulse traveling node→sphere every
   // 4-6s, staggered per node so the sky never beats in unison.
 
-  // Layer 2: parametric lat/long wireframe — 1px cyan, brighter on the rim.
-  _drawLatLongWires(R) {
-    const ctx = this.ctx;
-    const yc = this._fYawCos, ys = this._fYawSin, pc = this._fPitchCos, ps = this._fPitchSin;
-    ctx.lineWidth = 1;
-    const seg = 36;
-    const drawRing = (fn) => {
-      let prev = null;
-      for (let k = 0; k <= seg; k++) {
-        const [x, y, z] = fn(k / seg);
-        const cx = x * yc + z * ys, cz = -x * ys + z * yc;
-        const cy = y * pc - cz * ps, depth = y * ps + cz * pc;
-        const persp = CAM_DISTANCE / (CAM_DISTANCE - depth);
-        const sx = cx * R * persp, sy = cy * R * persp;
-        if (prev) {
-          const rim = 1 - Math.min(1, Math.abs((prev[2] + depth) / 2) / 0.9);
-          ctx.strokeStyle = "rgba(34,211,238," + (0.3 + 0.2 * rim).toFixed(3) + ")";
-          ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(sx, sy); ctx.stroke();
-        }
-        prev = [sx, sy, depth];
-      }
-    };
-    for (let li = 1; li < 9; li++) {
-      const lat = (li / 9 - 0.5) * Math.PI;
-      const cl = Math.cos(lat), sl = Math.sin(lat);
-      drawRing((u) => [Math.cos(u * TAU) * cl, sl, Math.sin(u * TAU) * cl]);
-    }
-    for (let mi = 0; mi < 8; mi++) {
-      const lon = (mi / 8) * Math.PI;
-      const co = Math.cos(lon), so = Math.sin(lon);
-      drawRing((u) => {
-        const a = u * TAU;
-        const r2 = Math.cos(a), yy = Math.sin(a);
-        return [r2 * co, yy, r2 * so];
-      });
-    }
-  }
-
   // Layer 3: the plexus — clustered node web with propagating flares.
   _drawPlexus(time, R) {
     const ctx = this.ctx;
@@ -2381,7 +2694,7 @@ export class VoiceOrb {
       const cy = y * pc - cz * ps, depth = y * ps + cz * pc;
       const persp = CAM_DISTANCE / (CAM_DISTANCE - depth);
       this._plexSX[i] = cx * R * persp;
-      this._plexSY[i] = cy * R * persp;
+      this._plexSY[i] = -cy * R * persp;
       this._plexDepth[i] = depth;
     }
     // flare scheduling: one random node every 2-4s, 300ms propagation
@@ -2392,12 +2705,20 @@ export class VoiceOrb {
     }
     const flareK = this._flareNode >= 0 ? Math.max(0, 1 - (time - this._flareAt) / 0.3) : 0;
     ctx.lineWidth = 1;
-    for (const key of this._plexEdges) {
+    for (let edge = 0; edge < this._plexEdges.length; edge++) {
+      const key = this._plexEdges[edge];
       const a = Math.floor(key / 1000), b = key % 1000;
       const front = (this._plexDepth[a] + this._plexDepth[b]) / 2 > 0;
-      let alpha = front ? 0.7 : 0.26;
-      if (flareK > 0 && (a === this._flareNode || b === this._flareNode)) alpha = Math.min(1, alpha + flareK * 0.65);
-      ctx.strokeStyle = "rgba(34,211,238," + alpha.toFixed(3) + ")";
+      let alpha = front ? 0.38 : 0.11;
+      if (flareK > 0 && (a === this._flareNode || b === this._flareNode)) alpha = Math.min(0.82, alpha + flareK * 0.44);
+      const alphaBucket = Math.max(
+        1,
+        Math.min(
+          STYLE_ALPHA_BUCKETS - 1,
+          Math.round(alpha * (STYLE_ALPHA_BUCKETS - 1))
+        )
+      );
+      ctx.strokeStyle = B_STYLES[alphaBucket];
       ctx.beginPath();
       ctx.moveTo(this._plexSX[a], this._plexSY[a]);
       ctx.lineTo(this._plexSX[b], this._plexSY[b]);
@@ -2406,16 +2727,23 @@ export class VoiceOrb {
     for (let i = 0; i < N; i++) {
       const front = this._plexDepth[i] > 0;
       const size = this._plexSize[i] * (front ? 1 : 0.7);
-      let alpha = front ? 1 : 0.6;
+      let alpha = front ? 0.78 : 0.32;
       if (flareK > 0 && (i === this._flareNode || this._plexAdj[this._flareNode].includes(i)))
         alpha = Math.min(1, alpha + flareK);
-      if (size > 2.2) {
-        const g = size * 7;
-        ctx.globalAlpha = this._sceneAlpha * alpha * 0.5;
+      if (size > 1.8) {
+        const g = size * 5.4;
+        ctx.globalAlpha = this._sceneAlpha * alpha * 0.36;
         ctx.drawImage(this._highlightGlow, this._plexSX[i] - g / 2, this._plexSY[i] - g / 2, g, g);
         ctx.globalAlpha = this._sceneAlpha;
       }
-      ctx.fillStyle = "rgba(214,248,255," + alpha.toFixed(3) + ")";
+      const alphaBucket = Math.max(
+        1,
+        Math.min(
+          STYLE_ALPHA_BUCKETS - 1,
+          Math.round(alpha * (STYLE_ALPHA_BUCKETS - 1))
+        )
+      );
+      ctx.fillStyle = HL_STYLES[alphaBucket];
       ctx.beginPath(); ctx.arc(this._plexSX[i], this._plexSY[i], size * 0.75, 0, TAU); ctx.fill();
     }
   }
@@ -2430,7 +2758,14 @@ export class VoiceOrb {
       const sway = Math.sin(time * 0.6 + i) * R * 0.08;
       const x = Math.cos(this._ambAngle[i]) * R * (0.55 + 0.35 * Math.sin(i)) + sway;
       const fade = Math.sin(k * Math.PI);
-      ctx.fillStyle = "rgba(34,211,238," + (0.3 * fade).toFixed(3) + ")";
+      const alphaBucket = Math.max(
+        1,
+        Math.min(
+          STYLE_ALPHA_BUCKETS - 1,
+          Math.round(0.3 * fade * (STYLE_ALPHA_BUCKETS - 1))
+        )
+      );
+      ctx.fillStyle = B_STYLES[alphaBucket];
       ctx.beginPath(); ctx.arc(x, y, 1.4, 0, TAU); ctx.fill();
     }
   }
@@ -2440,34 +2775,36 @@ export class VoiceOrb {
     const ctx = this.ctx;
     const baseY = R * 1.14;
     const pulse = this.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(time * (TAU / 5) + Math.PI);
-    // floor glow
-    const fg = ctx.createRadialGradient(0, baseY, 0, 0, baseY, R * 1.1);
-    fg.addColorStop(0, "rgba(34,211,238,0.1)");
-    fg.addColorStop(1, "rgba(34,211,238,0)");
-    ctx.fillStyle = fg;
-    ctx.save(); ctx.translate(0, baseY); ctx.scale(1, 0.28); ctx.translate(0, -baseY);
-    ctx.beginPath(); ctx.arc(0, baseY, R * 1.1, 0, TAU); ctx.fill();
-    ctx.restore();
+    ctx.globalAlpha = this._sceneAlpha;
+    ctx.drawImage(
+      this._projectorFloor,
+      -R * 1.1,
+      baseY - R * 0.3,
+      R * 2.2,
+      R * 0.6
+    );
     // three rings, brightest inner, inner one pulsing off the core's beat
-    const rings = [
-      [R * 0.72, 0.6 + 0.25 * pulse],
-      [R * 0.96, 0.34],
-      [R * 1.2, 0.18]
-    ];
     ctx.lineWidth = 1.2;
-    for (const [rr, a] of rings) {
-      ctx.strokeStyle = "rgba(103,232,249," + a.toFixed(3) + ")";
-      ctx.beginPath(); ctx.ellipse(0, baseY, rr, rr * 0.24, 0, 0, TAU); ctx.stroke();
-    }
-    // vertical beam: base ring up to the globe underside
-    const beam = ctx.createLinearGradient(0, baseY, 0, R * 0.2);
-    beam.addColorStop(0, "rgba(34,211,238,0.18)");
-    beam.addColorStop(1, "rgba(34,211,238,0)");
-    ctx.fillStyle = beam;
+    ctx.strokeStyle = B_STYLES[Math.round((0.6 + 0.25 * pulse) * 15)];
     ctx.beginPath();
-    ctx.moveTo(-R * 0.62, baseY); ctx.lineTo(R * 0.62, baseY);
-    ctx.lineTo(R * 0.3, R * 0.55); ctx.lineTo(-R * 0.3, R * 0.55);
-    ctx.closePath(); ctx.fill();
+    ctx.ellipse(0, baseY, R * 0.72, R * 0.1728, 0, 0, TAU);
+    ctx.stroke();
+    ctx.strokeStyle = B_STYLES[5];
+    ctx.beginPath();
+    ctx.ellipse(0, baseY, R * 0.96, R * 0.2304, 0, 0, TAU);
+    ctx.stroke();
+    ctx.strokeStyle = B_STYLES[3];
+    ctx.beginPath();
+    ctx.ellipse(0, baseY, R * 1.2, R * 0.288, 0, 0, TAU);
+    ctx.stroke();
+    // vertical beam: cached gradient from base ring to globe underside
+    ctx.drawImage(
+      this._projectorBeam,
+      -R * 0.62,
+      R * 0.55,
+      R * 1.24,
+      baseY - R * 0.55
+    );
   }
 
   _drawMoonTethers(time, silhouetteRadius) {

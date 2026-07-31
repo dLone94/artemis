@@ -187,35 +187,50 @@ function initializeDashboardV2() {
       const [sx, sy] = hubPoints.west;
       const [ex, ey] = panelPoint(rects.system, "right", 0.68);
       const mx = mid(sx, ex, 0.52);
-      routes.system = { d: `M${sx} ${sy}H${mx}V${ey}H${ex}`, nodes: [[mx, sy], [mx, ey], [ex, ey]] };
+      routes.system = compactSpokePoints([[sx, sy], [mx, sy], [mx, ey], [ex, ey]]);
     }
     {
       const [sx, sy] = hubPoints.north;
       const [ex, ey] = panelPoint(rects.neural, "bottom", 0.34);
       const ry = Math.max(8, sy - Math.max(18, mapRect.height * 0.025));
-      routes.neural = { d: `M${sx} ${sy}V${ry}H${ex}V${ey}`, nodes: [[sx, ry], [ex, ry], [ex, ey]] };
+      routes.neural = compactSpokePoints([[sx, sy], [sx, ry], [ex, ry], [ex, ey]]);
     }
     {
       const [sx, sy] = hubPoints.south;
       const [ex, ey] = panelPoint(rects.comms, "right", 0.34);
       const ry = Math.min(mapRect.height - 8, sy + Math.max(18, mapRect.height * 0.025));
       const mx = mid(sx, ex, 0.48);
-      routes.comms = { d: `M${sx} ${sy}V${ry}H${mx}V${ey}H${ex}`, nodes: [[sx, ry], [mx, ry], [mx, ey], [ex, ey]] };
+      routes.comms = compactSpokePoints([[sx, sy], [sx, ry], [mx, ry], [mx, ey], [ex, ey]]);
     }
     {
       const [sx, sy] = hubPoints.east;
       const [ex, ey] = panelPoint(rects.context, "left", 0.34);
       const mx = mid(sx, ex, 0.52);
-      routes.context = { d: `M${sx} ${sy}H${mx}V${ey}H${ex}`, nodes: [[mx, sy], [mx, ey], [ex, ey]] };
+      routes.context = compactSpokePoints([[sx, sy], [mx, sy], [mx, ey], [ex, ey]]);
     }
 
-    for (const [name, route] of Object.entries(routes)) {
+    for (const [name, points] of Object.entries(routes)) {
       const group = spokes.querySelector(`[data-v2-spoke="${name}"]`);
       if (!group) continue;
-      group.querySelectorAll("path").forEach((path) => path.setAttribute("d", route.d));
-      group.querySelector(".v2-spoke-nodes").innerHTML = route.nodes
+      const centerPath = spokePath(points);
+      group.querySelectorAll(".v2-spoke-idle, .v2-spoke-activity")
+        .forEach((path) => path.setAttribute("d", centerPath));
+      group.querySelector(".v2-spoke-rail--bright").setAttribute("d", offsetSpokePath(points, -1.5));
+      group.querySelector(".v2-spoke-rail--dim").setAttribute("d", offsetSpokePath(points, 1.5));
+      group.querySelector(".v2-spoke-ticks").setAttribute("d", spokeTicksPath(points));
+      group.querySelector(".v2-spoke-junction").setAttribute("d", spokeJunctionPath(points));
+      group.querySelector(".v2-spoke-chevrons").setAttribute("d", spokeChevronsPath(points));
+      group.querySelector(".v2-spoke-nodes").innerHTML = spokeBends(points)
         .map(([cx, cy]) => `<circle cx="${cx}" cy="${cy}" r="3.5"></circle>`)
         .join("");
+
+      const gradient = spokes.querySelector(`#v2SpokeGradient-${name}`);
+      const [startX, startY] = points[0];
+      const [endX, endY] = points[points.length - 1];
+      gradient.setAttribute("x1", startX);
+      gradient.setAttribute("y1", startY);
+      gradient.setAttribute("x2", endX);
+      gradient.setAttribute("y2", endY);
     }
 
     const stageRect = required.stage.getBoundingClientRect();
@@ -343,9 +358,7 @@ function shellMarkup() {
     <section class="v2-map" aria-label="Artemis subsystem architecture">
       <svg class="v2-spokes" aria-hidden="true" preserveAspectRatio="none">
         <defs>
-          <marker id="v2SpokeArrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="strokeWidth">
-            <path d="M1 1 7 4 1 7z"></path>
-          </marker>
+          ${["system", "neural", "comms", "context"].map(spokeGradientMarkup).join("")}
         </defs>
         ${spokeMarkup("system", "0s")}
         ${spokeMarkup("neural", "-2s")}
@@ -398,12 +411,122 @@ function shellMarkup() {
 }
 
 function spokeMarkup(name, delay) {
-  return `<g class="v2-spoke" data-v2-spoke="${name}" style="--v2-spoke-delay:${delay}">
-    <path class="v2-spoke-base" d="M0 0" pathLength="1" marker-end="url(#v2SpokeArrow)"></path>
+  return `<g class="v2-spoke" data-v2-spoke="${name}" style="--v2-spoke-delay:${delay};--v2-spoke-paint:url(#v2SpokeGradient-${name})">
+    <path class="v2-spoke-base v2-spoke-rail v2-spoke-rail--dim" d="M0 0" pathLength="1"></path>
+    <path class="v2-spoke-base v2-spoke-rail v2-spoke-rail--bright" d="M0 0" pathLength="1"></path>
+    <path class="v2-spoke-ticks" d="M0 0"></path>
     <path class="v2-spoke-idle" d="M0 0" pathLength="1"></path>
     <path class="v2-spoke-activity" d="M0 0" pathLength="1"></path>
     <g class="v2-spoke-nodes"></g>
+    <path class="v2-spoke-junction" d="M0 0"></path>
+    <path class="v2-spoke-chevrons" d="M0 0"></path>
   </g>`;
+}
+
+function spokeGradientMarkup(name) {
+  return `<linearGradient id="v2SpokeGradient-${name}" gradientUnits="userSpaceOnUse">
+    <stop class="v2-spoke-gradient v2-spoke-gradient--hub" offset="0"></stop>
+    <stop class="v2-spoke-gradient v2-spoke-gradient--rise" offset="0.2"></stop>
+    <stop class="v2-spoke-gradient v2-spoke-gradient--full" offset="0.48"></stop>
+    <stop class="v2-spoke-gradient v2-spoke-gradient--full" offset="1"></stop>
+  </linearGradient>`;
+}
+
+function compactSpokePoints(points) {
+  const compact = [];
+  for (const point of points) {
+    const previous = compact[compact.length - 1];
+    if (!previous || Math.hypot(point[0] - previous[0], point[1] - previous[1]) > 0.5) compact.push(point);
+  }
+  return compact;
+}
+
+function spokePath(points) {
+  return points.map(([x, y], index) => `${index ? "L" : "M"}${x} ${y}`).join("");
+}
+
+function spokeDirection(from, to) {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const length = Math.hypot(dx, dy) || 1;
+  return [dx / length, dy / length, length];
+}
+
+function offsetSpokePath(points, offset) {
+  if (points.length < 2) return spokePath(points);
+  const directions = points.slice(0, -1).map((point, index) => spokeDirection(point, points[index + 1]));
+  const shifted = points.map(([x, y], index) => {
+    if (index === 0 || index === points.length - 1) {
+      const direction = directions[index === 0 ? 0 : directions.length - 1];
+      return [x - direction[1] * offset, y + direction[0] * offset];
+    }
+
+    const previous = directions[index - 1];
+    const next = directions[index];
+    const denominator = 1 + previous[0] * next[0] + previous[1] * next[1];
+    if (Math.abs(denominator) < 0.01) return [x - next[1] * offset, y + next[0] * offset];
+    const normalX = -previous[1] - next[1];
+    const normalY = previous[0] + next[0];
+    return [x + normalX * offset / denominator, y + normalY * offset / denominator];
+  });
+  return spokePath(shifted);
+}
+
+function spokeTicksPath(points) {
+  const ticks = [];
+  let tickIndex = 0;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const [dx, dy, length] = spokeDirection(points[index], points[index + 1]);
+    const normalX = -dy;
+    const normalY = dx;
+    for (let distance = 12; distance <= length - 12; distance += 24) {
+      const centerX = points[index][0] + dx * distance;
+      const centerY = points[index][1] + dy * distance;
+      const half = tickIndex % 4 === 0 ? 3.5 : 2.75;
+      ticks.push(`M${centerX - normalX * half} ${centerY - normalY * half}L${centerX + normalX * half} ${centerY + normalY * half}`);
+      tickIndex += 1;
+    }
+  }
+  return ticks.join("");
+}
+
+function spokeBends(points) {
+  return points.slice(1, -1).filter((point, index) => {
+    const previous = spokeDirection(points[index], point);
+    const next = spokeDirection(point, points[index + 2]);
+    return Math.abs(previous[0] * next[1] - previous[1] * next[0]) > 0.01;
+  });
+}
+
+function spokeJunctionPath(points) {
+  if (points.length < 2) return "";
+  const [dx, dy] = spokeDirection(points[0], points[1]);
+  const normalX = -dy;
+  const normalY = dx;
+  const centerX = points[0][0] + dx * 7;
+  const centerY = points[0][1] + dy * 7;
+  const radius = 3.75;
+  return `M${centerX + dx * radius} ${centerY + dy * radius}`
+    + `L${centerX + normalX * radius} ${centerY + normalY * radius}`
+    + `L${centerX - dx * radius} ${centerY - dy * radius}`
+    + `L${centerX - normalX * radius} ${centerY - normalY * radius}Z`;
+}
+
+function spokeChevronsPath(points) {
+  if (points.length < 2) return "";
+  const end = points[points.length - 1];
+  const [dx, dy] = spokeDirection(points[points.length - 2], end);
+  const normalX = -dy;
+  const normalY = dx;
+  return [1.5, 8].map((inset) => {
+    const tipX = end[0] - dx * inset;
+    const tipY = end[1] - dy * inset;
+    const wingX = tipX - dx * 6;
+    const wingY = tipY - dy * 6;
+    return `M${wingX + normalX * 3.25} ${wingY + normalY * 3.25}`
+      + `L${tipX} ${tipY}`
+      + `L${wingX - normalX * 3.25} ${wingY - normalY * 3.25}`;
+  }).join("");
 }
 
 function hubRingMarkup() {

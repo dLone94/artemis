@@ -672,7 +672,7 @@ body.dashboard-v2 .hud-tool-orb {
 body.dashboard-v2 .hud-tool-orb.is-active { transform: none; }
 body.dashboard-v2 .hud-tool-ring { width: clamp(34px, 3.7vw, 48px); height: clamp(34px, 3.7vw, 48px); flex-basis: clamp(34px, 3.7vw, 48px); }
 
-/* Routed SVG spokes — base route, idle heartbeat, and event burst are separate. */
+/* Routed SVG spokes — static instrument rails, idle heartbeat, and event burst are separate. */
 body.dashboard-v2 .v2-spokes {
   position: absolute;
   inset: 0;
@@ -684,7 +684,6 @@ body.dashboard-v2 .v2-spokes {
   pointer-events: none;
 }
 
-body.dashboard-v2 .v2-spokes marker path { fill: var(--v2-cyan); }
 body.dashboard-v2 .v2-spoke path,
 body.dashboard-v2 .v2-spoke circle {
   fill: none;
@@ -692,12 +691,54 @@ body.dashboard-v2 .v2-spoke circle {
   vector-effect: non-scaling-stroke;
 }
 body.dashboard-v2 .v2-spoke-base {
-  stroke-width: 1.8;
+  stroke-width: 1;
   stroke-dasharray: none;
-  opacity: 0.88;
-  filter: drop-shadow(0 0 4px rgba(103, 232, 249, 0.78));
+  stroke-linecap: square;
+  stroke-linejoin: miter;
 }
-body.dashboard-v2 .v2-spoke-nodes circle { fill: var(--v2-bg); stroke-width: 1.1; opacity: 0.9; }
+body.dashboard-v2 .v2-spoke .v2-spoke-rail {
+  stroke: var(--v2-spoke-paint);
+  vector-effect: non-scaling-stroke;
+}
+body.dashboard-v2 .v2-spoke .v2-spoke-rail--bright {
+  opacity: 0.96;
+  filter: drop-shadow(0 0 4px rgba(103, 232, 249, 0.72));
+}
+body.dashboard-v2 .v2-spoke .v2-spoke-rail--dim {
+  opacity: 0.38;
+  filter: drop-shadow(0 0 2px rgba(124, 108, 255, 0.34));
+}
+body.dashboard-v2 .v2-spoke-gradient { stop-color: var(--v2-cyan-bright); }
+body.dashboard-v2 .v2-spoke-gradient--hub { stop-opacity: 0.12; }
+body.dashboard-v2 .v2-spoke-gradient--rise { stop-opacity: 0.68; }
+body.dashboard-v2 .v2-spoke-gradient--full { stop-opacity: 1; }
+body.dashboard-v2 .v2-spoke .v2-spoke-ticks {
+  stroke: rgba(157, 244, 255, 0.58);
+  stroke-width: 0.8;
+  stroke-linecap: square;
+}
+body.dashboard-v2 .v2-spoke-nodes circle {
+  fill: var(--v2-bg);
+  stroke: var(--v2-cyan-bright);
+  stroke-width: 1;
+  opacity: 0.94;
+  filter: drop-shadow(0 0 3px rgba(103, 232, 249, 0.58));
+}
+body.dashboard-v2 .v2-spoke .v2-spoke-junction {
+  fill: var(--v2-bg);
+  stroke: var(--v2-cyan-bright);
+  stroke-width: 1;
+  opacity: 0.96;
+  filter: drop-shadow(0 0 3px rgba(103, 232, 249, 0.7));
+}
+body.dashboard-v2 .v2-spoke .v2-spoke-chevrons {
+  stroke: var(--v2-cyan-bright);
+  stroke-width: 1.1;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 3px rgba(103, 232, 249, 0.62));
+}
 body.dashboard-v2 .v2-spoke-idle,
 body.dashboard-v2 .v2-spoke-activity {
   stroke-linecap: round;
