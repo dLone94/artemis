@@ -9,6 +9,7 @@
 
 const POLL_MS = 3000;
 const HIST = 40; // samples kept per sparkline
+const REDUCED_MOTION = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 
 function el(tag, cls, html) {
   const n = document.createElement(tag);
@@ -39,6 +40,13 @@ function setNum(pn, text) {
   if (!Number.isFinite(target)) { pn.num.textContent = text; pn._val = undefined; return; }
   const suffix = String(text).replace(/^-?[\d.]+/, "");
   const from = Number.isFinite(pn._val) ? pn._val : 0;
+  if (REDUCED_MOTION) {
+    if (pn._anim) cancelAnimationFrame(pn._anim);
+    pn._anim = 0;
+    pn._val = target;
+    pn.num.textContent = Math.round(target) + suffix;
+    return;
+  }
   if (Math.abs(from - target) < 0.5 && pn._val !== undefined) {
     pn._val = target; pn.num.textContent = Math.round(target) + suffix; return;
   }

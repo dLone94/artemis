@@ -5,7 +5,7 @@
 import os from "os";
 import { createServer } from "http";
 import { createServer as createHttpsServer } from "https";
-import { promises as fs, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "fs";
+import { promises as fs, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync } from "fs";
 import { extname, join, normalize } from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
@@ -702,8 +702,7 @@ async function serveStatic(req, res, urlPath) {
     // is a changed URL — caches cannot disagree about a URL they've never seen.
     const ext = extname(filePath);
     if (ext === ".html") {
-      const fp = codeFingerprint();
-      const v = typeof fp === "string" ? fp : (fp && (fp.fingerprint || fp.hash)) || Date.now();
+      const v = publicAssetFingerprint();
       out = Buffer.from(
         body.toString("utf8").replace(/(href|src)="([^"?]+\.(?:css|js))"/g, `$1="$2?v=${v}"`)
       );
@@ -1480,6 +1479,31 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
 // refuses to attach to a server that is behind.
 const CODE_FILES = ["server.js", "meeting.js", "skills.js", "gmail.js", "toolRegistry.js", "whatsapp.js", "finance.js", "macMessages.js", "untrusted.js"];
 const PROCESS_STARTED_MS = Date.now();
+
+// Static HTML stamps must change when browser code changes, without folding
+// those live-read files into codeFingerprint() and falsely declaring the Node
+// process stale. Hash metadata for every served HTML/CSS/JS asset on demand;
+// the public tree is deliberately small and model/WASM files are excluded.
+function publicAssetFingerprint() {
+  const h = createHash("sha256");
+  const visit = (dir, prefix = "") => {
+    let names = [];
+    try { names = readdirSync(dir).sort(); } catch (e) { return; }
+    for (const name of names) {
+      const rel = prefix ? prefix + "/" + name : name;
+      const full = join(dir, name);
+      let st;
+      try { st = statSync(full); } catch (e) { continue; }
+      if (st.isDirectory()) {
+        visit(full, rel);
+      } else if (/\.(?:html|css|js)$/i.test(name)) {
+        h.update(rel + ":" + st.size + ":" + Math.floor(st.mtimeMs));
+      }
+    }
+  };
+  visit(PUBLIC_DIR);
+  return h.digest("hex").slice(0, 12);
+}
 
 // Newest mtime among the code files, read LIVE on every call.
 //
@@ -2442,6 +2466,11 @@ async function handleRequest(req, res) {
     const key = url.searchParams.get("key");
     if (key && tokenOk(key)) {
       authOk(ip);
+      // Strip only the secret while preserving safe navigation flags such as
+      // ?v1. Dropping the whole query makes first-load layout escape hatches
+      // unreachable for every remote client that must authenticate here.
+      url.searchParams.delete("key");
+      const redirectLocation = url.pathname + (url.searchParams.size ? `?${url.searchParams}` : "");
       res.writeHead(302, {
         "Set-Cookie":
           "artemis_auth=" + encodeURIComponent(ACCESS_TOKEN) +
@@ -2451,7 +2480,7 @@ async function handleRequest(req, res) {
           "; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000" + (httpsActive ? "; Secure" : ""),
         // token arrived as ?key= — don't let it ride the Referer to any outbound link
         "Referrer-Policy": "no-referrer",
-        Location: url.pathname
+        Location: redirectLocation
       });
       res.end();
       return;

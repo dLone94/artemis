@@ -929,6 +929,9 @@ async function ask(text) {
         } else if (event === "tool") {
           hud("tool", data);
           orb.toolEvent(data);
+          // The dashboard reuses the exact validated SSE lifecycle that drives
+          // the orb; it never opens a second stream or guesses that a tool ran.
+          window.dispatchEvent(new CustomEvent("artemis-tool", { detail: data }));
         } else if (event === "mail_taint") {
           // Monotonic within the turn: provenance must survive even if the
           // stream drops before terminal metadata.

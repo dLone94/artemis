@@ -749,8 +749,14 @@ export class VoiceOrb {
   }
 
   resize() {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+    // Dashboard v2 gives the globe a real square hub. Opt into that host's
+    // coordinate space so the canvas stays circular and moon hit-testing uses
+    // the same pixels; every other page keeps the original viewport scene.
+    const hostRect = document.body?.classList.contains("dashboard-v2")
+      ? this.container?.getBoundingClientRect?.()
+      : null;
+    const width = hostRect && hostRect.width > 1 ? Math.round(hostRect.width) : window.innerWidth;
+    const height = hostRect && hostRect.height > 1 ? Math.round(hostRect.height) : window.innerHeight;
     this.W = width;
     this.H = height;
     this.cv.width = Math.max(1, width * this.dpr);

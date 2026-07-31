@@ -11,10 +11,21 @@
   <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="cockpit.css" />
   <link rel="stylesheet" href="ops.css" />
+  <link rel="stylesheet" href="ops2.css" />
   <link rel="stylesheet" href="about-ops.css" />
   <!-- TODO(webgl-hero): optional future upgrade — see about.html for details -->
 </head>
-<body class="page cockpit" data-ai-state="idle">
+<body class="page cockpit dashboard-v2" data-ai-state="idle">
+  <script>
+    (() => {
+      const params = new URLSearchParams(window.location.search);
+      let stored = "";
+      try { stored = window.localStorage.getItem("artemisDashboardLayout") || ""; } catch (e) {}
+      const enabled = params.has("v2") || (!params.has("v1") && stored !== "v1");
+      document.body.classList.toggle("dashboard-v2", enabled);
+      document.documentElement.dataset.dashboardLayout = enabled ? "v2" : "v1";
+    })();
+  </script>
   <!-- the audio-reactive orb fills the stage behind the HUD -->
   <!-- deep-space backdrop: nebulae + aurora drift + vignette (pure CSS) -->
   <div class="hud-space" aria-hidden="true"><i class="hud-aurora"></i></div>
@@ -162,6 +173,7 @@
   </div>
 
   <script src="celebration.js"></script>
+  <script type="module" src="dashboardV2.js"></script>
   <script type="module" src="main.js"></script>
   <script type="module" src="cockpit.js"></script>
   <script type="module" src="aboutPage.js"></script>
