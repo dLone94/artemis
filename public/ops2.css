@@ -1214,3 +1214,17 @@ body.dashboard-v2 .v2-panel.v2-flicker::after { animation: v2-bracket-flicker 36
   body.dashboard-v2 .v2-skill:hover,
   body.dashboard-v2 .v2-skill:focus-visible { transform: none; }
 }
+
+/* ---- calm pass: the background should breathe, not crawl ----
+   The dot-grid drift dragged its fade mask along and snapped back at the
+   loop seam every 60s; the spoke heartbeat was a perpetual crawling dash.
+   Grid goes static; heartbeats become rare, soft, and slow. */
+body.dashboard-v2::after { animation: none; }
+body.dashboard-v2 .v2-spoke-idle,
+body.dashboard-v2 .v2-spoke [class*="heartbeat"] { animation-duration: 16s !important; }
+@keyframes v2-spoke-heartbeat {
+  0% { stroke-dashoffset: 1; opacity: 0; }
+  6% { opacity: 0.5; }
+  12% { stroke-dashoffset: 0.55; opacity: 0; }
+  100% { stroke-dashoffset: 0.55; opacity: 0; }
+}
