@@ -961,7 +961,7 @@ import { createRingRow } from "./hudRing.js";
   const row = createRingRow([
     { key: "cpu",     label: "CPU",    size: 64, max: 100, unit: "%" },
     { key: "mem",     label: "MEM",    size: 64, max: 100, unit: "%" },
-    { key: "budget",  label: "TOKENS", size: 64, max: 100, unit: "%" },
+    { key: "budget",  label: "TOKENS", size: 64, max: 100, unit: "%", tone: "#a78bfa" },
     { key: "latency", label: "TTFW",   size: 64, max: 3000, unit: "ms" },
     { key: "due",     label: "DUE",    size: 64 }
   ]);
@@ -975,6 +975,9 @@ import { createRingRow } from "./hudRing.js";
     try {
       const r = await fetch("/api/telemetry", { cache: "no-store" });
       if (r.ok) t = await r.json();
+      window.__telemetry = t;
+      window.__telemetryShared = true;
+      window.dispatchEvent(new CustomEvent("artemis-telemetry", { detail: t }));
     } catch (e) { /* keep the last values and dim, rather than zeroing them */ }
     if (!t) { for (const k in g) g[k].set({ state: "warn" }); return; }
 

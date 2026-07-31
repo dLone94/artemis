@@ -7,9 +7,14 @@
 
 /* ---- the room: navy radial + 4% dot grid ---- */
 body.cockpit {
-  background:
-    radial-gradient(circle 2px at 2px 2px, rgba(80, 160, 255, 0.04) 1px, transparent 1.6px) 0 0 / 26px 26px,
-    radial-gradient(ellipse 120% 90% at 50% 30%, #0a1230 0%, #050a1a 70%, #030610 100%);
+  background: radial-gradient(ellipse 120% 90% at 50% 42%, #0a1230 0%, #060b1c 55%, #04070f 100%);
+}
+/* dot grid, fading toward the edges */
+body.cockpit::after {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(circle 1.5px at 2px 2px, rgba(103, 232, 249, 0.05) 1px, transparent 1.8px) 0 0 / 28px 28px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 40%, transparent 100%);
 }
 .hud-space { display: none; }             /* replaced by the navy room */
 .cockpit::before { opacity: 0.4; }        /* soften the old measurement grid */
@@ -96,22 +101,22 @@ body.hud-in .hud-panel.hud-left, body.hud-in .hud-panel.hud-right { transform: n
 .hud-panel .hud-log, .hud-panel .hud-gauges, .hud-panel .hud-telemetry,
 .hud-card, .ops-panel {
   background: rgba(10, 20, 45, 0.55);
-  border: 1px solid rgba(56, 189, 248, 0.35);
+  border: 1px solid rgba(56, 189, 248, 0.4);
   border-radius: 10px;
   clip-path: none;
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  box-shadow: 0 0 12px rgba(34, 211, 238, 0.12), inset 0 0 24px rgba(14, 50, 84, 0.2);
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.12), inset 0 0 30px rgba(34, 211, 238, 0.04);
 }
 .hud-panel-title, .hud-card-title, .ops-label {
   font-family: "Rajdhani", var(--font-mono);
   font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase;
-  color: #22d3ee; text-shadow: 0 0 10px rgba(34, 211, 238, 0.45);
+  color: rgba(103, 232, 249, 0.85); text-shadow: 0 0 10px rgba(34, 211, 238, 0.5);
   background: none; border: none; clip-path: none; padding: 0 0 6px;
 }
 .ops-num {
   font-family: "Orbitron", "Rajdhani", var(--font-mono);
   font-size: 32px; font-weight: 700;
-  color: #e8fbff; text-shadow: 0 0 14px rgba(34, 211, 238, 0.5);
+  color: #d9f6ff; text-shadow: 0 0 16px rgba(34, 211, 238, 0.5);
 }
 .ops-delta { color: #34d399; font-family: "Rajdhani"; font-size: 12px; letter-spacing: 0.08em; }
 
@@ -132,4 +137,58 @@ body.hud-in .hud-panel.hud-left, body.hud-in .hud-panel.hud-right { transform: n
   .ops-t1, .ops-t4, .ops-b3, .ops-b4 { display: none; }
   .ops-t2 { grid-column: 1 / 7; }
   .ops-t3 { grid-column: 7 / 13; }
+}
+
+
+/* ---- polish pass (user punch list) ---- */
+/* tighter panels: content fills the slab */
+.ops-panel { padding: 8px 13px 8px; }
+.ops-sub { margin-bottom: 2px; }
+.ops-chart { height: 56px; }
+
+/* violet secondary, ~10% of the screen */
+.brand-dot { background: #a78bfa !important; box-shadow: 0 0 10px rgba(167, 139, 250, 0.8) !important; }
+#followUpToggle { border-color: rgba(167, 139, 250, 0.65) !important; color: #c4b5fd !important;
+  box-shadow: 0 0 14px rgba(167, 139, 250, 0.25); }
+
+/* corner brackets on EVERY panel (cards included) */
+.hud-card { position: relative; }
+.hud-card::before, .ops-panel .ops-scan::before {
+  content: ""; position: absolute; top: -1px; left: -1px; width: 10px; height: 10px;
+  border-top: 1px solid rgba(34, 211, 238, 0.5); border-left: 1px solid rgba(34, 211, 238, 0.5);
+  border-radius: 10px 0 0 0; pointer-events: none;
+}
+.hud-card::after {
+  content: ""; position: absolute; bottom: -1px; right: -1px; width: 10px; height: 10px;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.5); border-right: 1px solid rgba(34, 211, 238, 0.5);
+  border-radius: 0 0 10px 0; pointer-events: none; display: block; background: none;
+}
+
+/* the globe: brighter, wordmark glow via compositor filter */
+.scene-stage canvas { filter: brightness(1.5) saturate(1.12); }
+/* platform ring: brighter, plus a light cone up to the globe */
+.scene-stage::before {
+  border-color: rgba(103, 232, 249, 0.75);
+  box-shadow: 0 0 34px rgba(34, 211, 238, 0.45), inset 0 0 36px rgba(34, 211, 238, 0.2);
+}
+.scene-stage::after {
+  bottom: 7%;
+  height: 55%;
+  width: 44%;
+  background: linear-gradient(180deg, transparent 0%, rgba(34, 211, 238, 0.04) 55%, rgba(34, 211, 238, 0.14) 100%);
+  clip-path: polygon(34% 0, 66% 0, 100% 100%, 0 100%);
+  filter: none;
+}
+
+/* whole-screen scan pulse every ~10s at 3% */
+@keyframes ops-screen-scan { 0% { transform: translateY(-102%); } 22% { transform: translateY(102%); } 100% { transform: translateY(102%); } }
+.hud-frame::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 100%;
+  background: linear-gradient(180deg, transparent 46%, rgba(103, 232, 249, 0.03) 50%, transparent 54%);
+  animation: ops-screen-scan 10s linear infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-frame::after { animation: none; }
+  .scene-stage canvas { filter: brightness(1.3); }
 }
