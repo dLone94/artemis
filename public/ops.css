@@ -58,7 +58,7 @@ body.hud-in .hud-panel.hud-left, body.hud-in .hud-panel.hud-right { transform: n
 .scene-stage { position: relative; inset: auto; grid-column: 4 / 10; grid-row: 3; min-height: 0; z-index: 2; }
 .hud-particles, .hud-ring { display: none; }  /* the reference is clean around the globe */
 .hud-pedestal, .hud-beam { display: none; }   /* replaced by the platform ring below */
-.scene-stage::after {                          /* hologram projector base */
+.scene-stage-retired-after {                          /* hologram projector base */
   content: ""; position: absolute; left: 50%; bottom: 4%;
   width: 72%; height: 14%;
   transform: translateX(-50%);
@@ -66,7 +66,7 @@ body.hud-in .hud-panel.hud-left, body.hud-in .hud-panel.hud-right { transform: n
   filter: blur(2px);
   pointer-events: none;
 }
-.scene-stage::before {                         /* platform ring */
+.scene-stage-retired-before {                         /* platform ring */
   content: ""; position: absolute; left: 50%; bottom: 6%;
   width: 56%; height: 9%;
   transform: translateX(-50%);
@@ -167,11 +167,11 @@ body.hud-in .hud-panel.hud-left, body.hud-in .hud-panel.hud-right { transform: n
 /* the globe: brighter, wordmark glow via compositor filter */
 .scene-stage canvas { filter: brightness(1.5) saturate(1.12); }
 /* platform ring: brighter, plus a light cone up to the globe */
-.scene-stage::before {
+.scene-stage-retired-before2 {
   border-color: rgba(103, 232, 249, 0.75);
   box-shadow: 0 0 34px rgba(34, 211, 238, 0.45), inset 0 0 36px rgba(34, 211, 238, 0.2);
 }
-.scene-stage::after {
+.scene-stage-retired-after2 {
   bottom: 7%;
   height: 55%;
   width: 44%;

@@ -572,11 +572,74 @@ export class VoiceOrb {
     this._coreGlow.height = 192;
     const glowCtx = this._coreGlow.getContext("2d");
     const glow = glowCtx.createRadialGradient(96, 96, 0, 96, 96, 96);
-    glow.addColorStop(0, PAL.Hl + "0.18)");
-    glow.addColorStop(0.28, PAL.Hl + "0.08)");
-    glow.addColorStop(1, PAL.Hl + "0)");
+    glow.addColorStop(0, "rgba(207,233,255,0.9)");
+    glow.addColorStop(0.4, "rgba(59,130,246,0.5)");
+    glow.addColorStop(0.75, "rgba(124,92,255,0.22)");
+    glow.addColorStop(1, "rgba(124,92,255,0)");
     glowCtx.fillStyle = glow;
     glowCtx.fillRect(0, 0, 192, 192);
+
+    // ---- Layer 3: plexus network — clustered nodes + kNN web ----
+    const PLEX_N = 100;
+    this._plexBase = new Float32Array(PLEX_N * 3);
+    this._plexSize = new Float32Array(PLEX_N);
+    this._plexSX = new Float32Array(PLEX_N);
+    this._plexSY = new Float32Array(PLEX_N);
+    this._plexDepth = new Float32Array(PLEX_N);
+    {
+      const centers = [];
+      for (let c = 0; c < 4; c++) {
+        const th = hashUnit(c * 131 + 7) * TAU, ph = Math.acos(2 * hashUnit(c * 197 + 3) - 1);
+        centers.push([Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th)]);
+      }
+      for (let i = 0; i < PLEX_N; i++) {
+        let x, y, z;
+        if (i < 72) { // clustered: gaussian-ish spread around a center
+          const c = centers[i % 4];
+          x = c[0] + (hashUnit(i * 3 + 11) - 0.5) * 0.62;
+          y = c[1] + (hashUnit(i * 5 + 29) - 0.5) * 0.62;
+          z = c[2] + (hashUnit(i * 7 + 41) - 0.5) * 0.62;
+        } else {      // sparse elsewhere
+          const th = hashUnit(i * 11 + 5) * TAU, ph = Math.acos(2 * hashUnit(i * 13 + 17) - 1);
+          x = Math.sin(ph) * Math.cos(th); y = Math.cos(ph); z = Math.sin(ph) * Math.sin(th);
+        }
+        const n = Math.hypot(x, y, z) || 1;
+        this._plexBase[i * 3] = x / n; this._plexBase[i * 3 + 1] = y / n; this._plexBase[i * 3 + 2] = z / n;
+        this._plexSize[i] = 1 + hashUnit(i * 17 + 23) * 2;
+      }
+      // kNN edges: 2-4 nearest neighbors each, deduplicated
+      const edges = new Set();
+      for (let i = 0; i < PLEX_N; i++) {
+        const dists = [];
+        for (let j = 0; j < PLEX_N; j++) {
+          if (j === i) continue;
+          const dx = this._plexBase[i * 3] - this._plexBase[j * 3];
+          const dy = this._plexBase[i * 3 + 1] - this._plexBase[j * 3 + 1];
+          const dz = this._plexBase[i * 3 + 2] - this._plexBase[j * 3 + 2];
+          dists.push([dx * dx + dy * dy + dz * dz, j]);
+        }
+        dists.sort((a, b) => a[0] - b[0]);
+        const k = 2 + Math.floor(hashUnit(i * 19 + 31) * 3);
+        for (let e = 0; e < k; e++) edges.add(i < dists[e][1] ? i * 1000 + dists[e][1] : dists[e][1] * 1000 + i);
+      }
+      this._plexEdges = Int32Array.from(edges);
+      this._plexAdj = Array.from({ length: PLEX_N }, () => []);
+      for (const key of this._plexEdges) {
+        const a = Math.floor(key / 1000), b = key % 1000;
+        this._plexAdj[a].push(b); this._plexAdj[b].push(a);
+      }
+      this._flareNode = -1; this._flareAt = 0; this._nextFlareAt = 2;
+    }
+    // ---- Layer 4: ambient rising particles ----
+    const AMB_N = 26;
+    this._ambPhase = new Float32Array(AMB_N);
+    this._ambAngle = new Float32Array(AMB_N);
+    this._ambSpeed = new Float32Array(AMB_N);
+    for (let i = 0; i < AMB_N; i++) {
+      this._ambPhase[i] = hashUnit(i * 23 + 3);
+      this._ambAngle[i] = hashUnit(i * 29 + 9) * TAU;
+      this._ambSpeed[i] = 0.05 + hashUnit(i * 31 + 13) * 0.05;
+    }
 
     // Round-two bloom and atmosphere assets. Every gradient is rasterized once
     // here; the frame loop only scales cached canvases with drawImage().
@@ -1184,6 +1247,8 @@ export class VoiceOrb {
     const yawSin = Math.sin(yaw);
     const pitchCos = Math.cos(pitch);
     const pitchSin = Math.sin(pitch);
+    this._fYawCos = yawCos; this._fYawSin = yawSin;
+    this._fPitchCos = pitchCos; this._fPitchSin = pitchSin;
     const swirlYaw = this._cloudYaw;
     const swirlPitch = Math.sin(this._cloudYaw * 0.65) * 0.12;
     const swirlYawCos = Math.cos(swirlYaw);
@@ -1315,7 +1380,7 @@ export class VoiceOrb {
         0.78 + 0.22 * Math.sin(time * 1.35 + this._dotTwinkle[i]);
       // ~15% hero dots at full intensity give the sphere depth; the rest
       // stay dimmer so it reads as a body, not an even haze
-      const hero = hashUnit(i + 7717) < 0.15 ? 1.45 : 0.85;
+      const hero = (hashUnit(i + 7717) < 0.15 ? 1.45 : 0.85) * 0.55;
       const dotAlpha = Math.min(
         1,
         (0.1 + depthLight * 0.82) *
@@ -1583,6 +1648,7 @@ export class VoiceOrb {
     ctx.globalCompositeOperation = "lighter";
 
     this._drawNebula(time, silhouetteRadius);
+    this._drawProjectorBase(time, silhouetteRadius);
     this._drawLimb(silhouetteRadius);
     this._drawOrbitPass(false);
     this._drawMoonTailPass(false);
@@ -1594,9 +1660,10 @@ export class VoiceOrb {
     this._drawDataArcPass(false);
     this._drawScanPass(false);
 
-    const glowSize = silhouetteRadius * 0.9;
+    const corePulse = this.reduced ? 1 : 1 + 0.06 * (0.5 + 0.5 * Math.sin(time * (TAU / 5)));
+    const glowSize = silhouetteRadius * 0.7 * corePulse;
     ctx.globalAlpha =
-      hudAlpha * (0.48 + this._listeningMix * 0.13 + amp * 0.08);
+      hudAlpha * (0.75 + this._listeningMix * 0.13 + amp * 0.1);
     ctx.drawImage(
       this._coreGlow,
       -glowSize * 0.5,
@@ -1612,6 +1679,9 @@ export class VoiceOrb {
     ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = hudAlpha;
     this._drawWirePass(true);
+    this._drawLatLongWires(silhouetteRadius);
+    this._drawPlexus(time, silhouetteRadius);
+    this._drawAmbientRise(time, silhouetteRadius);
     this._drawDotGlowPass(true);
     this._drawDotPass(true);
     this._drawLightPacketPass(true);
@@ -2255,6 +2325,145 @@ export class VoiceOrb {
   // Idle tethers: every labeled node stays visibly attached to the sphere —
   // a 1px curved line plus a small bright pulse traveling node→sphere every
   // 4-6s, staggered per node so the sky never beats in unison.
+
+  // Layer 2: parametric lat/long wireframe — 1px cyan, brighter on the rim.
+  _drawLatLongWires(R) {
+    const ctx = this.ctx;
+    const yc = this._fYawCos, ys = this._fYawSin, pc = this._fPitchCos, ps = this._fPitchSin;
+    ctx.lineWidth = 1;
+    const seg = 36;
+    const drawRing = (fn) => {
+      let prev = null;
+      for (let k = 0; k <= seg; k++) {
+        const [x, y, z] = fn(k / seg);
+        const cx = x * yc + z * ys, cz = -x * ys + z * yc;
+        const cy = y * pc - cz * ps, depth = y * ps + cz * pc;
+        const persp = CAM_DISTANCE / (CAM_DISTANCE - depth);
+        const sx = cx * R * persp, sy = cy * R * persp;
+        if (prev) {
+          const rim = 1 - Math.min(1, Math.abs((prev[2] + depth) / 2) / 0.9);
+          ctx.strokeStyle = "rgba(34,211,238," + (0.2 + 0.15 * rim).toFixed(3) + ")";
+          ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(sx, sy); ctx.stroke();
+        }
+        prev = [sx, sy, depth];
+      }
+    };
+    for (let li = 1; li < 6; li++) {
+      const lat = (li / 6 - 0.5) * Math.PI;
+      const cl = Math.cos(lat), sl = Math.sin(lat);
+      drawRing((u) => [Math.cos(u * TAU) * cl, sl, Math.sin(u * TAU) * cl]);
+    }
+    for (let mi = 0; mi < 8; mi++) {
+      const lon = (mi / 8) * Math.PI;
+      const co = Math.cos(lon), so = Math.sin(lon);
+      drawRing((u) => {
+        const a = u * TAU;
+        const r2 = Math.cos(a), yy = Math.sin(a);
+        return [r2 * co, yy, r2 * so];
+      });
+    }
+  }
+
+  // Layer 3: the plexus — clustered node web with propagating flares.
+  _drawPlexus(time, R) {
+    const ctx = this.ctx;
+    const yc = this._fYawCos, ys = this._fYawSin, pc = this._fPitchCos, ps = this._fPitchSin;
+    const N = this._plexSize.length;
+    for (let i = 0; i < N; i++) {
+      const x = this._plexBase[i * 3], y = this._plexBase[i * 3 + 1], z = this._plexBase[i * 3 + 2];
+      const cx = x * yc + z * ys, cz = -x * ys + z * yc;
+      const cy = y * pc - cz * ps, depth = y * ps + cz * pc;
+      const persp = CAM_DISTANCE / (CAM_DISTANCE - depth);
+      this._plexSX[i] = cx * R * persp;
+      this._plexSY[i] = cy * R * persp;
+      this._plexDepth[i] = depth;
+    }
+    // flare scheduling: one random node every 2-4s, 300ms propagation
+    if (!this.reduced && time >= this._nextFlareAt) {
+      this._flareNode = Math.floor(hashUnit(Math.floor(time * 7) + 917) * N);
+      this._flareAt = time;
+      this._nextFlareAt = time + 2 + hashUnit(Math.floor(time * 13) + 311) * 2;
+    }
+    const flareK = this._flareNode >= 0 ? Math.max(0, 1 - (time - this._flareAt) / 0.3) : 0;
+    ctx.lineWidth = 1;
+    for (const key of this._plexEdges) {
+      const a = Math.floor(key / 1000), b = key % 1000;
+      const front = (this._plexDepth[a] + this._plexDepth[b]) / 2 > 0;
+      let alpha = front ? 0.35 : 0.14;
+      if (flareK > 0 && (a === this._flareNode || b === this._flareNode)) alpha = Math.min(1, alpha + flareK * 0.65);
+      ctx.strokeStyle = "rgba(34,211,238," + alpha.toFixed(3) + ")";
+      ctx.beginPath();
+      ctx.moveTo(this._plexSX[a], this._plexSY[a]);
+      ctx.lineTo(this._plexSX[b], this._plexSY[b]);
+      ctx.stroke();
+    }
+    for (let i = 0; i < N; i++) {
+      const front = this._plexDepth[i] > 0;
+      const size = this._plexSize[i] * (front ? 1 : 0.7);
+      let alpha = front ? 0.9 : 0.4;
+      if (flareK > 0 && (i === this._flareNode || this._plexAdj[this._flareNode].includes(i)))
+        alpha = Math.min(1, alpha + flareK);
+      if (size > 2.2) {
+        const g = size * 7;
+        ctx.globalAlpha = this._sceneAlpha * alpha * 0.5;
+        ctx.drawImage(this._highlightGlow, this._plexSX[i] - g / 2, this._plexSY[i] - g / 2, g, g);
+        ctx.globalAlpha = this._sceneAlpha;
+      }
+      ctx.fillStyle = "rgba(214,248,255," + alpha.toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(this._plexSX[i], this._plexSY[i], size * 0.75, 0, TAU); ctx.fill();
+    }
+  }
+
+  // Layer 4: ambient particles rising from the base ring, despawning above.
+  _drawAmbientRise(time, R) {
+    if (this.reduced) return;
+    const ctx = this.ctx;
+    for (let i = 0; i < this._ambPhase.length; i++) {
+      const k = (this._ambPhase[i] + time * this._ambSpeed[i]) % 1;
+      const y = R * 1.05 - k * R * 2.3;
+      const sway = Math.sin(time * 0.6 + i) * R * 0.08;
+      const x = Math.cos(this._ambAngle[i]) * R * (0.55 + 0.35 * Math.sin(i)) + sway;
+      const fade = Math.sin(k * Math.PI);
+      ctx.fillStyle = "rgba(34,211,238," + (0.3 * fade).toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(x, y, 1.4, 0, TAU); ctx.fill();
+    }
+  }
+
+  // The projector: floor glow, three concentric rings, and the light beam.
+  _drawProjectorBase(time, R) {
+    const ctx = this.ctx;
+    const baseY = R * 1.18;
+    const pulse = this.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(time * (TAU / 5) + Math.PI);
+    // floor glow
+    const fg = ctx.createRadialGradient(0, baseY, 0, 0, baseY, R * 1.1);
+    fg.addColorStop(0, "rgba(34,211,238,0.1)");
+    fg.addColorStop(1, "rgba(34,211,238,0)");
+    ctx.fillStyle = fg;
+    ctx.save(); ctx.translate(0, baseY); ctx.scale(1, 0.28); ctx.translate(0, -baseY);
+    ctx.beginPath(); ctx.arc(0, baseY, R * 1.1, 0, TAU); ctx.fill();
+    ctx.restore();
+    // three rings, brightest inner, inner one pulsing off the core's beat
+    const rings = [
+      [R * 0.55, 0.55 + 0.25 * pulse],
+      [R * 0.78, 0.3],
+      [R * 1.0, 0.16]
+    ];
+    ctx.lineWidth = 1.2;
+    for (const [rr, a] of rings) {
+      ctx.strokeStyle = "rgba(103,232,249," + a.toFixed(3) + ")";
+      ctx.beginPath(); ctx.ellipse(0, baseY, rr, rr * 0.24, 0, 0, TAU); ctx.stroke();
+    }
+    // vertical beam: base ring up to the globe underside
+    const beam = ctx.createLinearGradient(0, baseY, 0, R * 0.2);
+    beam.addColorStop(0, "rgba(34,211,238,0.18)");
+    beam.addColorStop(1, "rgba(34,211,238,0)");
+    ctx.fillStyle = beam;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.5, baseY); ctx.lineTo(R * 0.5, baseY);
+    ctx.lineTo(R * 0.28, R * 0.2); ctx.lineTo(-R * 0.28, R * 0.2);
+    ctx.closePath(); ctx.fill();
+  }
+
   _drawMoonTethers(time, silhouetteRadius) {
     const ctx = this.ctx;
     ctx.globalCompositeOperation = "lighter";
