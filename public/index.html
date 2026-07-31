@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="cockpit.css" />
   <link rel="stylesheet" href="ops.css" />
+  <link rel="stylesheet" href="about-ops.css" />
   <!-- TODO(webgl-hero): optional future upgrade — see about.html for details -->
 </head>
 <body class="page cockpit" data-ai-state="idle">
@@ -72,7 +73,7 @@
       <span class="hud-clock" id="hudClock">--:--:--</span>
       <nav class="hud-links" aria-label="Pages">
         <a href="brain.html">BRAIN</a>
-        <a href="about.html">ABOUT</a>
+        <a id="aboutToggle" href="#about" aria-controls="aboutView" aria-expanded="false">ABOUT</a>
       </nav>
     </div>
   </header>
@@ -163,5 +164,6 @@
   <script src="celebration.js"></script>
   <script type="module" src="main.js"></script>
   <script type="module" src="cockpit.js"></script>
+  <script type="module" src="aboutPage.js"></script>
 </body>
 </html>
