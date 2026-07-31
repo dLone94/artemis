@@ -55,54 +55,57 @@ const SOLID_LINE = Object.freeze([]);
 // represented explicitly. It is decoded once per orb; the frame loop never
 // performs a mask lookup.
 const EARTH_MASK_HEX = Object.freeze([
+  // Rasterized from Natural Earth 110m land polygons (equirectangular,
+  // row 0 = 90N, col 0 = 180W, 2x2 supersampled) — real coastlines, not
+  // hand-authored approximations.
   "000000000000000000000000",
-  "000000001c00000000000000",
-  "00000000ff80000000000000",
-  "00000003fc00000000000000",
-  "06000007f00000001fff8000",
-  "fffff80fe00007cffffffc00",
-  "ffffffefc0780fffffffffe0",
-  "fffffc1f00001bffffffffff",
-  "fe1ff80f000393ffffffffff",
-  "f007f81f8007f3ffffffffff",
-  "0003fe7f8003ffffffffff03",
-  "0001ff1f0001ffbffffffc00",
-  "0001fe1800061f1bffffe200",
-  "0001fff00000177bfff0cc00",
-  "0000ffe0000e00ffffe05800",
-  "00007fe0000ffc7fffe03000",
-  "00003f00000ffff9ffc02000",
-  "00000c00000fff997f802000",
-  "00000400001fff9e3e03e000",
-  "00000100001fff9c1e07c000",
-  "000000c0000fffa01c0f8000",
-  "0000003c000ffff80c0f8000",
-  "0000001f8007fff8045f0000",
-  "0000001fe007fff0003f0000",
-  "0000003ff003fff0003f9c00",
-  "0000001ffc03ffe0001f1f00",
-  "0000001ffc01ffe000000100",
-  "0000001ffe01ffe80000f200",
-  "0000001ffc00ffcc0001f300",
-  "0000000ff8007f880003ff00",
-  "0000000ff0003f880003ff80",
-  "00000007f0003f000001ff80",
-  "00000007e0001e000001ff00",
-  "00000007c000000000003e08",
-  "00000007c000000000000004",
-  "0000000f8000000000000200",
-  "0000000f8000000000000000",
-  "000000070000000000000000",
-  "000000060000000000000000",
+  "000000000780000000000000",
+  "000003fffff81e0000600000",
+  "00007fe7ffe00e00c07e0c00",
+  "0003f7f07fe000033fffe700",
+  "9ffffbfc7f800ff3ffffffff",
+  "ffffffdf3e301fffffffffff",
+  "0fffff1c38007fffffffffff",
+  "061fff1f00037ffffffffcf0",
+  "080fffdf80077ffffffffc60",
+  "0003ffff8003fffffffffe40",
+  "0001ffffc001fffffffff800",
+  "0001fffe0007ff3ffffff600",
+  "0001fff800072fffffffe400",
+  "0001fff00003e1fffffffc00",
+  "0000ffe00007ffffffffa000",
+  "00007e20000fffffffff8000",
+  "00003c00001fffffffff8000",
+  "00000e98001fffff3ffc0000",
+  "00000780001ffffe1c788000",
+  "000001c0001ffff80c38c000",
+  "0000007f000ffffc08294000",
+  "0000001fc007fff804734000",
+  "0000001fe0003ff80037e000",
+  "0000003ff8003fe000379c80",
+  "0000003ffe001fe000188f80",
+  "0000001ffe001fe00002c500",
+  "0000001ffc001fe400007a00",
+  "0000000ffc001ffc0000fe00",
+  "00000007fc001fd80003ff08",
+  "00000007f0000fd80003ff80",
+  "00000007e0000f800003ff80",
+  "00000007e0000f000001ff80",
+  "0000000fc000040000010f00",
+  "0000000f8000000000000203",
+  "0000000e0000000000000106",
+  "0000000e000000000000000c",
+  "0000000c8000000000000000",
+  "0000000c0000000000000000",
   "000000000000000000000000",
   "000000000000000000000000",
-  "000000000000000000000000",
-  "0000000000007c1fff800000",
-  "1fc03fffffffffffffff83f8",
+  "00000003000000070016b800",
+  "0000000700003dffffffffe0",
+  "00004fff000ffffffffffffc",
+  "03fffffc01fffffffffffff0",
+  "03fffffe3fffffffffffffe0",
   "ffffffffffffffffffffffff",
   "ffffffffffffffffffffffff",
-  "ffffffffffffffffffffffff",
-  "ffffffffffffffffffffffff"
 ]);
 
 // lon, lat, longitudinal spread, latitudinal spread. Every plexus node is
@@ -431,7 +434,7 @@ export class VoiceOrb {
     this._listeningMix = 0;
     this._thinkingMix = 0;
     this._speakingMix = 0;
-    this._globeYaw = 0;
+    this._globeYaw = 0.78; // boot facing ~15E — Africa/Europe toward camera
     this._cloudYaw = 0;
     this._reformStart = -1;
     this._reformStrength = 0;
@@ -523,7 +526,7 @@ export class VoiceOrb {
         : 0.055;
       this._dotIntensity[dot] = surface === 2
         ? 1.12 + city * 0.1
-        : surface === 1 ? 0.66 + city * 0.34 : 0.2;
+        : surface === 1 ? 0.7 + city * 0.3 : 0.09;
       this._dotToneBase[dot] = city
         ? 0
         : surface === 2
