@@ -526,7 +526,7 @@ export class VoiceOrb {
         : 0.055;
       this._dotIntensity[dot] = surface === 2
         ? 1.12 + city * 0.1
-        : surface === 1 ? 0.7 + city * 0.3 : 0.09;
+        : surface === 1 ? 0.85 + city * 0.25 : 0;
       this._dotToneBase[dot] = city
         ? 0
         : surface === 2
@@ -2011,12 +2011,9 @@ export class VoiceOrb {
     this._drawOrbitPass(false);
     this._drawMoonTailPass(false);
     this._drawMoonLightPass(false, time, silhouetteRadius);
-    this._drawCagePass(false);
-    this._drawDotGlowPass(false);
-    this._drawDotPass(false);
-    this._drawLightPacketPass(false);
-    this._drawDataArcPass(false);
-    this._drawScanPass(false);
+    // SOLID BODY: the planet occludes its far side and the room behind it.
+    // A transparent dot-cloud has no shape; a body does.
+    this._drawSolidBody(silhouetteRadius);
 
     const corePulse = this.reduced ? 1 : 1 + 0.06 * (0.5 + 0.5 * Math.sin(time * (TAU / 5)));
     const glowSize = silhouetteRadius * 0.64 * corePulse;
@@ -2808,6 +2805,33 @@ export class VoiceOrb {
       R * 1.24,
       baseY - R * 0.55
     );
+  }
+
+
+  // Opaque planet body: dark navy disc with spherical edge shading, then a
+  // crisp glowing rim and a soft atmosphere annulus. Drawn source-over so it
+  // occludes back-hemisphere content and the room behind the globe.
+  _drawSolidBody(R) {
+    const ctx = this.ctx;
+    ctx.globalCompositeOperation = "source-over";
+    const body = ctx.createRadialGradient(-R * 0.25, -R * 0.3, R * 0.1, 0, 0, R);
+    body.addColorStop(0, "rgba(16,34,58,0.99)");
+    body.addColorStop(0.62, "rgba(9,20,38,0.99)");
+    body.addColorStop(0.92, "rgba(5,12,26,0.99)");
+    body.addColorStop(1, "rgba(10,26,46,0.99)");
+    ctx.fillStyle = body;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = "rgba(120,220,255,0.55)";
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = "rgba(34,211,238,0.9)"; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.stroke();
+    ctx.shadowBlur = 0;
+    const atmo = ctx.createRadialGradient(0, 0, R * 0.97, 0, 0, R * 1.12);
+    atmo.addColorStop(0, "rgba(34,211,238,0.16)");
+    atmo.addColorStop(1, "rgba(34,211,238,0)");
+    ctx.fillStyle = atmo;
+    ctx.beginPath(); ctx.arc(0, 0, R * 1.12, 0, TAU); ctx.fill();
   }
 
   _drawMoonTethers(time, silhouetteRadius) {
