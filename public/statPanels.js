@@ -25,7 +25,7 @@ function panel(id, label, spot) {
   const sub = el("div", "ops-sub", "");
   const cv = document.createElement("canvas");
   cv.className = "ops-chart";
-  cv.width = 220; cv.height = 44;
+  cv.width = 220; cv.height = 64;
   p.append(num, sub, cv, el("div", "ops-scan"));
   document.body.appendChild(p);
   return { root: p, num, sub, cv: cv.getContext("2d"), cvEl: cv, hist: [] };
@@ -96,6 +96,71 @@ function segStrip(g, cvEl, filled, total, color) {
   g.shadowBlur = 0;
 }
 
+// horizontal usage bar: track + fill bound to pct (0..100)
+function hbar(g, cvEl, pct, color, y = 4, hh = 10) {
+  const w = cvEl.width;
+  g.fillStyle = "rgba(56,120,180,0.18)";
+  g.fillRect(0, y, w, hh);
+  const fw = Math.max(2, (Math.max(0, Math.min(100, pct)) / 100) * w);
+  const grad = g.createLinearGradient(0, y, fw, y);
+  grad.addColorStop(0, "rgba(30,64,175,0.9)");
+  grad.addColorStop(1, color);
+  g.fillStyle = grad; g.shadowColor = color; g.shadowBlur = 6;
+  g.fillRect(0, y, fw, hh);
+  g.shadowBlur = 0;
+}
+
+// usage bar on top + history sparkline beneath — one panel, two truths
+function barAndSpark(g, cvEl, pct, hist, color) {
+  const w = cvEl.width, h = cvEl.height;
+  g.clearRect(0, 0, w, h);
+  hbar(g, cvEl, pct, color);
+  const top = 20, hh = h - top - 2;
+  if (hist.length < 2) {
+    g.strokeStyle = color.replace("rgb", "rgba").replace(")", ",0.2)");
+    g.setLineDash([3, 5]);
+    g.beginPath(); g.moveTo(0, top + hh - 4); g.lineTo(w, top + hh - 4); g.stroke();
+    g.setLineDash([]);
+    return;
+  }
+  g.beginPath();
+  hist.forEach((v, i) => {
+    const x = (i / (HIST - 1)) * w;
+    const y = top + hh - 3 - (Math.max(0, Math.min(100, v)) / 100) * (hh - 6);
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  });
+  g.strokeStyle = color; g.lineWidth = 1.4;
+  g.shadowColor = color; g.shadowBlur = 5;
+  g.stroke(); g.shadowBlur = 0;
+}
+
+// skeleton: n stub+track rows at low opacity — "loading", never a void
+function skeletonRows(g, cvEl, n) {
+  const w = cvEl.width, h = cvEl.height;
+  g.clearRect(0, 0, w, h);
+  const rh = Math.min(12, (h - 8) / n - 4);
+  for (let i = 0; i < n; i++) {
+    const y = 4 + i * (rh + 6);
+    g.fillStyle = "rgba(103,232,249,0.14)";
+    g.fillRect(0, y, 34, rh);
+    g.fillStyle = "rgba(56,120,180,0.12)";
+    g.fillRect(42, y, w - 42, rh);
+  }
+}
+
+// dimmed model slots — the chain's structure before the first live reading
+function dimSlots(g, cvEl, n, primary) {
+  const w = cvEl.width, h = cvEl.height;
+  g.clearRect(0, 0, w, h);
+  const bw = Math.max(4, w / n - 6);
+  for (let i = 0; i < n; i++) {
+    const x = (i / n) * w + 3;
+    const bh = (i === primary ? 0.85 : 0.5) * (h - 10);
+    g.fillStyle = i === primary ? "rgba(34,211,238,0.34)" : "rgba(34,211,238,0.18)";
+    g.fillRect(x, h - 5 - bh, bw, bh);
+  }
+}
+
 const CYAN = "rgb(34,211,238)";
 const BLUE = "rgb(59,130,246)";
 const VIOLET = "rgb(167,139,250)";
@@ -125,46 +190,49 @@ export function mountOpsWall() {
 
     if (t.cpu) {
       const pct = Math.min(100, Math.round((t.cpu.load1 / (t.cpu.cores || 1)) * 100));
-      setNum(cpu, pct + "%");
+      setNum(cpu, pct + "%"); delete cpu.num.dataset.dim;
       cpu.sub.textContent = t.cpu.cores + " CORES · LOAD " + t.cpu.load1.toFixed(2);
       cpu.hist.push(pct); if (cpu.hist.length > HIST) cpu.hist.shift();
-      glowBars(cpu.cv, cpu.cvEl, cpu.hist.slice(-15).map((v) => v / 100), CYAN);
+      barAndSpark(cpu.cv, cpu.cvEl, pct, cpu.hist, CYAN);
     }
     if (t.memory && t.memory.totalBytes) {
       const pct = Math.max(0, Math.min(100, Math.round((t.memory.usedBytes / t.memory.totalBytes) * 100)));
-      setNum(mem, pct + "%");
+      setNum(mem, pct + "%"); delete mem.num.dataset.dim;
       mem.sub.textContent = (t.memory.usedBytes / 1e9).toFixed(1) + " / " + (t.memory.totalBytes / 1e9).toFixed(0) + " GB";
       mem.hist.push(pct); if (mem.hist.length > HIST) mem.hist.shift();
-      spark(mem.cv, mem.cvEl, mem.hist, BLUE, [0, 100]);
+      barAndSpark(mem.cv, mem.cvEl, pct, mem.hist, BLUE);
     }
     if (t.latency && t.latency.lastFirstWordMs != null) {
-      setNum(ttfw, String(Math.round(t.latency.lastFirstWordMs)));
+      setNum(ttfw, String(Math.round(t.latency.lastFirstWordMs))); delete ttfw.num.dataset.dim;
       ttfw.sub.textContent = "TIME TO FIRST WORD";
       ttfw.hist.push(t.latency.lastFirstWordMs); if (ttfw.hist.length > HIST) ttfw.hist.shift();
       spark(ttfw.cv, ttfw.cvEl, ttfw.hist, VIOLET);
     } else { ttfw.sub.textContent = "AWAITING FIRST TURN"; }
     if (t.brain) {
       const chain = t.brain.chain || [];
-      brain.num.textContent = chain.length || "—";
+      if (chain.length) { brain.num.textContent = chain.length; delete brain.num.dataset.dim; }
       brain.sub.textContent = (t.brain.benched ? "FALLBACK · " : "PRIMARY · ") + (t.brain.name || "").replace("groq:", "").slice(0, 24).toUpperCase();
       glowBars(brain.cv, brain.cvEl, chain.map((c, i) => (t.brain.name === c ? 1 : 0.45 - i * 0.05)), t.brain.benched ? VIOLET : CYAN);
     }
     if (t.budget && t.budget.limitTokens) {
       const left = Math.round((t.budget.remainingTokens / t.budget.limitTokens) * 100);
-      setNum(tokens, left + "%");
+      setNum(tokens, left + "%"); delete tokens.num.dataset.dim;
       tokens.sub.textContent = "OF FREE DAILY POOL REMAINING";
       glowBars(tokens.cv, tokens.cvEl, [left / 100], VIOLET);
     } else {
       tokens.sub.textContent = "NO BUDGET HEADERS YET";
-      glowBars(tokens.cv, tokens.cvEl, [0.06, 0.06, 0.06, 0.06], "rgb(70,110,170)");
+      skeletonRows(tokens.cv, tokens.cvEl, 3);
     }
     const c = t.counts || {};
     const parts = [];
     if (c.unreadMail != null) parts.push(c.unreadMail + " MAIL");
     if (c.reminders != null) parts.push(c.reminders + " DUE");
-    counts.num.textContent = parts.length ? (c.unreadMail ?? 0) + (c.reminders ?? 0) : "—";
-    counts.sub.textContent = parts.join(" · ") || "NO SIGNALS READABLE";
-    glowBars(counts.cv, counts.cvEl, [(c.unreadMail || 0) / 10, (c.reminders || 0) / 10].map((v) => Math.min(1, v + 0.06)), BLUE);
+    const total = (c.unreadMail || 0) + (c.reminders || 0);
+    counts.num.textContent = String(total);
+    if (total) delete counts.num.dataset.dim; else counts.num.dataset.dim = "1";
+    counts.sub.textContent = parts.join(" · ") || "QUIET · NOTHING WAITING";
+    if (total) glowBars(counts.cv, counts.cvEl, [(c.unreadMail || 0) / 10, (c.reminders || 0) / 10].map((v) => Math.min(1, v + 0.06)), BLUE);
+    else { counts.cv.clearRect(0, 0, counts.cvEl.width, counts.cvEl.height); hbar(counts.cv, counts.cvEl, 0, BLUE, counts.cvEl.height / 2 - 5); }
   }
 
   // static-ish panels
@@ -179,6 +247,23 @@ export function mountOpsWall() {
   skills.num.textContent = "19";
   skills.sub.textContent = "SKILLS ONLINE · 18 SPECIALISTS";
   glowBars(skills.cv, skills.cvEl, Array.from({ length: 9 }, (_, i) => 0.4 + (i % 3) * 0.22), CYAN);
+
+  // placeholder states, drawn immediately — before any data exists
+  setNum(cpu, "0%"); cpu.num.dataset.dim = "1"; barAndSpark(cpu.cv, cpu.cvEl, 0, [], CYAN);
+  setNum(mem, "0%"); mem.num.dataset.dim = "1"; barAndSpark(mem.cv, mem.cvEl, 0, [], BLUE);
+  ttfw.num.textContent = "···"; ttfw.num.dataset.dim = "1"; flatLine(ttfw.cv, ttfw.cvEl, VIOLET);
+  ttfw.sub.textContent = "AWAITING FIRST TURN";
+  brain.num.textContent = "5"; brain.num.dataset.dim = "1";
+  brain.sub.textContent = "PRIMARY · LLAMA-3.3-70B-VERSATILE";
+  dimSlots(brain.cv, brain.cvEl, 5, 0);
+  tokens.num.textContent = "···"; tokens.num.dataset.dim = "1";
+  tokens.sub.textContent = "NO BUDGET HEADERS YET";
+  skeletonRows(tokens.cv, tokens.cvEl, 3);
+  counts.num.textContent = "0"; counts.num.dataset.dim = "1";
+  counts.sub.textContent = "QUIET · NOTHING WAITING";
+  hbar(counts.cv, counts.cvEl, 0, BLUE, counts.cvEl.height / 2 - 5);
+  segStrip(uptime.cv, uptime.cvEl, 0, 60, CYAN);
+  uptime.num.textContent = "0m"; uptime.sub.textContent = "SESSION ONLINE";
 
   window.addEventListener("artemis-telemetry", (e) => { if (e.detail) poll(e.detail); });
   poll();

@@ -144,7 +144,7 @@ body.hud-in .hud-panel.hud-left, body.hud-in .hud-panel.hud-right { transform: n
 /* tighter panels: content fills the slab */
 .ops-panel { padding: 8px 13px 8px; }
 .ops-sub { margin-bottom: 2px; }
-.ops-chart { height: 56px; }
+.ops-chart { height: 64px; }
 
 /* violet secondary, ~10% of the screen */
 .brand-dot { background: #a78bfa !important; box-shadow: 0 0 10px rgba(167, 139, 250, 0.8) !important; }
@@ -192,3 +192,6 @@ body.hud-in .hud-panel.hud-left, body.hud-in .hud-panel.hud-right { transform: n
   .hud-frame::after { animation: none; }
   .scene-stage canvas { filter: brightness(1.3); }
 }
+
+/* dimmed placeholder numbers (three-state rule) */
+.ops-num[data-dim] { opacity: 0.45; text-shadow: 0 0 8px rgba(34, 211, 238, 0.25); }
