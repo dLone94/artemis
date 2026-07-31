@@ -52,9 +52,12 @@ export function createRing(opts = {}) {
   const svg = el("svg", { width: size, height: size, viewBox: `0 0 ${size} ${size}`, "aria-hidden": "true" });
 
   // tick track — the dashed outer ring that reads as an instrument
+  // 24 explicit radial ticks — a dial, not a flat circle
+  const tickCirc = 2 * Math.PI * (r + 4);
+  const tickSeg = tickCirc / 24;
   const ticks = el("circle", {
     cx: c, cy: c, r: r + 4, fill: "none", stroke: "var(--ring-tick)",
-    "stroke-width": 1, "stroke-dasharray": "1 5"
+    "stroke-width": 3, "stroke-dasharray": `2 ${(tickSeg - 2).toFixed(2)}`
   });
 
   const track = el("circle", {
@@ -110,11 +113,13 @@ export function createRing(opts = {}) {
     // Unknown must not look like empty: leave the arc unset rather than at zero.
     if (has && max) {
       const pct = Math.max(0, Math.min(1, next.value / max));
-      arc.setAttribute("stroke-dashoffset", String(circ * (1 - pct)));
+      arc.style.strokeDashoffset = String(circ * (1 - pct)); // style → CSS 600ms sweep
       arc.style.opacity = "1";
+      delete wrap.dataset.empty;
     } else {
-      arc.setAttribute("stroke-dashoffset", String(circ));
-      arc.style.opacity = "0.25";
+      arc.style.strokeDashoffset = String(circ);
+      arc.style.opacity = "0";
+      wrap.dataset.empty = "1";
     }
     if (next.state !== undefined) wrap.dataset.state = next.state || "";
     return wrap;
@@ -139,6 +144,7 @@ export function createRingRow(specs) {
   const rings = {};
   specs.forEach((spec, i) => {
     const ring = createRing({ ...spec, reverse: i % 2 === 1, spin: 7 + (i % 4) });
+    ring.dataset.key = spec.key;
     rings[spec.key] = ring;
     row.appendChild(ring);
   });

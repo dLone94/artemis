@@ -1313,10 +1313,13 @@ export class VoiceOrb {
       );
       const twinkle =
         0.78 + 0.22 * Math.sin(time * 1.35 + this._dotTwinkle[i]);
+      // ~15% hero dots at full intensity give the sphere depth; the rest
+      // stay dimmer so it reads as a body, not an even haze
+      const hero = hashUnit(i + 7717) < 0.15 ? 1.45 : 0.85;
       const dotAlpha = Math.min(
         1,
         (0.1 + depthLight * 0.82) *
-            twinkle *
+            twinkle * hero *
             (1 + this._listeningMix * 0.32) +
           lightBoost * 0.62
       );
@@ -1347,9 +1350,9 @@ export class VoiceOrb {
       ] = i;
       this._dotStyleCounts[styleGroup] = styleCount + 1;
       this._dotRadius[i] = Math.max(
-        1,
+        1.4,
         Math.min(
-          2.5,
+          3.8,
           this._dotBaseSize[i] *
             (0.9 + depthLight * 0.1) *
             (0.94 + perspective * 0.06) *
@@ -1618,6 +1621,7 @@ export class VoiceOrb {
     this._drawOrbitPass(true);
     this._drawMoonTailPass(true);
     this._drawMoonLightPass(true, time, silhouetteRadius);
+    this._drawMoonTethers(time, silhouetteRadius);
 
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = hudAlpha;
@@ -1642,8 +1646,8 @@ export class VoiceOrb {
     ctx.font = this._wordmarkFont;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.shadowColor = O_STYLES[13];
-    ctx.shadowBlur = 14;
+    ctx.shadowColor = "rgba(34,211,238,0.6)";
+    ctx.shadowBlur = 24;
     const mid = (WORDMARK_LETTERS.length - 1) / 2;
     for (let i = 0; i < WORDMARK_LETTERS.length; i++) {
       const phase = wt * 1.9 - i * 0.62;
@@ -2245,6 +2249,38 @@ export class VoiceOrb {
     ctx.shadowBlur = 2 + activity * 2 + settle * 2;
     ctx.fillText(MOON_LABELS[index], x, labelY);
     ctx.shadowBlur = 0;
+  }
+
+
+  // Idle tethers: every labeled node stays visibly attached to the sphere —
+  // a 1px curved line plus a small bright pulse traveling node→sphere every
+  // 4-6s, staggered per node so the sky never beats in unison.
+  _drawMoonTethers(time, silhouetteRadius) {
+    const ctx = this.ctx;
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineWidth = 1;
+    for (let i = 0; i < MOON_COUNT; i++) {
+      const mx = this._moonScreenX[i], my = this._moonScreenY[i];
+      const len = Math.hypot(mx, my) || 1;
+      if (len <= silhouetteRadius * 1.02) continue;
+      const ex = (mx / len) * silhouetteRadius, ey = (my / len) * silhouetteRadius;
+      const midx = (mx + ex) / 2 - (my - ey) * 0.12;
+      const midy = (my + ey) / 2 + (mx - ex) * 0.12;
+      ctx.strokeStyle = "rgba(34,211,238,0.3)";
+      ctx.beginPath(); ctx.moveTo(mx, my); ctx.quadraticCurveTo(midx, midy, ex, ey); ctx.stroke();
+      if (!this.reduced) {
+        const period = 4 + (i % 3);
+        const phase = ((time / period) + i * 0.618) % 1;
+        const t1 = phase, u = 1 - t1;
+        const px = u * u * mx + 2 * u * t1 * midx + t1 * t1 * ex;
+        const py = u * u * my + 2 * u * t1 * midy + t1 * t1 * ey;
+        ctx.fillStyle = "rgba(214,248,255,0.9)";
+        ctx.shadowColor = "rgba(34,211,238,0.9)"; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(px, py, 1.6, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+    ctx.globalCompositeOperation = "source-over";
   }
 
   _drawHalos(time, silhouetteRadius) {

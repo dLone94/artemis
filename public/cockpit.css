@@ -879,3 +879,19 @@ html.hud-paused .hud-pedestal, html.hud-paused .hud-beam { animation-play-state:
 .ops-panel::marker { content: none; }
 @media (max-width: 1500px) { .ops-t1, .ops-t4 { display: none; } }
 @media (prefers-reduced-motion: reduce) { .ops-panel { transition: none; } }
+
+
+/* ---- ring gauge rebuild (globe+gauges pass) ---- */
+.hud-gauge { --ring-track: rgba(56, 189, 248, 0.12); --ring-tick: rgba(103, 232, 249, 0.15); }
+.hud-gauge-arc {
+  filter: drop-shadow(0 0 6px var(--ring-tone));
+  transition: stroke-dashoffset 600ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms;
+}
+.hud-gauge-value { color: #d9f6ff; text-shadow: 0 0 8px rgba(34, 211, 238, 0.4); }
+.hud-gauge[data-empty] .hud-gauge-value { opacity: 0.4; }
+.hud-gauge[data-key="budget"] {
+  --ring-tone: #a78bfa;
+  --ring-tick: rgba(167, 139, 250, 0.25);
+  --ring-sweep: rgba(196, 181, 253, 0.8);
+}
+@media (prefers-reduced-motion: reduce) { .hud-gauge-arc { transition: none; } }
