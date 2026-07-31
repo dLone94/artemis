@@ -596,8 +596,8 @@ export class VoiceOrb {
         ? city ? 0.25 : surface === 2 ? 0.18 : 0.14
         : 0.055;
       this._dotIntensity[dot] = surface === 2
-        ? 1.12 + city * 0.1
-        : surface === 1 ? 0.85 + city * 0.25 : 0;
+        ? 1.3 + city * 0.1
+        : surface === 1 ? 0.4 + city * 0.16 : 0; // interiors mute — coasts carry the shape
       this._dotToneBase[dot] = city
         ? 0
         : surface === 2
@@ -982,7 +982,7 @@ export class VoiceOrb {
     glowCtx.fillRect(0, 0, 192, 192);
 
     // ---- Layer 3: plexus network — clustered nodes + kNN web ----
-    const PLEX_N = 100;
+    const PLEX_N = 220;
     this._plexBase = new Float32Array(PLEX_N * 3);
     this._plexSize = new Float32Array(PLEX_N);
     this._plexSX = new Float32Array(PLEX_N);
@@ -2760,7 +2760,8 @@ export class VoiceOrb {
     const yc = this._fYawCos, ys = this._fYawSin, pc = this._fPitchCos, ps = this._fPitchSin;
     const N = this._plexSize.length;
     for (let i = 0; i < N; i++) {
-      const x = this._plexBase[i * 3], y = this._plexBase[i * 3 + 1], z = this._plexBase[i * 3 + 2];
+      const rad = 1.005 + hashUnit(i * 37 + 53) * 0.055; // shell floats, juts at the limb
+      const x = this._plexBase[i * 3] * rad, y = this._plexBase[i * 3 + 1] * rad, z = this._plexBase[i * 3 + 2] * rad;
       const cx = x * yc + z * ys, cz = -x * ys + z * yc;
       const cy = y * pc - cz * ps, depth = y * ps + cz * pc;
       const persp = CAM_DISTANCE / (CAM_DISTANCE - depth);
@@ -2779,8 +2780,10 @@ export class VoiceOrb {
     for (let edge = 0; edge < this._plexEdges.length; edge++) {
       const key = this._plexEdges[edge];
       const a = Math.floor(key / 1000), b = key % 1000;
-      const front = (this._plexDepth[a] + this._plexDepth[b]) / 2 > 0;
-      let alpha = front ? 0.38 : 0.11;
+      const d = (this._plexDepth[a] + this._plexDepth[b]) / 2;
+      if (d < -0.24) continue; // fragments visible slightly past the rim
+      const k = Math.min(1, (d + 0.24) / 0.34);
+      let alpha = 0.14 + 0.42 * k;
       if (flareK > 0 && (a === this._flareNode || b === this._flareNode)) alpha = Math.min(0.82, alpha + flareK * 0.44);
       const alphaBucket = Math.max(
         1,
@@ -2796,9 +2799,11 @@ export class VoiceOrb {
       ctx.stroke();
     }
     for (let i = 0; i < N; i++) {
-      const front = this._plexDepth[i] > 0;
-      const size = this._plexSize[i] * (front ? 1 : 0.7);
-      let alpha = front ? 0.78 : 0.32;
+      const d = this._plexDepth[i];
+      if (d < -0.24) continue;
+      const k = Math.min(1, (d + 0.24) / 0.34);
+      const size = this._plexSize[i] * (0.7 + 0.3 * k);
+      let alpha = 0.26 + 0.55 * k;
       if (flareK > 0 && (i === this._flareNode || this._plexAdj[this._flareNode].includes(i)))
         alpha = Math.min(1, alpha + flareK);
       if (size > 1.8) {
@@ -2893,13 +2898,13 @@ export class VoiceOrb {
     ctx.fillStyle = body;
     ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
     ctx.globalCompositeOperation = "lighter";
-    ctx.strokeStyle = "rgba(120,220,255,0.55)";
+    ctx.strokeStyle = "rgba(120,220,255,0.28)";
     ctx.lineWidth = 1.5;
     ctx.shadowColor = "rgba(34,211,238,0.9)"; ctx.shadowBlur = 12;
     ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.stroke();
     ctx.shadowBlur = 0;
     const atmo = ctx.createRadialGradient(0, 0, R * 0.97, 0, 0, R * 1.12);
-    atmo.addColorStop(0, "rgba(34,211,238,0.16)");
+    atmo.addColorStop(0, "rgba(34,211,238,0.12)");
     atmo.addColorStop(1, "rgba(34,211,238,0)");
     ctx.fillStyle = atmo;
     ctx.beginPath(); ctx.arc(0, 0, R * 1.12, 0, TAU); ctx.fill();
