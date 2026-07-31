@@ -199,9 +199,9 @@ body.hud-in .hud-panel.hud-left, body.hud-in .hud-panel.hud-right { transform: n
 /* the globe emits light onto the room (canvas 2D — bloom faked behind it) */
 .globe-bloom {
   position: absolute; left: 50%; top: 46%;
-  width: min(72%, 640px); aspect-ratio: 1;
+  width: min(96%, 860px); aspect-ratio: 1;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(34, 211, 238, 0.15) 0%, rgba(34, 211, 238, 0.05) 45%, transparent 70%);
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.22) 0%, rgba(34, 211, 238, 0.08) 45%, transparent 70%);
   pointer-events: none;
 }

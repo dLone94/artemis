@@ -16,3 +16,5 @@ public/oww/ort.min.js
 
 # ad-hoc evaluation reports (the committed baseline lives in eval/baseline-*.json)
 eval/results/
+reference.jpeg
+current.png

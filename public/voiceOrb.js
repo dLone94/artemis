@@ -1235,7 +1235,7 @@ export class VoiceOrb {
     this._hitCenterY = centerY;
     const recede = 1 - scroll * 0.28;
     const hudAlpha = 1 - scroll * 0.45;
-    const base = Math.min(width, height) * 0.4 * recede;
+    const base = Math.min(width, height) * 0.62 * recede; // globe ≈ 65-70% of cell
     const radius = base * 0.52;
     const sphereScale = 1 - this._listeningMix * 0.08;
     const silhouetteRadius = radius * sphereScale;
@@ -1663,7 +1663,7 @@ export class VoiceOrb {
     const corePulse = this.reduced ? 1 : 1 + 0.06 * (0.5 + 0.5 * Math.sin(time * (TAU / 5)));
     const glowSize = silhouetteRadius * 0.7 * corePulse;
     ctx.globalAlpha =
-      hudAlpha * (0.75 + this._listeningMix * 0.13 + amp * 0.1);
+      Math.min(1, hudAlpha * (1.0 + this._listeningMix * 0.1 + amp * 0.1));
     ctx.drawImage(
       this._coreGlow,
       -glowSize * 0.5,
@@ -2342,14 +2342,14 @@ export class VoiceOrb {
         const sx = cx * R * persp, sy = cy * R * persp;
         if (prev) {
           const rim = 1 - Math.min(1, Math.abs((prev[2] + depth) / 2) / 0.9);
-          ctx.strokeStyle = "rgba(34,211,238," + (0.2 + 0.15 * rim).toFixed(3) + ")";
+          ctx.strokeStyle = "rgba(34,211,238," + (0.3 + 0.2 * rim).toFixed(3) + ")";
           ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(sx, sy); ctx.stroke();
         }
         prev = [sx, sy, depth];
       }
     };
-    for (let li = 1; li < 6; li++) {
-      const lat = (li / 6 - 0.5) * Math.PI;
+    for (let li = 1; li < 9; li++) {
+      const lat = (li / 9 - 0.5) * Math.PI;
       const cl = Math.cos(lat), sl = Math.sin(lat);
       drawRing((u) => [Math.cos(u * TAU) * cl, sl, Math.sin(u * TAU) * cl]);
     }
@@ -2389,7 +2389,7 @@ export class VoiceOrb {
     for (const key of this._plexEdges) {
       const a = Math.floor(key / 1000), b = key % 1000;
       const front = (this._plexDepth[a] + this._plexDepth[b]) / 2 > 0;
-      let alpha = front ? 0.35 : 0.14;
+      let alpha = front ? 0.7 : 0.26;
       if (flareK > 0 && (a === this._flareNode || b === this._flareNode)) alpha = Math.min(1, alpha + flareK * 0.65);
       ctx.strokeStyle = "rgba(34,211,238," + alpha.toFixed(3) + ")";
       ctx.beginPath();
@@ -2400,7 +2400,7 @@ export class VoiceOrb {
     for (let i = 0; i < N; i++) {
       const front = this._plexDepth[i] > 0;
       const size = this._plexSize[i] * (front ? 1 : 0.7);
-      let alpha = front ? 0.9 : 0.4;
+      let alpha = front ? 1 : 0.6;
       if (flareK > 0 && (i === this._flareNode || this._plexAdj[this._flareNode].includes(i)))
         alpha = Math.min(1, alpha + flareK);
       if (size > 2.2) {
@@ -2432,7 +2432,7 @@ export class VoiceOrb {
   // The projector: floor glow, three concentric rings, and the light beam.
   _drawProjectorBase(time, R) {
     const ctx = this.ctx;
-    const baseY = R * 1.18;
+    const baseY = R * 1.14;
     const pulse = this.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(time * (TAU / 5) + Math.PI);
     // floor glow
     const fg = ctx.createRadialGradient(0, baseY, 0, 0, baseY, R * 1.1);
@@ -2444,9 +2444,9 @@ export class VoiceOrb {
     ctx.restore();
     // three rings, brightest inner, inner one pulsing off the core's beat
     const rings = [
-      [R * 0.55, 0.55 + 0.25 * pulse],
-      [R * 0.78, 0.3],
-      [R * 1.0, 0.16]
+      [R * 0.72, 0.6 + 0.25 * pulse],
+      [R * 0.96, 0.34],
+      [R * 1.2, 0.18]
     ];
     ctx.lineWidth = 1.2;
     for (const [rr, a] of rings) {
@@ -2459,8 +2459,8 @@ export class VoiceOrb {
     beam.addColorStop(1, "rgba(34,211,238,0)");
     ctx.fillStyle = beam;
     ctx.beginPath();
-    ctx.moveTo(-R * 0.5, baseY); ctx.lineTo(R * 0.5, baseY);
-    ctx.lineTo(R * 0.28, R * 0.2); ctx.lineTo(-R * 0.28, R * 0.2);
+    ctx.moveTo(-R * 0.62, baseY); ctx.lineTo(R * 0.62, baseY);
+    ctx.lineTo(R * 0.3, R * 0.55); ctx.lineTo(-R * 0.3, R * 0.55);
     ctx.closePath(); ctx.fill();
   }
 
