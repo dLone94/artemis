@@ -3820,7 +3820,14 @@ const SKILLS = [
         return {
           ok: true,
           summary,
-          content: summary
+          // Belt against confabulation (seen live 2026-08-01: the model turned
+          // this exact failure into "3 unread, one from John"): the content
+          // must leave the model nothing to embellish.
+          content:
+            summary +
+            "\nThe unread count is UNKNOWN — nothing was read from the system. " +
+            "There are NO counts and NO sender names in this result; stating any " +
+            "would be fabrication. Relay only the permission problem, in one sentence."
         };
       }
       if (report.count === 0) {
@@ -4140,18 +4147,30 @@ const SKILLS = [
       try {
         await (ctx.sendWhatsApp || sendComposed)(composeUrl(digits, p.body));
       } catch (e) {
+        console.warn("[whatsapp] send automation failed:", e.message);
         try {
           await (ctx.openWhatsApp || openLocally)(composeUrl(digits, p.body));
         } catch (e2) {
           return { ok: false, summary: `I couldn't open WhatsApp: ${e2.message}` };
         }
+        // Name the actual blocker when it's recognisably the accessibility
+        // permission, so the user fixes the cause instead of retrying forever.
+        const tcc = /not allowed assistive|assistive access|osascript is not allowed|1002|-25211|not authorized/i.test(
+          String(e.message || "")
+        );
         return {
           ok: true,
           to: displayName,
           body: p.body,
-          summary:
-            `I couldn't press send myself — WhatsApp is open with your message to ` +
-            `${displayName} typed in; press Enter to send it.`
+          summary: tcc
+            ? `macOS is blocking me from pressing send — enable Artemis under System Settings → ` +
+              `Privacy & Security → Accessibility, then ask me again. Meanwhile WhatsApp is open ` +
+              `with your message to ${displayName} typed in; press Enter to send it.`
+            : `I couldn't press send myself — WhatsApp is open with your message to ` +
+              `${displayName} typed in; press Enter to send it.`,
+          content:
+            `Send automation failed (${String(e.message || "").slice(0, 160)}). The draft was opened ` +
+            `instead. Do not claim the message was sent.`
         };
       }
       return {
