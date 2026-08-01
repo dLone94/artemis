@@ -5,6 +5,7 @@
 import { PAL, prefersReducedMotion } from "./orbShared.js";
 
 const TAU = Math.PI * 2;
+const DEG = Math.PI / 180;
 const DOT_LATITUDES = 7;
 const DOTS_PER_LATITUDE = 100;
 const DOT_LONGITUDES = 11;
@@ -1697,8 +1698,7 @@ export class VoiceOrb {
 
     // Reactor heart: the original hologram keeps its bloom, but the center is
     // now a breathing arc-reactor — idle breath (~4s) plus the smoothed voice
-    // envelope swelling it, a 10-segment coil ring, and a crisp rim so the
-    // core always reads as an object inside the dot cloud.
+    // envelope swelling it, wrapped in a counter-rotating segmented iris.
     const breath = this.reduced ? 0 : 0.05 * Math.sin(time * (TAU / 4));
     const corePulse =
       (this.reduced ? 1 : 1 + 0.06 * (0.5 + 0.5 * Math.sin(time * (TAU / 5)))) *
@@ -1714,30 +1714,54 @@ export class VoiceOrb {
       glowSize
     );
     {
+      // Reactor iris: twin counter-rotating segmented arc rings around the
+      // core with an orbiting comet spark — never still, and everything
+      // spins faster as her voice swells (and while she thinks).
       const coreR = silhouetteRadius * 0.19 * (1 + breath + this._breathEnv * 0.25);
+      const env = this._breathEnv;
+      const spinBoost = 1 + env * 1.4 + this._thinkingMix * 0.8;
+      const t = this.reduced ? 0 : time;
       ctx.globalAlpha = hudAlpha;
-      // crisp rim
-      ctx.lineWidth = Math.max(1.6, silhouetteRadius * 0.016);
-      ctx.strokeStyle = `rgba(165,230,255,${(0.55 + this._breathEnv * 0.35).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.arc(0, 0, coreR, 0, TAU);
-      ctx.stroke();
-      // coil ring — 10 winding segments, slow spin, brightening with her voice
-      const coilInner = coreR * 1.1;
-      const coilOuter = coreR * 1.38;
-      const coilSpin = this.reduced ? 0 : time * 0.05;
-      ctx.lineWidth = Math.max(1.8, silhouetteRadius * 0.02);
       ctx.lineCap = "round";
-      for (let i = 0; i < 10; i++) {
-        const angle = coilSpin + (i / 10) * TAU;
+      // inner ring: 3 arcs, clockwise
+      ctx.lineWidth = Math.max(1.8, silhouetteRadius * 0.018);
+      ctx.strokeStyle = `rgba(160,230,255,${(0.6 + env * 0.3).toFixed(3)})`;
+      for (let arc = 0; arc < 3; arc++) {
+        const start = t * 0.85 * spinBoost + arc * (TAU / 3);
+        ctx.beginPath();
+        ctx.arc(0, 0, coreR * 1.04, start, start + 72 * DEG);
+        ctx.stroke();
+      }
+      // outer ring: 4 arcs, counter-clockwise, thinking flicker
+      ctx.lineWidth = Math.max(1.4, silhouetteRadius * 0.012);
+      for (let arc = 0; arc < 4; arc++) {
+        const start = -t * 0.55 * spinBoost + arc * (TAU / 4);
         const flicker = this.reduced
           ? 0
-          : this._thinkingMix * 0.22 * Math.sin(time * 7 + i * 2.4);
-        ctx.strokeStyle = `rgba(140,225,255,${(0.5 + this._breathEnv * 0.35 + flicker).toFixed(3)})`;
+          : this._thinkingMix * 0.22 * Math.sin(time * 7 + arc * 2.4);
+        ctx.strokeStyle = `rgba(120,215,255,${(0.42 + env * 0.3 + flicker).toFixed(3)})`;
         ctx.beginPath();
-        ctx.moveTo(Math.cos(angle) * coilInner, Math.sin(angle) * coilInner);
-        ctx.lineTo(Math.cos(angle) * coilOuter, Math.sin(angle) * coilOuter);
+        ctx.arc(0, 0, coreR * 1.3, start, start + 52 * DEG);
         ctx.stroke();
+      }
+      // orbiting spark with a short comet tail on the outer ring
+      if (!this.reduced) {
+        const sparkAngle = t * 1.7 * spinBoost;
+        const sparkSize = Math.max(1.4, silhouetteRadius * 0.011);
+        for (let trail = 0; trail < 5; trail++) {
+          const a = sparkAngle - trail * 0.09;
+          const alpha = (0.9 - trail * 0.17) * (0.7 + env * 0.3);
+          ctx.fillStyle = `rgba(210,245,255,${alpha.toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(
+            Math.cos(a) * coreR * 1.3,
+            Math.sin(a) * coreR * 1.3,
+            sparkSize * (1 - trail * 0.12),
+            0,
+            TAU
+          );
+          ctx.fill();
+        }
       }
       ctx.lineCap = "butt";
     }
