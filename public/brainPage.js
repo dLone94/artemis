@@ -25,6 +25,24 @@ import { MOON_INFO } from "./voiceOrb.js";
       '<span class="bp-skill-say">\u201c' + m.say + '\u201d</span>';
     grid.appendChild(card);
   });
+
+  // Cinematics v2: a random card fires like a synapse now and then, echoing
+  // the orb's neural firings. Motion-only — skipped under reduced motion.
+  if (!prefersReducedMotion()) {
+    window.setInterval(() => {
+      const cards = grid.querySelectorAll(".bp-skill-card");
+      if (!cards.length) return;
+      const card = cards[(Math.random() * cards.length) | 0];
+      card.classList.remove("bp-fire");
+      void card.getBoundingClientRect();
+      card.classList.add("bp-fire");
+      card.addEventListener(
+        "animationend",
+        () => card.classList.remove("bp-fire"),
+        { once: true }
+      );
+    }, 2600);
+  }
 })();
 
 

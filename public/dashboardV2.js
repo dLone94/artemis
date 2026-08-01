@@ -249,6 +249,27 @@ function initializeDashboardV2() {
     group.classList.add("is-pulsing");
     window.clearTimeout(pulseTimers.get(name));
     pulseTimers.set(name, window.setTimeout(() => group.classList.remove("is-pulsing"), 1200));
+    // Cinematics v2: the panel at the end of the spoke flares with it.
+    if (reducedMotion) return;
+    const panel = shell.querySelector(`.v2-panel--${name}`);
+    if (!panel) return;
+    panel.classList.remove("v2-flare");
+    void panel.getBoundingClientRect();
+    panel.classList.add("v2-flare");
+    panel.addEventListener(
+      "animationend",
+      () => panel.classList.remove("v2-flare"),
+      { once: true }
+    );
+  }
+
+  // Cinematics v2: publish the live voice amplitude as --v2-amp so CSS can
+  // swell the hub aura with her voice. 10Hz is plenty for a glow.
+  if (!reducedMotion) {
+    window.setInterval(() => {
+      const amp = typeof window.__artemisAmp === "number" ? window.__artemisAmp : 0;
+      shell.style.setProperty("--v2-amp", amp.toFixed(3));
+    }, 100);
   }
 
   window.addEventListener("resize", scheduleGeometry, { passive: true });

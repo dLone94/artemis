@@ -503,6 +503,24 @@ export class VoiceOrb {
     if (value > this._manualAmp) this._manualAmp = value;
   }
 
+  // Boot ignition: three staggered halo ripples plus a breath kick — the
+  // reactor powers up as the HUD assembles. Safe to call any time.
+  ignite() {
+    const time = this.reduced ? 0 : this._elapsed || 0;
+    this._emitRipple(time, 1);
+    this._breathEnv = Math.max(this._breathEnv, 0.85);
+    if (!this.reduced) {
+      setTimeout(() => {
+        if (!this._disposed) this._emitRipple(this._elapsed, 0.8);
+      }, 240);
+      setTimeout(() => {
+        if (!this._disposed) this._emitRipple(this._elapsed, 0.6);
+      }, 480);
+    } else {
+      this._loop();
+    }
+  }
+
   /**
    * Which moon (if any) sits under a canvas-relative point. Returns the
    * MOON_INFO entry plus its index, or null. Generous 18px halo — these are

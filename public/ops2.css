@@ -1269,3 +1269,127 @@ body.dashboard-v2 .v2-spoke [class*="heartbeat"] { animation-duration: 16s !impo
   12% { stroke-dashoffset: 0.55; opacity: 0; }
   100% { stroke-dashoffset: 0.55; opacity: 0; }
 }
+
+/* ================= Cinematics v2 — the lab comes alive ================= */
+/* All motion below is theatrical-only and fully disabled for reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+
+  /* --- boot: CRT power-on — a bright line expands into the scene --- */
+  body.dashboard-v2.hud-in::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      rgba(140, 225, 255, 0.55) 46%,
+      rgba(235, 250, 255, 0.95) 50%,
+      rgba(140, 225, 255, 0.55) 54%,
+      transparent 100%
+    );
+    animation: v2-crt-on 640ms cubic-bezier(0.2, 0.8, 0.25, 1) both;
+  }
+
+  /* --- boot: panels materialize with a scan wipe instead of a plain fade.
+     Longhand overrides keep the existing per-panel stagger delays intact. --- */
+  body.dashboard-v2.hud-in .v2-panel,
+  body.dashboard-v2.hud-in .v2-skills {
+    animation-name: v2-scan-reveal;
+    animation-duration: 680ms;
+  }
+
+  /* --- ambient: static scanline texture + a light band drifting down --- */
+  body.dashboard-v2 .v2-shell::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    background:
+      linear-gradient(
+          180deg,
+          transparent 0%,
+          rgba(140, 225, 255, 0.04) 44%,
+          rgba(200, 240, 255, 0.09) 50%,
+          rgba(140, 225, 255, 0.04) 56%,
+          transparent 100%
+        )
+        0 -260px / 100% 240px no-repeat,
+      repeating-linear-gradient(
+          180deg,
+          rgba(170, 225, 255, 0.026) 0 1px,
+          transparent 1px 3px
+        )
+        0 0 / 100% 100%;
+    animation: v2-scan-drift 14s linear infinite;
+  }
+
+  /* --- ambient: specular glint sweeping across panel faces, staggered --- */
+  body.dashboard-v2 .v2-panel {
+    background-image: linear-gradient(
+      115deg,
+      transparent 42%,
+      rgba(190, 235, 255, 0.055) 49%,
+      rgba(235, 250, 255, 0.085) 50%,
+      rgba(190, 235, 255, 0.055) 51%,
+      transparent 58%
+    );
+    background-size: 320% 100%;
+    background-repeat: no-repeat;
+    animation: v2-glint 16s linear infinite;
+  }
+  body.dashboard-v2 .v2-panel--neural { animation-delay: 4s; animation-duration: 19s; }
+  body.dashboard-v2 .v2-panel--comms { animation-delay: 9s; animation-duration: 17s; }
+  body.dashboard-v2 .v2-panel--context { animation-delay: 13s; animation-duration: 21s; }
+
+  /* --- ambient: energy flowing along the spoke tick rails toward the hub --- */
+  body.dashboard-v2 .v2-spoke-ticks {
+    stroke-dasharray: 2 6;
+    animation: v2-spoke-flow 3.2s linear infinite;
+  }
+
+  /* --- events: the touched panel flares when its subsystem works --- */
+  body.dashboard-v2 .v2-panel.v2-flare {
+    animation: v2-flare 650ms ease-out, v2-glint 16s linear infinite;
+  }
+
+  /* --- voice: hub aura swells with Artemis's live amplitude (--v2-amp,
+     published by dashboardV2.js at 10Hz from window.__artemisAmp) --- */
+  body.dashboard-v2 .scene-stage {
+    border-radius: 50%;
+    box-shadow: 0 0 calc(18px + var(--v2-amp, 0) * 90px)
+      rgba(90, 200, 255, 0.16);
+    transition: box-shadow 120ms linear;
+  }
+}
+
+@keyframes v2-crt-on {
+  0% { transform: scaleY(0.006); opacity: 1; }
+  58% { transform: scaleY(1); opacity: 0.3; }
+  100% { transform: scaleY(1); opacity: 0; }
+}
+@keyframes v2-scan-reveal {
+  0% { opacity: 0; clip-path: inset(0 0 100% 0); transform: translateY(10px); }
+  14% { opacity: 1; }
+  100% { opacity: 1; clip-path: inset(0 0 -2% 0); transform: none; }
+}
+@keyframes v2-scan-drift {
+  0% { background-position: 0 -260px, 0 0; }
+  18% { background-position: 0 110vh, 0 0; }
+  100% { background-position: 0 110vh, 0 0; }
+}
+@keyframes v2-glint {
+  0% { background-position: 160% 0; }
+  9% { background-position: -60% 0; }
+  100% { background-position: -60% 0; }
+}
+@keyframes v2-spoke-flow {
+  to { stroke-dashoffset: -8; }
+}
+@keyframes v2-flare {
+  0% { filter: brightness(1); }
+  16% { filter: brightness(1.5) saturate(1.25); }
+  100% { filter: brightness(1); }
+}

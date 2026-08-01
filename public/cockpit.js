@@ -101,6 +101,8 @@ function deliverBriefing(spoken) {
     el.classList.add("done");
     setTimeout(() => el.remove(), 550);
     enterHud();
+    // Cinematics v2: the reactor ignites as the HUD assembles.
+    setTimeout(() => window.__voiceOrb?.ignite?.(), 420);
     deliverBriefing(spoken);
     if (spoken) {
       // the tap is a real gesture: start background music if you'd left it on,

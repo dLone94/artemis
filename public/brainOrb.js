@@ -79,6 +79,44 @@ export class BrainOrb {
       window.addEventListener("pointermove", this._onMove, { passive: true });
     }
 
+    // --- Neural web: fixed background neurons + their 2-nearest links.
+    // Synapses fire along links at random intervals (pool-based, no per-frame
+    // allocation); on load the web blooms outward from the core.
+    this._neurons = [];
+    for (let i = 0; i < 14; i++) {
+      const angle = i * 2.399963229728653 + 0.7; // golden-angle spread
+      const dist = 0.52 + (((i * 37) % 10) / 10) * 0.46; // 0.52..0.98 of base
+      this._neurons.push({
+        x: Math.cos(angle) * dist,
+        y: Math.sin(angle) * dist,
+        d: dist,
+        tw: i * 1.37, // twinkle phase
+      });
+    }
+    this._nLinks = [];
+    for (let i = 0; i < this._neurons.length; i++) {
+      const from = this._neurons[i];
+      const byDist = this._neurons
+        .map((n, j) => ({ j, dd: (n.x - from.x) ** 2 + (n.y - from.y) ** 2 }))
+        .filter((e) => e.j !== i)
+        .sort((a, b) => a.dd - b.dd)
+        .slice(0, 2);
+      for (const { j } of byDist) {
+        const key = i < j ? i * 100 + j : j * 100 + i;
+        if (!this._nLinks.some((l) => l.key === key)) {
+          this._nLinks.push({ key, a: i, b: j });
+        }
+      }
+    }
+    this._fires = [
+      { link: -1, t0: -9 },
+      { link: -1, t0: -9 },
+      { link: -1, t0: -9 },
+      { link: -1, t0: -9 },
+    ];
+    this._fireSlot = 0;
+    this._nextFireAt = 1.7; // first firing lands after the bloom
+
     this._t0 = performance.now();
     if (this.reduced) this._draw(0.6); // one static, representative frame
     else this._loop();
@@ -180,6 +218,84 @@ export class BrainOrb {
     ctx.rotate(this._px * 0.052); // ≤3° parallax tilt (0.052 rad), core-centered
     ctx.globalCompositeOperation = "lighter";
 
+    // --- neural web (behind everything): faint links, twinkling neurons,
+    // and random synapse firings — pulses of thought crossing the mind.
+    // On load, neurons bloom outward from the core over ~1.2s.
+    {
+      const bloomOf = (n) =>
+        this.reduced
+          ? 1
+          : Math.max(0, Math.min(1, (tt - 0.15 - n.d * 0.8) / 0.45));
+      ctx.lineWidth = 1;
+      for (const link of this._nLinks) {
+        const na = this._neurons[link.a];
+        const nb = this._neurons[link.b];
+        const vis = Math.min(bloomOf(na), bloomOf(nb));
+        if (vis <= 0.01) continue;
+        ctx.strokeStyle = PAL.D + (0.09 * vis) + ")";
+        ctx.beginPath();
+        ctx.moveTo(na.x * base, na.y * base);
+        ctx.lineTo(nb.x * base, nb.y * base);
+        ctx.stroke();
+      }
+      for (const n of this._neurons) {
+        const vis = bloomOf(n);
+        if (vis <= 0.01) continue;
+        const twinkle = this.reduced
+          ? 0.5
+          : 0.5 + 0.35 * Math.sin(tt * 1.9 + n.tw);
+        ctx.fillStyle = PAL.O + (0.34 * vis * twinkle) + ")";
+        ctx.beginPath();
+        ctx.arc(n.x * base, n.y * base, 1.7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (!this.reduced) {
+        if (tt >= this._nextFireAt && this._nLinks.length) {
+          const slot = this._fires[this._fireSlot];
+          this._fireSlot = (this._fireSlot + 1) % this._fires.length;
+          slot.link = (Math.random() * this._nLinks.length) | 0;
+          slot.t0 = tt;
+          this._nextFireAt = tt + 0.55 + Math.random() * 1.05;
+        }
+        for (const fire of this._fires) {
+          if (fire.link < 0) continue;
+          const age = tt - fire.t0;
+          if (age < 0 || age > 0.7) continue;
+          const k = age / 0.7;
+          const glide = k * k * (3 - 2 * k);
+          const link = this._nLinks[fire.link];
+          const na = this._neurons[link.a];
+          const nb = this._neurons[link.b];
+          const life = 1 - k;
+          // the link itself glows while the pulse crosses it
+          ctx.strokeStyle = PAL.B + (0.4 * life) + ")";
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(na.x * base, na.y * base);
+          ctx.lineTo(nb.x * base, nb.y * base);
+          ctx.stroke();
+          // the traveling thought-pulse
+          const px = (na.x + (nb.x - na.x) * glide) * base;
+          const py = (na.y + (nb.y - na.y) * glide) * base;
+          ctx.fillStyle = PAL.Hl + (0.95 * life) + ")";
+          ctx.shadowColor = PAL.B + "0.9)";
+          ctx.shadowBlur = 11;
+          ctx.beginPath();
+          ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          // endpoint flash as the pulse arrives
+          if (k > 0.75) {
+            const flash = (k - 0.75) / 0.25;
+            ctx.fillStyle = PAL.Hl + (0.7 * (1 - flash)) + ")";
+            ctx.beginPath();
+            ctx.arc(nb.x * base, nb.y * base, 2.5 + flash * 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+
     // --- live voice: blend fed samples + the hero orb's published amplitude;
     // decay each frame so the shimmer settles naturally when the user stops ---
     this._amp = (this._amp || 0) * 0.93;
@@ -190,7 +306,8 @@ export class BrainOrb {
     // --- core (brightens while routing / working / responding, and breathes
     // with the user's real voice) ---
     const flare = wgt(3); // fades in/out with proximity to "respond"
-    const corePulse = 0.5 + 0.14 * Math.sin(tt * 1.6) + flare * 0.5 + wgt(2) * 0.15 + voiceAmp * 0.45;
+    // Deeper breath (~4s cycle) to match the hero reactor's character.
+    const corePulse = 0.5 + 0.2 * Math.sin(tt * 1.6) + flare * 0.5 + wgt(2) * 0.15 + voiceAmp * 0.45;
     const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, base * 0.4);
     cg.addColorStop(0, PAL.Hl + (0.42 * corePulse) + ")");
     cg.addColorStop(0.4, PAL.O + (0.24 * corePulse) + ")");

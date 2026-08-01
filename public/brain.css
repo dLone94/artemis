@@ -415,3 +415,51 @@
 .bp-skill-what { font-size: 12px; line-height: 1.45; color: #e8f7fb; }
 .bp-skill-say { font-family: var(--font-mono, monospace); font-size: 10px; color: #5f8996; }
 @media (prefers-reduced-motion: reduce) { .bp-skill-card { animation: none; opacity: 1; transform: none; } .bp-skill-dot { animation: none; } }
+
+/* ============ Cinematics v2 — neural identity ============ */
+@media (prefers-reduced-motion: no-preference) {
+  /* ambient scanline texture + drifting light band, same craft as the HUD */
+  body.brain-page::after,
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    background:
+      linear-gradient(
+          180deg,
+          transparent 0%,
+          rgba(140, 225, 255, 0.035) 44%,
+          rgba(200, 240, 255, 0.07) 50%,
+          rgba(140, 225, 255, 0.035) 56%,
+          transparent 100%
+        )
+        0 -260px / 100% 240px no-repeat,
+      repeating-linear-gradient(
+          180deg,
+          rgba(170, 225, 255, 0.022) 0 1px,
+          transparent 1px 3px
+        )
+        0 0 / 100% 100%;
+    animation: bp-scan-drift 16s linear infinite;
+  }
+
+  /* a skill card occasionally fires like a synapse, echoing the orb */
+  .bp-skill-card.bp-fire {
+    animation: bp-skill-in 340ms ease forwards, bp-synapse 700ms ease-out;
+  }
+}
+@keyframes bp-scan-drift {
+  0% { background-position: 0 -260px, 0 0; }
+  16% { background-position: 0 110vh, 0 0; }
+  100% { background-position: 0 110vh, 0 0; }
+}
+@keyframes bp-synapse {
+  0% { border-color: rgba(34, 211, 238, 0.25); box-shadow: none; }
+  22% {
+    border-color: rgba(140, 235, 255, 0.9);
+    box-shadow: 0 0 22px rgba(34, 211, 238, 0.4);
+  }
+  100% { border-color: rgba(34, 211, 238, 0.25); box-shadow: none; }
+}
