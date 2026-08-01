@@ -56,6 +56,27 @@ import { mayStreamNarration, failureLine } from "./public/ttsPolicy.js";
 // Does a post-precheck-recovery reply read as a request for missing input?
 // Interrogatives or need/provide verbs qualify; bare completion claims don't.
 const ASKING_SHAPE = /\?|\b(what|which|who|whose|need|needs|missing|provide|give me|tell me|share|don't have|do not have)\b/i;
+
+// Groq-style strict tool_choice: when a forced round produces prose instead of
+// a call, the API rejects the WHOLE completion (code: tool_use_failed) but
+// hands the prose back in error.failed_generation. That text is often exactly
+// what the user needed to hear ("what's the number?", "Send it?") — recover it
+// rather than letting the turn die into the generic failure line.
+function failedGenerationFrom(error) {
+  const raw = (error && (error.body || error.message)) || "";
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(start));
+    const text =
+      parsed && parsed.error && parsed.error.code === "tool_use_failed"
+        ? parsed.error.failed_generation
+        : null;
+    return typeof text === "string" && text.trim() ? text.trim() : null;
+  } catch (e) {
+    return null;
+  }
+}
 import { fakeToolResult } from "./fakeTools.js";
 import {
   MEETING_MAX_TRANSCRIPT_CHARS,
@@ -1375,8 +1396,10 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
       );
       recordBudget(res);
       if (!res.ok) {
-        const err = new Error("NVIDIA HTTP " + res.status + ": " + (await res.text()).slice(0, 300));
+        const bodyText = await res.text();
+        const err = new Error("NVIDIA HTTP " + res.status + ": " + bodyText.slice(0, 300));
         err.res = res;   // so the cooldown can honour retry-after
+        err.body = bodyText; // full body — tool_use_failed recovery reads failed_generation
         throw err;
       }
       return await res.json();
@@ -1469,6 +1492,8 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
     const text = after.choices?.[0]?.message?.content || "";
     return text.trim() || null;
   } catch (e) {
+    const recovered = failedGenerationFrom(e);
+    if (recovered) state.failedGeneration = recovered;
     console.warn("[turn " + state.id + "] backstop failed:", e.message);
     return null;
   }
@@ -1731,6 +1756,11 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         }
         // no tool call: fall through to the streaming path, then the backstop
       } catch (e) {
+        const recovered = failedGenerationFrom(e);
+        if (recovered) {
+          state.failedGeneration = recovered;
+          toolChoice = "auto"; // don't force the streaming round into the same 400
+        }
         console.warn("[turn " + state.id + "] forced round failed, falling back to streaming:", e.message);
       }
     }
@@ -1880,18 +1910,30 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       // the number?" / "I need her number"), not narration of an action
       // that never ran. Require the asking shape: a bare claim still falls
       // through to the honest failure line, so "sent it!" can't sneak out.
-      if (state.precheckRecovered) {
-        console.log(`[turn ${state.id}] post-recovery reply: ${JSON.stringify((contentBuf || "").slice(0, 140))}`);
+      if (state.precheckRecovered || state.failedGeneration) {
+        console.log(`[turn ${state.id}] post-recovery reply: ${JSON.stringify((contentBuf || state.failedGeneration || "").slice(0, 140))}`);
       }
-      if (state.precheckRecovered && contentBuf && ASKING_SHAPE.test(contentBuf)) {
-        onText(contentBuf);
+      // Ask-shaped text after a precheck bounce or a strict-tool_choice
+      // rejection is the model legitimately talking TO the user — speak it.
+      const askText =
+        (state.precheckRecovered || state.failedGeneration)
+          ? (contentBuf && ASKING_SHAPE.test(contentBuf) && contentBuf) ||
+            (state.failedGeneration && ASKING_SHAPE.test(state.failedGeneration) && state.failedGeneration) ||
+            null
+          : null;
+      if (askText) {
+        onText(askText);
         return finishTurn({ askedForInput: true });
       }
       // Everything above was narration about an action that never happened —
       // it was never spoken, and it is dropped here rather than flushed.
       const repaired = await backstopToolRound(convo, sources, clientActions, state, toolOpts);
       if (repaired) onText(repaired);
-      else onText(failureLine(state.intent.family));
+      else if (state.failedGeneration && ASKING_SHAPE.test(state.failedGeneration)) {
+        // the backstop's own strict-tool_choice rejection may have captured it
+        onText(state.failedGeneration);
+        return finishTurn({ askedForInput: true });
+      } else onText(failureLine(state.intent.family));
       return finishTurn({ repaired: !!repaired });
     }
     // flush anything still held back (short answers never hit the 150-char
@@ -1988,13 +2030,18 @@ async function callNvidia(messages, tone, opts = {}) {
 
     const replyText = (msg.content || "").trim();
     if (isAction && !state.requiredActionSatisfied) {
-      // Post-precheck-recovery, an ask-shaped reply is the legitimate
-      // request for missing input — speak it. Anything else is still dropped.
-      if (state.precheckRecovered) {
-        console.log(`[turn ${state.id}] post-recovery reply: ${JSON.stringify(replyText.slice(0, 140))}`);
+      // Post-precheck-recovery (or strict-tool_choice rejection), an
+      // ask-shaped reply is the legitimate request for missing input —
+      // speak it. Anything else is still dropped.
+      if (state.precheckRecovered || state.failedGeneration) {
+        console.log(`[turn ${state.id}] post-recovery reply: ${JSON.stringify((replyText || state.failedGeneration || "").slice(0, 140))}`);
       }
-      if (state.precheckRecovered && replyText && ASKING_SHAPE.test(replyText)) {
-        return finishTurn(replyText, { askedForInput: true });
+      if (state.precheckRecovered || state.failedGeneration) {
+        const ask =
+          (replyText && ASKING_SHAPE.test(replyText) && replyText) ||
+          (state.failedGeneration && ASKING_SHAPE.test(state.failedGeneration) && state.failedGeneration) ||
+          null;
+        if (ask) return finishTurn(ask, { askedForInput: true });
       }
       // drop the narration; it describes something that never happened
       const repaired = await backstopToolRound(convo, sources, clientActions, state, toolOpts);
