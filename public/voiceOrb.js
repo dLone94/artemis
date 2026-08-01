@@ -1,37 +1,47 @@
-// The Artemis System — a voice-reactive reactor orb with eleven
-// honest agent moons. Canvas 2D only; all scene geometry and draw-style
-// pools are fixed before the animation loop starts.
+// The Artemis System — a voice-reactive particle-wireframe globe with six
+// honest agent moons. Canvas 2D only; all scene geometry and draw-style pools
+// are fixed before the animation loop starts.
 
 import { PAL, prefersReducedMotion } from "./orbShared.js";
 
 const TAU = Math.PI * 2;
-const DEG = Math.PI / 180;
+const DOT_LATITUDES = 7;
+const DOTS_PER_LATITUDE = 100;
+const DOT_LONGITUDES = 11;
+const DOTS_PER_LONGITUDE = 64;
+const DOT_COUNT =
+  DOT_LATITUDES * DOTS_PER_LATITUDE +
+  DOT_LONGITUDES * DOTS_PER_LONGITUDE;
+const DOT_TONE_BUCKETS = 5;
+const DOT_ALPHA_BUCKETS = 10;
+const DOT_STYLE_GROUPS = DOT_TONE_BUCKETS * DOT_ALPHA_BUCKETS;
 const STYLE_ALPHA_BUCKETS = 16;
 const WORDMARK_LETTERS = ["A","R","T","E","M","I","S"];
 const RIPPLE_POOL_SIZE = 16;
 const HALO_LIFE = 1.25;
-const BASE_SPIN_RATE = TAU / 60;
+const BASE_SPIN_RATE = TAU / 60; // ops redesign: stately ~60s/rev
 const REFORM_DURATION = 0.72;
 const CAM_DISTANCE = 3.2;
+const DATA_ARC_POOL_SIZE = 10;
+const DATA_ARC_PAIR_COUNT = 40;
+const DATA_ARC_LIFE = 1.2;
+const DATA_ARC_TAIL_STEPS = 8;
+const DATA_ARC_TAIL_SPAN = 0.32;
+const WIRE_PULSE_COUNT = 5;
+const SCAN_INTERVAL = 10;
+const SCAN_DURATION = 2.5;
+const SCAN_RING_STEPS = 64;
 const MOON_COUNT = 11;
 const MOON_SETTLE_TIME = 0.6;
 const MOON_ORBIT_STEPS = 48;
+const MOON_TAIL_SAMPLES = 5;
+const MOON_TAIL_INTERVAL = 0.1;
+const DOT_GLOW_SIZE = 32;
+const ARC_GLOW_SIZE = 48;
+const ATMOSPHERE_SPRITE_SIZE = 256;
 const MOON_LABEL_FONT = '600 9px "JetBrains Mono", monospace';
-const SWEEP_LIFE = 0.8;
-
-// Adaptive Jarvis palette: idle/listening cyan, thinking gold, speaking white-hot.
-const STATE_COLORS = {
-  idle:      { core: [143, 214, 255], ring: [79, 195, 255] },
-  listening: { core: [191, 239, 255], ring: [110, 210, 255] },
-  thinking:  { core: [255, 196, 102], ring: [255, 176, 76] },
-  speaking:  { core: [242, 251, 255], ring: [190, 235, 255] },
-};
-const REACTOR_STATE_KEYS = Object.freeze([
-  "idle",
-  "listening",
-  "thinking",
-  "speaking",
-]);
+const FILAMENT_DASH = Object.freeze([5, 8]);
+const SOLID_LINE = Object.freeze([]);
 
 const MOON_LABELS = Object.freeze([
   "RESEARCH",
@@ -93,6 +103,42 @@ function makeAlphaStyles(prefix, count = STYLE_ALPHA_BUCKETS) {
   return Object.freeze(styles);
 }
 
+function paletteChannels(prefix) {
+  const parts = prefix.slice(5, -1).split(",");
+  return new Float32Array([
+    Number(parts[0]),
+    Number(parts[1]),
+    Number(parts[2])
+  ]);
+}
+
+function makeDotTonePrefixes() {
+  const cyan = paletteChannels(PAL.O);
+  const violet = paletteChannels(PAL.V);
+  const prefixes = new Array(DOT_TONE_BUCKETS);
+  for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
+    const mix = tone / (DOT_TONE_BUCKETS - 1);
+    const r = Math.round(cyan[0] + (violet[0] - cyan[0]) * mix);
+    const g = Math.round(cyan[1] + (violet[1] - cyan[1]) * mix);
+    const b = Math.round(cyan[2] + (violet[2] - cyan[2]) * mix);
+    prefixes[tone] = "rgba(" + r + "," + g + "," + b + ",";
+  }
+  return Object.freeze(prefixes);
+}
+
+function makeDotStyles(prefixes) {
+  const styles = new Array(DOT_TONE_BUCKETS * DOT_ALPHA_BUCKETS);
+  for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
+    for (let alpha = 0; alpha < DOT_ALPHA_BUCKETS; alpha++) {
+      styles[tone * DOT_ALPHA_BUCKETS + alpha] =
+        prefixes[tone] +
+        (alpha / (DOT_ALPHA_BUCKETS - 1)).toFixed(3) +
+        ")";
+    }
+  }
+  return Object.freeze(styles);
+}
+
 function makeGlowSprite(prefix, size, strength) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -116,60 +162,58 @@ function makeGlowSprite(prefix, size, strength) {
   return canvas;
 }
 
-// 60 instrument ticks, every 5th one longer. The sprite spans 1.1 orb radii
-// half-width, so drawing it at 2.2R keeps tick radii proportional at any size.
-function makeTickSprite(rgb, size) {
+function makeLimbSprite(prefix, size) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
   const center = size * 0.5;
-  const unit = center / 1.1;
-  ctx.translate(center, center);
-  ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.9)`;
-  for (let i = 0; i < 60; i++) {
-    const major = i % 5 === 0;
-    const angle = (i / 60) * TAU;
-    const inner = unit * 0.57;
-    const outer = unit * (major ? 0.62 : 0.6);
-    ctx.lineWidth = major ? 3.6 : 2.2;
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
-    ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
-    ctx.stroke();
-  }
-  return canvas;
-}
-
-function makeReactorSprite(rgb, size, halo) {
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const center = size * 0.5;
-  const gradient = ctx.createRadialGradient(
+  const limb = ctx.createRadialGradient(
     center,
     center,
-    halo ? center / 12 : 0,
+    0,
     center,
     center,
     center
   );
-  if (halo) {
-    gradient.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},1)`);
-    gradient.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
-  } else {
-    gradient.addColorStop(0, "rgba(255,255,255,1)");
-    gradient.addColorStop(0.55, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.8)`);
-    gradient.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
-  }
-  ctx.fillStyle = gradient;
+  limb.addColorStop(0, prefix + "0)");
+  limb.addColorStop(0.68, prefix + "0)");
+  limb.addColorStop(0.79, prefix + "0.05)");
+  limb.addColorStop(0.84, prefix + "0.42)");
+  limb.addColorStop(0.9, prefix + "0.16)");
+  limb.addColorStop(1, prefix + "0)");
+  ctx.fillStyle = limb;
   ctx.fillRect(0, 0, size, size);
   return canvas;
 }
 
+function makeNebulaSprite(prefix, size, variant) {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const centerX = size * (variant ? 0.56 : 0.44);
+  const centerY = size * (variant ? 0.44 : 0.56);
+  const nebula = ctx.createRadialGradient(
+    centerX,
+    centerY,
+    0,
+    centerX,
+    centerY,
+    size * 0.5
+  );
+  nebula.addColorStop(0, prefix + (variant ? "0.2)" : "0.17)"));
+  nebula.addColorStop(0.3, prefix + (variant ? "0.12)" : "0.1)"));
+  nebula.addColorStop(0.7, prefix + "0.035)");
+  nebula.addColorStop(1, prefix + "0)");
+  ctx.fillStyle = nebula;
+  ctx.fillRect(0, 0, size, size);
+  return canvas;
+}
+
+const DOT_TONE_PREFIXES = makeDotTonePrefixes();
+const DOT_STYLES = makeDotStyles(DOT_TONE_PREFIXES);
 const O_STYLES = makeAlphaStyles(PAL.O);
-const B_STYLES = makeAlphaStyles(PAL.B);
 const V_STYLES = makeAlphaStyles(PAL.V);
 const HL_STYLES = makeAlphaStyles(PAL.Hl);
 const MAIL_STYLES = makeAlphaStyles(PAL.MAIL);
@@ -207,11 +251,17 @@ const MOON_PREFIXES = Object.freeze([
 const SCENE_WASH = PAL.D + "0.022)";
 const GRID_STYLE = PAL.D + "0.05)";
 
+function hashUnit(value) {
+  const n = Math.sin(value * 12.9898 + 78.233) * 43758.5453;
+  return n - Math.floor(n);
+}
 
 export class VoiceOrb {
   constructor(container, opts = {}) {
     this.container = container;
     if (typeof window !== "undefined") window.__voiceOrb = this;
+    this._breathEnv = 0;
+    this._lastBreathAt = 0;
     this.center = !!opts.center;
     this.reduced = prefersReducedMotion();
     this.status = "idle";
@@ -237,26 +287,175 @@ export class VoiceOrb {
     this._listeningMix = 0;
     this._thinkingMix = 0;
     this._speakingMix = 0;
-    this._coreRGB = [0, 0, 0];
-    this._ringRGB = [0, 0, 0];
-    this._activeMix = 0;
-    this._breathEnv = 0; // slow-eased voice envelope: a swell, not a jitter
-    this._dt = 0;
-    this._ringAngleInner = 0;
-    this._ringAngleOuter = 0;
-    this._tickAngle = 0;
-    this._sweep = { active: 0, t0: 0 }; // one sweep at a time; retrigger restarts
-    // Two hologram gimbal rings: fixed tilt, precessing axis, spinning phase.
-    this._gimbals = [
-      { radius: 1.12, tilt: 62 * DEG, prec: 0.6, precSpeed: 0.09, spin: 0, spinSpeed: 0.5 },
-      { radius: 1.26, tilt: 74 * DEG, prec: 2.1, precSpeed: -0.06, spin: 0, spinSpeed: -0.36 },
-    ];
-    this._globeYaw = 0.78; // boot facing ~15E — Africa/Europe toward camera
+    this._globeYaw = 0;
+    this._cloudYaw = 0;
     this._reformStart = -1;
     this._reformStrength = 0;
     this._reformOvershoot = 0;
     this._lastFrameAt = 0;
     this._elapsed = 0;
+
+    // ---- Particle wireframe: 700 latitude dots + 704 longitude dots ----
+    this._dotBase = new Float32Array(DOT_COUNT * 3);
+    this._dotLatitude = new Float32Array(DOT_COUNT);
+    this._dotTwinkle = new Float32Array(DOT_COUNT);
+    this._dotDelay = new Float32Array(DOT_COUNT);
+    this._dotScatter = new Float32Array(DOT_COUNT * 3);
+    this._dotScreenX = new Float32Array(DOT_COUNT);
+    this._dotScreenY = new Float32Array(DOT_COUNT);
+    this._dotCameraX = new Float32Array(DOT_COUNT);
+    this._dotCameraY = new Float32Array(DOT_COUNT);
+    this._dotDepth = new Float32Array(DOT_COUNT);
+    this._dotRadius = new Float32Array(DOT_COUNT);
+    this._dotBaseSize = new Float32Array(DOT_COUNT);
+    this._dotWireKind = new Uint8Array(DOT_COUNT);
+    this._dotWireChain = new Uint8Array(DOT_COUNT);
+    this._dotWireParam = new Float32Array(DOT_COUNT);
+    this._dotToneBucket = new Uint8Array(DOT_COUNT);
+    this._dotStyleCounts = new Uint16Array(DOT_STYLE_GROUPS);
+    this._dotStyleIndices = new Uint16Array(
+      DOT_STYLE_GROUPS * DOT_COUNT
+    );
+    this._lightBucketCounts = new Uint16Array(6);
+    this._lightBucketIndices = new Uint16Array(6 * DOT_COUNT);
+
+    let dot = 0;
+    for (let ring = 0; ring < DOT_LATITUDES; ring++) {
+      const latitude =
+        -Math.PI * 0.5 + ((ring + 1) / (DOT_LATITUDES + 1)) * Math.PI;
+      const y = Math.sin(latitude);
+      const latitudeRadius = Math.cos(latitude);
+      for (let point = 0; point < DOTS_PER_LATITUDE; point++) {
+        const longitude = (point / DOTS_PER_LATITUDE) * TAU;
+        const offset = dot * 3;
+        this._dotBase[offset] = Math.cos(longitude) * latitudeRadius;
+        this._dotBase[offset + 1] = y;
+        this._dotBase[offset + 2] = Math.sin(longitude) * latitudeRadius;
+        this._dotLatitude[dot] = latitude;
+        this._dotWireKind[dot] = 0;
+        this._dotWireChain[dot] = ring;
+        this._dotWireParam[dot] = point / DOTS_PER_LATITUDE;
+        dot++;
+      }
+    }
+    for (let meridian = 0; meridian < DOT_LONGITUDES; meridian++) {
+      const longitude = (meridian / DOT_LONGITUDES) * TAU;
+      const longitudeCos = Math.cos(longitude);
+      const longitudeSin = Math.sin(longitude);
+      for (let point = 0; point < DOTS_PER_LONGITUDE; point++) {
+        const latitude =
+          -Math.PI * 0.5 +
+          ((point + 0.5) / DOTS_PER_LONGITUDE) * Math.PI;
+        const latitudeRadius = Math.cos(latitude);
+        const offset = dot * 3;
+        this._dotBase[offset] = latitudeRadius * longitudeCos;
+        this._dotBase[offset + 1] = Math.sin(latitude);
+        this._dotBase[offset + 2] = latitudeRadius * longitudeSin;
+        this._dotLatitude[dot] = latitude;
+        this._dotWireKind[dot] = 1;
+        this._dotWireChain[dot] = meridian;
+        this._dotWireParam[dot] = point / (DOTS_PER_LONGITUDE - 1);
+        dot++;
+      }
+    }
+    this._dotCount = dot;
+
+    // Scatter direction, distance, easing delay, and twinkle phase are stable
+    // per dot, so dissolve/reform never creates geometry in the frame loop.
+    for (let i = 0; i < this._dotCount; i++) {
+      const u = hashUnit(i + 1);
+      const v = hashUnit(i + 1019);
+      const w = hashUnit(i + 2039);
+      const d = hashUnit(i + 3079);
+      const scatterY = u * 2 - 1;
+      const scatterRadius = Math.sqrt(Math.max(0, 1 - scatterY * scatterY));
+      const scatterAngle = v * TAU;
+      const scatterMagnitude = 0.08 + w * 0.42;
+      const offset = i * 3;
+      this._dotScatter[offset] =
+        Math.cos(scatterAngle) * scatterRadius * scatterMagnitude;
+      this._dotScatter[offset + 1] = scatterY * scatterMagnitude;
+      this._dotScatter[offset + 2] =
+        Math.sin(scatterAngle) * scatterRadius * scatterMagnitude;
+      this._dotDelay[i] = d * 0.55;
+      this._dotTwinkle[i] = hashUnit(i + 4099) * TAU;
+      this._dotBaseSize[i] =
+        1 + Math.pow(hashUnit(i + 5101), 3.2) * 1.5;
+    }
+
+    // ---- Fixed cinematic pools: data arcs, wire packets, and scan plane ----
+    this._dataArcActive = new Uint8Array(DATA_ARC_POOL_SIZE);
+    this._dataArcFrom = new Uint16Array(DATA_ARC_POOL_SIZE);
+    this._dataArcTo = new Uint16Array(DATA_ARC_POOL_SIZE);
+    this._dataArcTone = new Uint8Array(DATA_ARC_POOL_SIZE);
+    this._dataArcStart = new Float64Array(DATA_ARC_POOL_SIZE);
+    this._dataArcDuration = new Float32Array(DATA_ARC_POOL_SIZE);
+    this._dataArcLift = new Float32Array(DATA_ARC_POOL_SIZE);
+    this._dataArcSampleX = new Float32Array(
+      DATA_ARC_POOL_SIZE * (DATA_ARC_TAIL_STEPS + 1)
+    );
+    this._dataArcSampleY = new Float32Array(
+      DATA_ARC_POOL_SIZE * (DATA_ARC_TAIL_STEPS + 1)
+    );
+    this._dataArcSampleDepth = new Float32Array(
+      DATA_ARC_POOL_SIZE * (DATA_ARC_TAIL_STEPS + 1)
+    );
+    this._dataArcPairFrom = new Uint16Array(DATA_ARC_PAIR_COUNT);
+    this._dataArcPairTo = new Uint16Array(DATA_ARC_PAIR_COUNT);
+    for (let pair = 0; pair < DATA_ARC_PAIR_COUNT; pair++) {
+      const from = (31 + pair * 97) % this._dotCount;
+      let to = (from + 211 + pair * 131) % this._dotCount;
+      for (let attempt = 0; attempt < 24; attempt++) {
+        const fromOffset = from * 3;
+        const toOffset = to * 3;
+        const alignment =
+          this._dotBase[fromOffset] * this._dotBase[toOffset] +
+          this._dotBase[fromOffset + 1] * this._dotBase[toOffset + 1] +
+          this._dotBase[fromOffset + 2] * this._dotBase[toOffset + 2];
+        if (alignment > -0.18 && alignment < 0.72) break;
+        to = (to + 137) % this._dotCount;
+      }
+      this._dataArcPairFrom[pair] = from;
+      this._dataArcPairTo[pair] = to;
+    }
+    this._dataArcSequence = 0;
+    this._nextDataArcAt = 0.18;
+
+    this._wirePulseKind = new Uint8Array(WIRE_PULSE_COUNT);
+    this._wirePulseChain = new Uint8Array(WIRE_PULSE_COUNT);
+    this._wirePulsePosition = new Float32Array(WIRE_PULSE_COUNT);
+    this._wirePulseSpeed = new Float32Array(WIRE_PULSE_COUNT);
+    this._wirePulseDirection = new Int8Array(WIRE_PULSE_COUNT);
+    this._wirePulseWindow = new Float32Array(WIRE_PULSE_COUNT);
+    for (let pulse = 0; pulse < WIRE_PULSE_COUNT; pulse++) {
+      const kind = pulse % 2;
+      this._wirePulseKind[pulse] = kind;
+      this._wirePulseChain[pulse] = kind
+        ? (pulse * 3 + 1) % DOT_LONGITUDES
+        : (pulse * 2 + 1) % DOT_LATITUDES;
+      this._wirePulsePosition[pulse] = hashUnit(pulse + 6203);
+      this._wirePulseSpeed[pulse] =
+        0.12 + hashUnit(pulse + 6301) * 0.1;
+      this._wirePulseDirection[pulse] = pulse % 3 ? 1 : -1;
+      this._wirePulseWindow[pulse] =
+        0.035 + hashUnit(pulse + 6421) * 0.025;
+    }
+
+    this._scanActive = new Uint8Array(1);
+    this._scanStart = new Float64Array(1);
+    this._scanNext = new Float64Array(1);
+    this._scanNext[0] = SCAN_INTERVAL;
+    this._scanLatitude = 0;
+    this._scanRingCos = new Float32Array(SCAN_RING_STEPS);
+    this._scanRingSin = new Float32Array(SCAN_RING_STEPS);
+    this._scanRingX = new Float32Array(SCAN_RING_STEPS);
+    this._scanRingY = new Float32Array(SCAN_RING_STEPS);
+    this._scanRingDepth = new Float32Array(SCAN_RING_STEPS);
+    for (let point = 0; point < SCAN_RING_STEPS; point++) {
+      const angle = (point / SCAN_RING_STEPS) * TAU;
+      this._scanRingCos[point] = Math.cos(angle);
+      this._scanRingSin[point] = Math.sin(angle);
+    }
 
     // ---- Six inclined moon orbits and independent lifecycle slots ----
     this._moonOrbitRadius = new Float32Array(MOON_COUNT);
@@ -300,6 +499,14 @@ export class VoiceOrb {
     this._moonOrbitDepth = new Float32Array(
       MOON_COUNT * MOON_ORBIT_STEPS
     );
+    this._moonTailX = new Float32Array(MOON_COUNT * MOON_TAIL_SAMPLES);
+    this._moonTailY = new Float32Array(MOON_COUNT * MOON_TAIL_SAMPLES);
+    this._moonTailDepth = new Float32Array(
+      MOON_COUNT * MOON_TAIL_SAMPLES
+    );
+    this._moonTailCursor = 0;
+    this._moonTailInitialized = 0;
+    this._nextMoonTailAt = 0;
 
     for (let i = 0; i < MOON_COUNT; i++) {
       const orbitRadius = 1.25 + i * 0.07;
@@ -361,31 +568,142 @@ export class VoiceOrb {
     this.ctx = this.cv.getContext("2d");
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-    // State-color gradients are cached once; frame drawing only crossfades and
-    // scales them, preserving the renderer's no-gradient-allocation convention.
-    this._coreHaloSprites = new Array(REACTOR_STATE_KEYS.length);
-    this._coreDiscSprites = new Array(REACTOR_STATE_KEYS.length);
-    this._coreSpriteWeights = new Float32Array(REACTOR_STATE_KEYS.length);
-    this._tickSprites = new Array(REACTOR_STATE_KEYS.length);
-    for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
-      const key = REACTOR_STATE_KEYS[state];
-      this._coreHaloSprites[state] = makeReactorSprite(STATE_COLORS[key].core, 256, true);
-      this._coreDiscSprites[state] = makeReactorSprite(STATE_COLORS[key].core, 256, false);
-      this._tickSprites[state] = makeTickSprite(STATE_COLORS[key].ring, 512);
+    // A cached PAL.Hl → transparent sprite supplies the subtle inner glow
+    // without allocating a CanvasGradient every frame.
+    this._coreGlow = document.createElement("canvas");
+    this._coreGlow.width = 192;
+    this._coreGlow.height = 192;
+    const glowCtx = this._coreGlow.getContext("2d");
+    const glow = glowCtx.createRadialGradient(96, 96, 0, 96, 96, 96);
+    glow.addColorStop(0, "rgba(207,233,255,0.9)");
+    glow.addColorStop(0.4, "rgba(59,130,246,0.5)");
+    glow.addColorStop(0.75, "rgba(124,92,255,0.22)");
+    glow.addColorStop(1, "rgba(124,92,255,0)");
+    glowCtx.fillStyle = glow;
+    glowCtx.fillRect(0, 0, 192, 192);
+
+    // ---- Layer 3: plexus network — clustered nodes + kNN web ----
+    const PLEX_N = 100;
+    this._plexBase = new Float32Array(PLEX_N * 3);
+    this._plexSize = new Float32Array(PLEX_N);
+    this._plexSX = new Float32Array(PLEX_N);
+    this._plexSY = new Float32Array(PLEX_N);
+    this._plexDepth = new Float32Array(PLEX_N);
+    {
+      const centers = [];
+      for (let c = 0; c < 4; c++) {
+        const th = hashUnit(c * 131 + 7) * TAU, ph = Math.acos(2 * hashUnit(c * 197 + 3) - 1);
+        centers.push([Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th)]);
+      }
+      for (let i = 0; i < PLEX_N; i++) {
+        let x, y, z;
+        if (i < 72) { // clustered: gaussian-ish spread around a center
+          const c = centers[i % 4];
+          x = c[0] + (hashUnit(i * 3 + 11) - 0.5) * 0.62;
+          y = c[1] + (hashUnit(i * 5 + 29) - 0.5) * 0.62;
+          z = c[2] + (hashUnit(i * 7 + 41) - 0.5) * 0.62;
+        } else {      // sparse elsewhere
+          const th = hashUnit(i * 11 + 5) * TAU, ph = Math.acos(2 * hashUnit(i * 13 + 17) - 1);
+          x = Math.sin(ph) * Math.cos(th); y = Math.cos(ph); z = Math.sin(ph) * Math.sin(th);
+        }
+        const n = Math.hypot(x, y, z) || 1;
+        this._plexBase[i * 3] = x / n; this._plexBase[i * 3 + 1] = y / n; this._plexBase[i * 3 + 2] = z / n;
+        this._plexSize[i] = 1 + hashUnit(i * 17 + 23) * 2;
+      }
+      // kNN edges: 2-4 nearest neighbors each, deduplicated
+      const edges = new Set();
+      for (let i = 0; i < PLEX_N; i++) {
+        const dists = [];
+        for (let j = 0; j < PLEX_N; j++) {
+          if (j === i) continue;
+          const dx = this._plexBase[i * 3] - this._plexBase[j * 3];
+          const dy = this._plexBase[i * 3 + 1] - this._plexBase[j * 3 + 1];
+          const dz = this._plexBase[i * 3 + 2] - this._plexBase[j * 3 + 2];
+          dists.push([dx * dx + dy * dy + dz * dz, j]);
+        }
+        dists.sort((a, b) => a[0] - b[0]);
+        const k = 2 + Math.floor(hashUnit(i * 19 + 31) * 3);
+        for (let e = 0; e < k; e++) edges.add(i < dists[e][1] ? i * 1000 + dists[e][1] : dists[e][1] * 1000 + i);
+      }
+      this._plexEdges = Int32Array.from(edges);
+      this._plexAdj = Array.from({ length: PLEX_N }, () => []);
+      for (const key of this._plexEdges) {
+        const a = Math.floor(key / 1000), b = key % 1000;
+        this._plexAdj[a].push(b); this._plexAdj[b].push(a);
+      }
+      this._flareNode = -1; this._flareAt = 0; this._nextFlareAt = 2;
+    }
+    // ---- Layer 4: ambient rising particles ----
+    const AMB_N = 26;
+    this._ambPhase = new Float32Array(AMB_N);
+    this._ambAngle = new Float32Array(AMB_N);
+    this._ambSpeed = new Float32Array(AMB_N);
+    for (let i = 0; i < AMB_N; i++) {
+      this._ambPhase[i] = hashUnit(i * 23 + 3);
+      this._ambAngle[i] = hashUnit(i * 29 + 9) * TAU;
+      this._ambSpeed[i] = 0.05 + hashUnit(i * 31 + 13) * 0.05;
     }
 
-    // Cached moon and atmosphere glows; frame drawing only scales sprites.
+    // Round-two bloom and atmosphere assets. Every gradient is rasterized once
+    // here; the frame loop only scales cached canvases with drawImage().
+    this._dotGlowSprites = new Array(DOT_TONE_BUCKETS);
+    for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
+      this._dotGlowSprites[tone] = makeGlowSprite(
+        DOT_TONE_PREFIXES[tone],
+        DOT_GLOW_SIZE,
+        0.58
+      );
+    }
+    this._highlightGlow = makeGlowSprite(
+      PAL.Hl,
+      DOT_GLOW_SIZE,
+      0.72
+    );
     this._moonGlowSprites = new Array(MOON_COUNT);
     for (let moon = 0; moon < MOON_COUNT; moon++) {
       this._moonGlowSprites[moon] = makeGlowSprite(
         MOON_PREFIXES[moon],
-        32,
+        DOT_GLOW_SIZE,
         0.76
       );
     }
     this._settleGlowSprites = new Array(2);
-    this._settleGlowSprites[0] = makeGlowSprite(PAL.ERR, 32, 0.78);
-    this._settleGlowSprites[1] = makeGlowSprite(PAL.OK, 32, 0.78);
+    this._settleGlowSprites[0] = makeGlowSprite(
+      PAL.ERR,
+      DOT_GLOW_SIZE,
+      0.78
+    );
+    this._settleGlowSprites[1] = makeGlowSprite(
+      PAL.OK,
+      DOT_GLOW_SIZE,
+      0.78
+    );
+    this._arcHeadGlow = new Array(2);
+    this._arcHeadGlow[0] = makeGlowSprite(
+      PAL.O,
+      ARC_GLOW_SIZE,
+      0.78
+    );
+    this._arcHeadGlow[1] = makeGlowSprite(
+      PAL.V,
+      ARC_GLOW_SIZE,
+      0.78
+    );
+    this._limbGlow = makeLimbSprite(
+      PAL.O,
+      ATMOSPHERE_SPRITE_SIZE
+    );
+    this._nebulaSprites = new Array(2);
+    this._nebulaSprites[0] = makeNebulaSprite(
+      PAL.V,
+      ATMOSPHERE_SPRITE_SIZE,
+      0
+    );
+    this._nebulaSprites[1] = makeNebulaSprite(
+      PAL.V,
+      ATMOSPHERE_SPRITE_SIZE,
+      1
+    );
 
     this._mouse = { x: 0, y: 0 };
     this._mx = 0;
@@ -464,6 +782,7 @@ export class VoiceOrb {
       }
       ctx.restore();
     }
+    this._moonTailInitialized = 0;
   }
 
   setStatus(status) {
@@ -482,6 +801,7 @@ export class VoiceOrb {
           this._reformStart = time;
           this._reformStrength = this.reduced ? 0 : this._thinkingMix;
         } else if (status === "thinking") {
+          this._cloudYaw = 0;
           this._reformStart = -1;
           this._reformStrength = 0;
           this._reformOvershoot = 0;
@@ -504,7 +824,7 @@ export class VoiceOrb {
   }
 
   // Boot ignition: three staggered halo ripples plus a breath kick — the
-  // reactor powers up as the HUD assembles. Safe to call any time.
+  // reactor powers up as the HUD assembles. Called by the boot sequence.
   ignite() {
     const time = this.reduced ? 0 : this._elapsed || 0;
     this._emitRipple(time, 1);
@@ -556,9 +876,6 @@ export class VoiceOrb {
 
     const moon = FAMILY_MOONS[familyIndex];
     if (phase === "start") {
-      // A firing tool call sends a bright highlight along the inner ring.
-      this._sweep.active = 1;
-      this._sweep.t0 = this.reduced ? 0 : this._elapsed;
       if (this._moonSettleTimers[moon]) {
         clearTimeout(this._moonSettleTimers[moon]);
         this._moonSettleTimers[moon] = 0;
@@ -601,6 +918,31 @@ export class VoiceOrb {
     }
     this._ripples[slot].t0 = time;
     this._ripples[slot].e = Math.max(0, Math.min(1, energy));
+  }
+
+  _launchDataArc(time, violet) {
+    let slot = -1;
+    let oldest = 0;
+    for (let i = 0; i < DATA_ARC_POOL_SIZE; i++) {
+      if (!this._dataArcActive[i]) {
+        slot = i;
+        break;
+      }
+      if (this._dataArcStart[i] < this._dataArcStart[oldest]) oldest = i;
+    }
+    if (slot < 0) slot = oldest;
+
+    const sequence = this._dataArcSequence++;
+    const pair = sequence % DATA_ARC_PAIR_COUNT;
+    this._dataArcActive[slot] = 1;
+    this._dataArcFrom[slot] = this._dataArcPairFrom[pair];
+    this._dataArcTo[slot] = this._dataArcPairTo[pair];
+    this._dataArcTone[slot] = violet ? 1 : 0;
+    this._dataArcStart[slot] = time;
+    this._dataArcDuration[slot] =
+      DATA_ARC_LIFE * (0.92 + hashUnit(sequence + 7013) * 0.16);
+    this._dataArcLift[slot] =
+      0.14 + hashUnit(sequence + 7103) * 0.15;
   }
 
   // ---- Audio plumbing (public behavior preserved) ----
@@ -673,20 +1015,6 @@ export class VoiceOrb {
     return Math.min(1, (sum / this.freq.length / 255) * 1.6);
   }
 
-  _blendPalette(out, key) {
-    const idle = STATE_COLORS.idle[key];
-    const listen = STATE_COLORS.listening[key];
-    const think = STATE_COLORS.thinking[key];
-    const speak = STATE_COLORS.speaking[key];
-    for (let channel = 0; channel < 3; channel++) {
-      let value = idle[channel];
-      value += (listen[channel] - value) * this._listeningMix;
-      value += (think[channel] - value) * this._thinkingMix;
-      value += (speak[channel] - value) * this._speakingMix;
-      out[channel] = value | 0;
-    }
-  }
-
   // ---- Animation/state loop ----
   _loop() {
     if (this._disposed) return;
@@ -696,29 +1024,64 @@ export class VoiceOrb {
     const dt = this.reduced
       ? 0
       : Math.max(0, Math.min(0.05, (now - this._lastFrameAt) / 1000));
-    this._dt = dt;
     this._lastFrameAt = now;
     this._elapsed = (now - this._t0) / 1000;
     const time = this.reduced ? 0 : this._elapsed;
 
     const stateEase = this.reduced ? 1 : 1 - Math.exp(-dt * 7);
     const listeningTarget = this.status === "listening" ? 1 : 0;
-    const thinkingTarget = this.status === "thinking" ? 1 : 0;
+    const thinkingTarget =
+      !this.reduced && this.status === "thinking" ? 1 : 0;
     const speakingTarget = this.status === "speaking" ? 1 : 0;
     this._listeningMix +=
       (listeningTarget - this._listeningMix) * stateEase;
     this._thinkingMix += (thinkingTarget - this._thinkingMix) * stateEase;
     this._speakingMix += (speakingTarget - this._speakingMix) * stateEase;
-    this._blendPalette(this._coreRGB, "core");
-    this._blendPalette(this._ringRGB, "ring");
-    this._activeMix = Math.max(
-      this._listeningMix,
-      Math.max(this._thinkingMix, this._speakingMix)
-    );
 
     if (!this.reduced) {
       this._globeYaw +=
         dt * BASE_SPIN_RATE * (1 + this._listeningMix * 1.5);
+      this._cloudYaw += dt * 0.18 * this._thinkingMix;
+
+      const pulseRate =
+        1 + this._thinkingMix * 0.7 + this._speakingMix * 0.45;
+      for (let pulse = 0; pulse < WIRE_PULSE_COUNT; pulse++) {
+        let position =
+          this._wirePulsePosition[pulse] +
+          this._wirePulseSpeed[pulse] *
+            this._wirePulseDirection[pulse] *
+            dt *
+            pulseRate;
+        if (this._wirePulseKind[pulse] === 0) {
+          if (position < 0) position += 1;
+          if (position >= 1) position -= 1;
+        } else if (position < 0 || position > 1) {
+          position = position < 0 ? -position : 2 - position;
+          this._wirePulseDirection[pulse] *= -1;
+        }
+        this._wirePulsePosition[pulse] = position;
+      }
+
+      if (!this._scanActive[0] && time >= this._scanNext[0]) {
+        this._scanActive[0] = 1;
+        this._scanStart[0] = time;
+        this._scanNext[0] = time + SCAN_INTERVAL;
+      } else if (
+        this._scanActive[0] &&
+        time - this._scanStart[0] >= SCAN_DURATION
+      ) {
+        this._scanActive[0] = 0;
+      }
+
+      for (let arc = 0; arc < DATA_ARC_POOL_SIZE; arc++) {
+        if (
+          this._dataArcActive[arc] &&
+          time - this._dataArcStart[arc] >=
+            this._dataArcDuration[arc]
+        ) {
+          this._dataArcActive[arc] = 0;
+        }
+      }
     }
 
     this._reformOvershoot = 0;
@@ -805,11 +1168,27 @@ export class VoiceOrb {
     this.cur.amp += (raw - this.cur.amp) * ampEase;
     const amp = this.cur.amp;
     window.__artemisAmp = amp;
-    // Breathing envelope: chases amp slowly in both directions so the core
+    // Breathing envelope: chases amp slowly both ways so the reactor heart
     // swells and relaxes with the rhythm of speech instead of twitching.
     this._breathEnv +=
-      (amp - this._breathEnv) * (this.reduced ? 1 : 1 - Math.exp(-dt * 3.2));
+      (amp - this._breathEnv) *
+      (this.reduced ? 1 : 1 - Math.exp(-((time - (this._lastBreathAt || time)) || 0.016) * 3.2));
+    this._lastBreathAt = time;
 
+    if (!this.reduced && time >= this._nextDataArcAt) {
+      this._launchDataArc(time, this.status === "thinking");
+      const baseInterval =
+        0.25 + hashUnit(this._dataArcSequence + 7307) * 0.25;
+      // Everything reacts: her voice drives arc traffic up alongside state.
+      const stateRate =
+        (this.status === "thinking"
+          ? 3
+          : this.status === "speaking"
+            ? 1.65
+            : 1) *
+        (1 + amp * 1.6);
+      this._nextDataArcAt = time + baseInterval / stateRate;
+    }
 
     if (
       !this.reduced &&
@@ -831,6 +1210,7 @@ export class VoiceOrb {
       time - this._lastRipple > 0.16;
     if (speakingPeak) {
       this._emitRipple(time, amp);
+      this._launchDataArc(time, false);
       this._lastRipple = time;
     }
     this._prevAmp = amp;
@@ -902,6 +1282,287 @@ export class VoiceOrb {
     const yawSin = Math.sin(yaw);
     const pitchCos = Math.cos(pitch);
     const pitchSin = Math.sin(pitch);
+    this._fYawCos = yawCos; this._fYawSin = yawSin;
+    this._fPitchCos = pitchCos; this._fPitchSin = pitchSin;
+    const swirlYaw = this._cloudYaw;
+    const swirlPitch = Math.sin(this._cloudYaw * 0.65) * 0.12;
+    const swirlYawCos = Math.cos(swirlYaw);
+    const swirlYawSin = Math.sin(swirlYaw);
+    const swirlPitchCos = Math.cos(swirlPitch);
+    const swirlPitchSin = Math.sin(swirlPitch);
+    const voiceStateMix = Math.min(
+      1,
+      this._speakingMix + this._listeningMix
+    );
+    const waveAmount = this.reduced ? 0 : amp * voiceStateMix * 0.12;
+    const scanVisible = !this.reduced && this._scanActive[0] !== 0;
+    if (scanVisible) {
+      const scanProgress = Math.max(
+        0,
+        Math.min(
+          1,
+          (time - this._scanStart[0]) / SCAN_DURATION
+        )
+      );
+      this._scanLatitude = -Math.PI * 0.5 + scanProgress * Math.PI;
+    }
+
+    for (let group = 0; group < DOT_STYLE_GROUPS; group++) {
+      this._dotStyleCounts[group] = 0;
+    }
+    for (let bucket = 0; bucket < 6; bucket++) {
+      this._lightBucketCounts[bucket] = 0;
+    }
+
+    for (let i = 0; i < this._dotCount; i++) {
+      let pulseLight = 0;
+      const wireKind = this._dotWireKind[i];
+      const wireChain = this._dotWireChain[i];
+      const wireParam = this._dotWireParam[i];
+      for (let pulse = 0; pulse < WIRE_PULSE_COUNT; pulse++) {
+        if (
+          this._wirePulseKind[pulse] !== wireKind ||
+          this._wirePulseChain[pulse] !== wireChain
+        ) {
+          continue;
+        }
+        let distance = Math.abs(
+          wireParam - this._wirePulsePosition[pulse]
+        );
+        if (wireKind === 0) distance = Math.min(distance, 1 - distance);
+        const pulseWindow = this._wirePulseWindow[pulse];
+        if (distance < pulseWindow) {
+          let light = 1 - distance / pulseWindow;
+          light = light * light * (3 - 2 * light);
+          if (light > pulseLight) pulseLight = light;
+        }
+      }
+
+      let scanLight = 0;
+      if (scanVisible) {
+        const scanDistance = Math.abs(
+          this._dotLatitude[i] - this._scanLatitude
+        );
+        if (scanDistance < 0.12) {
+          scanLight = 1 - scanDistance / 0.12;
+          scanLight =
+            scanLight * scanLight * (3 - 2 * scanLight);
+        }
+      }
+      const lightBoost = Math.max(pulseLight, scanLight);
+      const lightBucket = Math.min(
+        5,
+        Math.round(lightBoost * 5)
+      );
+      if (lightBucket) {
+        const lightCount = this._lightBucketCounts[lightBucket];
+        this._lightBucketIndices[
+          lightBucket * DOT_COUNT + lightCount
+        ] = i;
+        this._lightBucketCounts[lightBucket] = lightCount + 1;
+      }
+
+      const offset = i * 3;
+      const wave =
+        (1 +
+          Math.sin(this._dotLatitude[i] * 5 - time * 3.1) *
+            waveAmount) *
+        (1 + scanLight * 0.035);
+      const baseX = this._dotBase[offset] * wave;
+      const baseY = this._dotBase[offset + 1] * wave;
+      const baseZ = this._dotBase[offset + 2] * wave;
+
+      const delay = this._dotDelay[i];
+      let dissolve = (this._thinkingMix - delay) / (1 - delay);
+      dissolve = Math.max(0, Math.min(1, dissolve));
+      dissolve = dissolve * dissolve * (3 - 2 * dissolve);
+
+      const targetX = baseX + this._dotScatter[offset];
+      const targetY = baseY + this._dotScatter[offset + 1];
+      const targetZ = baseZ + this._dotScatter[offset + 2];
+      const swirlX = targetX * swirlYawCos + targetZ * swirlYawSin;
+      const swirlZ = -targetX * swirlYawSin + targetZ * swirlYawCos;
+      const swirlY2 = targetY * swirlPitchCos - swirlZ * swirlPitchSin;
+      const swirlZ2 = targetY * swirlPitchSin + swirlZ * swirlPitchCos;
+      const reform =
+        this._reformOvershoot * (1 - dissolve) * (0.75 + delay * 0.4);
+      const scatterMix = dissolve - reform;
+
+      const pointX =
+        (baseX + (swirlX - baseX) * scatterMix) * sphereScale;
+      const pointY =
+        (baseY + (swirlY2 - baseY) * scatterMix) * sphereScale;
+      const pointZ =
+        (baseZ + (swirlZ2 - baseZ) * scatterMix) * sphereScale;
+
+      const cameraX = pointX * yawCos + pointZ * yawSin;
+      const cameraZ = -pointX * yawSin + pointZ * yawCos;
+      const cameraY = pointY * pitchCos - cameraZ * pitchSin;
+      const depth = pointY * pitchSin + cameraZ * pitchCos;
+      const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
+
+      this._dotCameraX[i] = cameraX;
+      this._dotCameraY[i] = cameraY;
+      this._dotScreenX[i] = cameraX * radius * perspective;
+      this._dotScreenY[i] = cameraY * radius * perspective;
+      this._dotDepth[i] = depth;
+
+      const depthLight = Math.max(
+        0,
+        Math.min(1, (depth + 1.55) / 3.1)
+      );
+      const twinkle =
+        0.78 + 0.22 * Math.sin(time * 1.35 + this._dotTwinkle[i]);
+      // ~15% hero dots at full intensity give the sphere depth; the rest
+      // stay dimmer so it reads as a body, not an even haze
+      const hero = (hashUnit(i + 7717) < 0.15 ? 1.45 : 0.85) * 0.55;
+      const dotAlpha = Math.min(
+        1,
+        (0.1 + depthLight * 0.82) *
+            twinkle * hero *
+            (1 + this._listeningMix * 0.32) +
+          lightBoost * 0.62
+      );
+      const alphaBucket = Math.max(
+        1,
+        Math.min(
+          DOT_ALPHA_BUCKETS - 1,
+          Math.round(dotAlpha * (DOT_ALPHA_BUCKETS - 1))
+        )
+      );
+      const violetMix = Math.max(
+        0,
+        Math.min(1, 0.5 + cameraX * 0.42 - depth * 0.06)
+      );
+      const toneBucket = Math.max(
+        0,
+        Math.min(
+          DOT_TONE_BUCKETS - 1,
+          Math.round(violetMix * (DOT_TONE_BUCKETS - 1))
+        )
+      );
+      this._dotToneBucket[i] = toneBucket;
+      const styleGroup =
+        toneBucket * DOT_ALPHA_BUCKETS + alphaBucket;
+      const styleCount = this._dotStyleCounts[styleGroup];
+      this._dotStyleIndices[
+        styleGroup * DOT_COUNT + styleCount
+      ] = i;
+      this._dotStyleCounts[styleGroup] = styleCount + 1;
+      this._dotRadius[i] = Math.max(
+        1.4,
+        Math.min(
+          3.8,
+          this._dotBaseSize[i] *
+            (0.9 + depthLight * 0.1) *
+            (0.94 + perspective * 0.06) *
+            (1 + lightBoost * 0.12)
+        )
+      );
+    }
+
+    if (scanVisible) {
+      const scanCos = Math.cos(this._scanLatitude);
+      const scanY =
+        Math.sin(this._scanLatitude) * sphereScale * 1.035;
+      const scanRadius = scanCos * sphereScale * 1.035;
+      for (let point = 0; point < SCAN_RING_STEPS; point++) {
+        const pointX = this._scanRingCos[point] * scanRadius;
+        const pointZ = this._scanRingSin[point] * scanRadius;
+        const cameraX = pointX * yawCos + pointZ * yawSin;
+        const cameraZ = -pointX * yawSin + pointZ * yawCos;
+        const cameraY = scanY * pitchCos - cameraZ * pitchSin;
+        const depth = scanY * pitchSin + cameraZ * pitchCos;
+        const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
+        this._scanRingX[point] = cameraX * radius * perspective;
+        this._scanRingY[point] = cameraY * radius * perspective;
+        this._scanRingDepth[point] = depth;
+      }
+    }
+
+    for (let arc = 0; arc < DATA_ARC_POOL_SIZE; arc++) {
+      if (!this._dataArcActive[arc]) continue;
+      const from = this._dataArcFrom[arc];
+      const to = this._dataArcTo[arc];
+      const fromX = this._dotCameraX[from];
+      const fromY = this._dotCameraY[from];
+      const fromZ = this._dotDepth[from];
+      const toX = this._dotCameraX[to];
+      const toY = this._dotCameraY[to];
+      const toZ = this._dotDepth[to];
+      const middleX = (fromX + toX) * 0.5;
+      const middleY = (fromY + toY) * 0.5;
+      const middleZ = (fromZ + toZ) * 0.5;
+      let directionLength = Math.sqrt(
+        middleX * middleX +
+          middleY * middleY +
+          middleZ * middleZ
+      );
+      let directionX = middleX;
+      let directionY = middleY;
+      let directionZ = middleZ;
+      if (directionLength < 0.001) {
+        directionX = fromX;
+        directionY = fromY;
+        directionZ = fromZ;
+        directionLength = Math.max(
+          0.001,
+          Math.sqrt(
+            directionX * directionX +
+              directionY * directionY +
+              directionZ * directionZ
+          )
+        );
+      }
+      directionX /= directionLength;
+      directionY /= directionLength;
+      directionZ /= directionLength;
+      const fromLength = Math.sqrt(
+        fromX * fromX + fromY * fromY + fromZ * fromZ
+      );
+      const toLength = Math.sqrt(
+        toX * toX + toY * toY + toZ * toZ
+      );
+      const crest =
+        (fromLength + toLength) * 0.5 + this._dataArcLift[arc];
+      const controlX = directionX * crest * 2 - middleX;
+      const controlY = directionY * crest * 2 - middleY;
+      const controlZ = directionZ * crest * 2 - middleZ;
+      const progress = Math.max(
+        0,
+        Math.min(
+          1,
+          (time - this._dataArcStart[arc]) /
+            this._dataArcDuration[arc]
+        )
+      );
+      const tailStart = Math.max(0, progress - DATA_ARC_TAIL_SPAN);
+      const sampleBase = arc * (DATA_ARC_TAIL_STEPS + 1);
+      for (let sample = 0; sample <= DATA_ARC_TAIL_STEPS; sample++) {
+        const sampleMix = sample / DATA_ARC_TAIL_STEPS;
+        const u = tailStart + (progress - tailStart) * sampleMix;
+        const inverse = 1 - u;
+        const cameraX =
+          inverse * inverse * fromX +
+          2 * inverse * u * controlX +
+          u * u * toX;
+        const cameraY =
+          inverse * inverse * fromY +
+          2 * inverse * u * controlY +
+          u * u * toY;
+        const depth =
+          inverse * inverse * fromZ +
+          2 * inverse * u * controlZ +
+          u * u * toZ;
+        const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
+        const sampleOffset = sampleBase + sample;
+        this._dataArcSampleX[sampleOffset] =
+          cameraX * radius * perspective;
+        this._dataArcSampleY[sampleOffset] =
+          cameraY * radius * perspective;
+        this._dataArcSampleDepth[sampleOffset] = depth;
+      }
+    }
 
     for (let i = 0; i < MOON_COUNT; i++) {
       const orbitAngle =
@@ -989,6 +1650,31 @@ export class VoiceOrb {
       }
     }
 
+    if (!this._moonTailInitialized) {
+      this._moonTailCursor = 0;
+      for (let moon = 0; moon < MOON_COUNT; moon++) {
+        const tailBase = moon * MOON_TAIL_SAMPLES;
+        for (let sample = 0; sample < MOON_TAIL_SAMPLES; sample++) {
+          const tailOffset = tailBase + sample;
+          this._moonTailX[tailOffset] = this._moonScreenX[moon];
+          this._moonTailY[tailOffset] = this._moonScreenY[moon];
+          this._moonTailDepth[tailOffset] = this._moonDepth[moon];
+        }
+      }
+      this._moonTailInitialized = 1;
+      this._nextMoonTailAt = time + MOON_TAIL_INTERVAL;
+    } else if (!this.reduced && time >= this._nextMoonTailAt) {
+      this._moonTailCursor =
+        (this._moonTailCursor + 1) % MOON_TAIL_SAMPLES;
+      for (let moon = 0; moon < MOON_COUNT; moon++) {
+        const tailOffset =
+          moon * MOON_TAIL_SAMPLES + this._moonTailCursor;
+        this._moonTailX[tailOffset] = this._moonScreenX[moon];
+        this._moonTailY[tailOffset] = this._moonScreenY[moon];
+        this._moonTailDepth[tailOffset] = this._moonDepth[moon];
+      }
+      this._nextMoonTailAt = time + MOON_TAIL_INTERVAL;
+    }
 
     ctx.save();
     ctx.translate(centerX, centerY);
@@ -996,12 +1682,65 @@ export class VoiceOrb {
     ctx.globalAlpha = hudAlpha;
     ctx.globalCompositeOperation = "lighter";
 
-    this._drawGimbal(false, time, silhouetteRadius);
+    this._drawNebula(time, silhouetteRadius);
+    this._drawProjectorBase(time, silhouetteRadius);
+    this._drawLimb(silhouetteRadius);
     this._drawOrbitPass(false);
+    this._drawMoonTailPass(false);
     this._drawMoonLightPass(false, time, silhouetteRadius);
+    this._drawWirePass(false);
+    this._drawDotGlowPass(false);
+    this._drawDotPass(false);
+    this._drawLightPacketPass(false);
+    this._drawDataArcPass(false);
+    this._drawScanPass(false);
 
-    this._drawCore(time, silhouetteRadius);
-    this._drawInstrumentRings(time, silhouetteRadius);
+    // Reactor heart: the original hologram keeps its bloom, but the center is
+    // now a breathing arc-reactor — idle breath (~4s) plus the smoothed voice
+    // envelope swelling it, a 10-segment coil ring, and a crisp rim so the
+    // core always reads as an object inside the dot cloud.
+    const breath = this.reduced ? 0 : 0.05 * Math.sin(time * (TAU / 4));
+    const corePulse =
+      (this.reduced ? 1 : 1 + 0.06 * (0.5 + 0.5 * Math.sin(time * (TAU / 5)))) *
+      (1 + breath + this._breathEnv * 0.22);
+    const glowSize = silhouetteRadius * 0.7 * corePulse;
+    ctx.globalAlpha =
+      Math.min(1, hudAlpha * (1.0 + this._listeningMix * 0.1 + amp * 0.1));
+    ctx.drawImage(
+      this._coreGlow,
+      -glowSize * 0.5,
+      -glowSize * 0.5,
+      glowSize,
+      glowSize
+    );
+    {
+      const coreR = silhouetteRadius * 0.19 * (1 + breath + this._breathEnv * 0.25);
+      ctx.globalAlpha = hudAlpha;
+      // crisp rim
+      ctx.lineWidth = Math.max(1.6, silhouetteRadius * 0.016);
+      ctx.strokeStyle = `rgba(165,230,255,${(0.55 + this._breathEnv * 0.35).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, coreR, 0, TAU);
+      ctx.stroke();
+      // coil ring — 10 winding segments, slow spin, brightening with her voice
+      const coilInner = coreR * 1.1;
+      const coilOuter = coreR * 1.38;
+      const coilSpin = this.reduced ? 0 : time * 0.05;
+      ctx.lineWidth = Math.max(1.8, silhouetteRadius * 0.02);
+      ctx.lineCap = "round";
+      for (let i = 0; i < 10; i++) {
+        const angle = coilSpin + (i / 10) * TAU;
+        const flicker = this.reduced
+          ? 0
+          : this._thinkingMix * 0.22 * Math.sin(time * 7 + i * 2.4);
+        ctx.strokeStyle = `rgba(140,225,255,${(0.5 + this._breathEnv * 0.35 + flicker).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(angle) * coilInner, Math.sin(angle) * coilInner);
+        ctx.lineTo(Math.cos(angle) * coilOuter, Math.sin(angle) * coilOuter);
+        ctx.stroke();
+      }
+      ctx.lineCap = "butt";
+    }
 
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = hudAlpha;
@@ -1009,10 +1748,20 @@ export class VoiceOrb {
 
     ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = hudAlpha;
+    this._drawWirePass(true);
+    this._drawLatLongWires(silhouetteRadius);
+    this._drawPlexus(time, silhouetteRadius);
+    this._drawAmbientRise(time, silhouetteRadius);
+    this._drawDotGlowPass(true);
+    this._drawDotPass(true);
+    this._drawLightPacketPass(true);
+    this._drawDataArcPass(true);
+    this._drawScanPass(true);
     this._drawHalos(time, silhouetteRadius);
-    this._drawGimbal(true, time, silhouetteRadius);
     this._drawOrbitPass(true);
+    this._drawMoonTailPass(true);
     this._drawMoonLightPass(true, time, silhouetteRadius);
+    this._drawMoonTethers(time, silhouetteRadius);
 
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = hudAlpha;
@@ -1064,236 +1813,63 @@ export class VoiceOrb {
     ctx.restore();
   }
 
-
-  _drawCore(time, R) {
+  _drawNebula(time, silhouetteRadius) {
     const ctx = this.ctx;
-    const [r, g, b] = this._coreRGB;
-    const env = this._breathEnv;
-    // The core carries the life: a deep idle breath (~4s) plus the smoothed
-    // voice envelope swelling it up to +25%. Frozen under reduced motion.
-    const breath = this.reduced ? 0 : 0.06 * Math.sin(time * (TAU / 4));
-    const coreR = R * 0.35 * (1 + breath + env * 0.25);
+    const driftTime = this.reduced ? 0 : time;
+    const tightness = 1 - this._listeningMix * 0.16;
+    const firstWidth = silhouetteRadius * 3.45 * tightness;
+    const firstHeight = silhouetteRadius * 2.35 * tightness;
+    const firstX =
+      Math.sin(driftTime * 0.055 + 0.6) * silhouetteRadius * 0.18;
+    const firstY =
+      Math.cos(driftTime * 0.041 + 1.1) * silhouetteRadius * 0.13;
+    const secondWidth = silhouetteRadius * 2.8 * tightness;
+    const secondHeight = silhouetteRadius * 3.05 * tightness;
+    const secondX =
+      Math.cos(driftTime * 0.047 + 2.2) * silhouetteRadius * 0.2;
+    const secondY =
+      Math.sin(driftTime * 0.063 + 0.3) * silhouetteRadius * 0.15;
 
-    const listeningRemainder = 1 - this._listeningMix;
-    const thinkingRemainder = 1 - this._thinkingMix;
-    const speakingRemainder = 1 - this._speakingMix;
-    this._coreSpriteWeights[0] =
-      listeningRemainder * thinkingRemainder * speakingRemainder;
-    this._coreSpriteWeights[1] =
-      this._listeningMix * thinkingRemainder * speakingRemainder;
-    this._coreSpriteWeights[2] = this._thinkingMix * speakingRemainder;
-    this._coreSpriteWeights[3] = this._speakingMix;
-
-    // Outer halo (wide soft bloom), crossfaded through cached state sprites.
-    // Capped so the peak stays a glow, never a white-out.
-    const haloSize = coreR * 3.6;
-    const haloAlpha = Math.min(0.5, 0.34 + env * 0.24);
-    for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
-      const weight = this._coreSpriteWeights[state];
-      if (weight <= 0.002) continue;
-      ctx.globalAlpha = this._sceneAlpha * haloAlpha * weight;
-      ctx.drawImage(
-        this._coreHaloSprites[state],
-        -haloSize * 0.5,
-        -haloSize * 0.5,
-        haloSize,
-        haloSize
-      );
-    }
-
-    // Inner disc: white-hot center falling to the eased state color. Alpha
-    // breathes with the idle cycle and is capped so structure stays visible.
-    const discSize = coreR * 2;
-    const discBreath = this.reduced ? 0 : 0.06 * Math.sin(time * (TAU / 4));
-    const discAlpha = Math.min(0.8, 0.66 + discBreath + env * 0.1);
-    for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
-      const weight = this._coreSpriteWeights[state];
-      if (weight <= 0.002) continue;
-      ctx.globalAlpha = this._sceneAlpha * discAlpha * weight;
-      ctx.drawImage(
-        this._coreDiscSprites[state],
-        -discSize * 0.5,
-        -discSize * 0.5,
-        discSize,
-        discSize
-      );
-    }
-
-    // Crisp rim: a solid edge at the disc boundary keeps the core reading as
-    // an object even at full speaking brightness — never a shapeless blob.
+    ctx.globalAlpha =
+      this._sceneAlpha * (0.72 - this._listeningMix * 0.08);
+    ctx.drawImage(
+      this._nebulaSprites[0],
+      firstX - firstWidth * 0.5,
+      firstY - firstHeight * 0.5,
+      firstWidth,
+      firstHeight
+    );
+    ctx.globalAlpha =
+      this._sceneAlpha * (0.58 - this._listeningMix * 0.05);
+    ctx.drawImage(
+      this._nebulaSprites[1],
+      secondX - secondWidth * 0.5,
+      secondY - secondHeight * 0.5,
+      secondWidth,
+      secondHeight
+    );
     ctx.globalAlpha = this._sceneAlpha;
-    ctx.lineWidth = Math.max(2, R * 0.028);
-    ctx.strokeStyle = `rgba(${r},${g},${b},${(0.75 + env * 0.25).toFixed(3)})`;
-    ctx.beginPath();
-    ctx.arc(0, 0, coreR, 0, TAU);
-    ctx.stroke();
-
-    // Coil ring: 10 bold winding segments just outside the disc. Fixed length
-    // — no waveform spikes — but they brighten together as her voice swells.
-    // Thinking flicker: subtle alpha wobble, frozen when reduced.
-    const coilInner = coreR * 1.08;
-    const coilOuter = coreR * 1.34;
-    const spin = this.reduced ? 0 : time * 0.05;
-    ctx.lineWidth = Math.max(2.5, R * 0.034);
-    ctx.lineCap = "round";
-    for (let i = 0; i < 10; i++) {
-      const angle = spin + (i / 10) * TAU;
-      const flicker = this.reduced
-        ? 0
-        : this._thinkingMix * 0.25 * Math.sin(time * 7 + i * 2.4);
-      ctx.strokeStyle = `rgba(${r},${g},${b},${(0.6 + env * 0.3 + flicker).toFixed(3)})`;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(angle) * coilInner, Math.sin(angle) * coilInner);
-      ctx.lineTo(Math.cos(angle) * coilOuter, Math.sin(angle) * coilOuter);
-      ctx.stroke();
-    }
-    ctx.lineCap = "butt";
   }
 
-
-
-  // Two counter-rotating segmented rings + the tick ring + the tool-call
-  // sweep. Runs after _drawCore, which populates _coreSpriteWeights for the
-  // tick-sprite state crossfade.
-  _drawInstrumentRings(time, R) {
+  _drawLimb(silhouetteRadius) {
     const ctx = this.ctx;
-    const [r, g, b] = this._ringRGB;
-    // Organic drive: rotation surges and relaxes on slow offset sine cycles
-    // (never a constant-speed spinner), voice swell adds urgency on top.
-    const speed = 1 + this._activeMix * 2 + this._breathEnv * 0.8;
-    if (!this.reduced) {
-      // Surge floor at ~50% so the rings never crawl to a near-stop — the
-      // 10% floor read as "frozen" for whole seconds at real app scale.
-      const t = time;
-      this._ringAngleInner +=
-        this._dt * 0.34 * speed * (0.75 + 0.25 * Math.sin(t * 0.31));
-      this._ringAngleOuter -=
-        this._dt * 0.24 * speed * (0.75 + 0.25 * Math.sin(t * 0.23 + 2.1));
-      this._tickAngle +=
-        this._dt * 0.06 * speed * (0.8 + 0.2 * Math.sin(t * 0.17 + 4.2));
-    }
-    const tickBoost = this._listeningMix * 0.3;
-
-    // Inner ring: 5 segments x 50 deg. Outer ring: 8 segments x 33 deg.
-    // Bold rounded strokes — solid holographic hardware, not wireframe.
-    ctx.lineCap = "round";
-    ctx.strokeStyle = `rgba(${r},${g},${b},${(0.6 + tickBoost).toFixed(3)})`;
-    ctx.lineWidth = Math.max(2.5, R * 0.03);
-    for (let i = 0; i < 5; i++) {
-      const start = this._ringAngleInner + (i / 5) * TAU;
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.5, start, start + 50 * DEG);
-      ctx.stroke();
-    }
-    ctx.lineWidth = Math.max(2, R * 0.02);
-    for (let i = 0; i < 8; i++) {
-      const start = this._ringAngleOuter + (i / 8) * TAU;
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.68, start, start + 33 * DEG);
-      ctx.stroke();
-    }
-    ctx.lineCap = "butt";
-
-    // Tick ring: cached per-state sprites, crossfaded like the core.
-    const tickSize = R * 2.2;
-    ctx.save();
-    ctx.rotate(this._tickAngle);
-    for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
-      const weight = this._coreSpriteWeights[state];
-      if (weight <= 0.002) continue;
-      ctx.globalAlpha = this._sceneAlpha * (0.4 + tickBoost) * weight;
-      ctx.drawImage(
-        this._tickSprites[state],
-        -tickSize * 0.5,
-        -tickSize * 0.5,
-        tickSize,
-        tickSize
-      );
-    }
-    ctx.restore();
+    const size = silhouetteRadius * 2.46;
+    ctx.globalAlpha =
+      this._sceneAlpha * (0.66 + this._listeningMix * 0.34);
+    ctx.drawImage(
+      this._limbGlow,
+      -size * 0.5,
+      -size * 0.5,
+      size,
+      size
+    );
     ctx.globalAlpha = this._sceneAlpha;
-
-    // Tool-call sweep travels the inner ring once; thinking keeps a slow
-    // perpetual circulation going between calls.
-    const sweepAge = time - this._sweep.t0;
-    const toolSweep =
-      this._sweep.active && sweepAge < SWEEP_LIFE
-        ? 1 - sweepAge / SWEEP_LIFE
-        : 0;
-    const thinkSweep = this._thinkingMix;
-    if (toolSweep > 0 || thinkSweep > 0.02) {
-      const progress =
-        toolSweep > 0
-          ? sweepAge / SWEEP_LIFE
-          : this.reduced
-            ? 0.3
-            : (time * 0.35) % 1;
-      const alpha = Math.max(toolSweep, thinkSweep * 0.5);
-      ctx.lineWidth = Math.max(3, R * 0.035);
-      ctx.strokeStyle = `rgba(255,255,255,${(alpha * 0.9).toFixed(3)})`;
-      const start = this._ringAngleInner + progress * TAU;
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.5, start, start + 24 * DEG);
-      ctx.stroke();
-    }
-    if (this._sweep.active && sweepAge >= SWEEP_LIFE) this._sweep.active = 0;
-  }
-
-  // Hologram gimbal rings on tilted precessing axes, split into back/front
-  // halves around the core. Angles advance once per frame in the back pass.
-  _drawGimbal(front, time, R) {
-    const ctx = this.ctx;
-    const [r, g, b] = this._ringRGB;
-    ctx.lineWidth = Math.max(2, R * 0.016);
-    for (const gimbal of this._gimbals) {
-      if (!front && !this.reduced) {
-        gimbal.prec += this._dt * gimbal.precSpeed;
-        gimbal.spin += this._dt * gimbal.spinSpeed;
-      }
-      const tiltCos = Math.cos(gimbal.tilt);
-      const tiltSin = Math.sin(gimbal.tilt);
-      const precCos = Math.cos(gimbal.prec);
-      const precSin = Math.sin(gimbal.prec);
-      const radius = gimbal.radius * R;
-      // Hologram shimmer: low-alpha flicker along the stroke, frozen when reduced.
-      const shimmer = this.reduced
-        ? 0
-        : 0.08 * Math.sin(time * 9 + gimbal.tilt * 40);
-      const alpha = (front ? 0.7 : 0.2) + shimmer;
-      ctx.strokeStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
-      let penDown = false;
-      ctx.beginPath();
-      for (let s = 0; s <= 64; s++) {
-        const u = gimbal.spin + (s / 64) * TAU;
-        const localX = Math.cos(u) * radius;
-        const localY = Math.sin(u) * radius;
-        const tiltedY = localY * tiltCos;
-        const tiltedZ = localY * tiltSin;
-        const worldX = localX * precCos + tiltedZ * precSin;
-        const worldZ = -localX * precSin + tiltedZ * precCos;
-        const visible = front ? worldZ >= 0 : worldZ < 0;
-        const scale = 1 + worldZ / (radius * 8); // mild perspective
-        if (visible) {
-          const screenX = worldX * scale;
-          const screenY = tiltedY * scale;
-          if (penDown) ctx.lineTo(screenX, screenY);
-          else {
-            ctx.moveTo(screenX, screenY);
-            penDown = true;
-          }
-        } else {
-          penDown = false;
-        }
-      }
-      ctx.stroke();
-    }
   }
 
   _drawOrbitPass(front) {
     const ctx = this.ctx;
-    // Hairline orbit paths — barely-there guides under the HUD markers.
-    ctx.globalAlpha = this._sceneAlpha * 0.4;
-    ctx.lineWidth = 0.5;
+    ctx.globalAlpha = this._sceneAlpha;
+    ctx.lineWidth = 0.65;
     for (let moon = 0; moon < MOON_COUNT; moon++) {
       const base = moon * MOON_ORBIT_STEPS;
       ctx.strokeStyle = MOON_STYLES[moon][1];
@@ -1319,39 +1895,413 @@ export class VoiceOrb {
       }
       ctx.stroke();
     }
+  }
+
+  _drawMoonTailPass(front) {
+    if (this.reduced) return;
+    const ctx = this.ctx;
+    ctx.globalAlpha = this._sceneAlpha;
+    ctx.lineCap = "round";
+    for (let moon = 0; moon < MOON_COUNT; moon++) {
+      const pool = MOON_STYLES[moon];
+      const base = moon * MOON_TAIL_SAMPLES;
+      for (let sample = 1; sample < MOON_TAIL_SAMPLES; sample++) {
+        const previousSlot =
+          (this._moonTailCursor + sample) % MOON_TAIL_SAMPLES;
+        const currentSlot =
+          (this._moonTailCursor + sample + 1) % MOON_TAIL_SAMPLES;
+        const from = base + previousSlot;
+        const to = base + currentSlot;
+        const segmentFront =
+          (this._moonTailDepth[from] + this._moonTailDepth[to]) *
+            0.5 >=
+          0;
+        if (segmentFront !== front) continue;
+        const bucket = front ? sample + 2 : Math.max(1, sample);
+        ctx.strokeStyle = pool[bucket];
+        ctx.lineWidth = 0.55 + sample * 0.16;
+        ctx.beginPath();
+        ctx.moveTo(this._moonTailX[from], this._moonTailY[from]);
+        ctx.lineTo(this._moonTailX[to], this._moonTailY[to]);
+        ctx.stroke();
+      }
+
+      for (let sample = 0; sample < MOON_TAIL_SAMPLES; sample++) {
+        const slot =
+          (this._moonTailCursor + sample + 1) % MOON_TAIL_SAMPLES;
+        const tail = base + slot;
+        if ((this._moonTailDepth[tail] >= 0) !== front) continue;
+        const bucket = front ? sample + 2 : Math.max(1, sample);
+        const tailRadius = 0.45 + sample * 0.14;
+        ctx.fillStyle = pool[bucket];
+        ctx.beginPath();
+        ctx.arc(
+          this._moonTailX[tail],
+          this._moonTailY[tail],
+          tailRadius,
+          0,
+          TAU
+        );
+        ctx.fill();
+      }
+    }
+    ctx.lineCap = "butt";
+  }
+
+  _drawWirePass(front) {
+    const ctx = this.ctx;
+    ctx.globalAlpha =
+      this._sceneAlpha * (1 - this._thinkingMix * 0.78);
+    ctx.lineWidth = front ? 0.55 : 0.45;
+    const alpha = front ? 2 : 1;
+    for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
+      ctx.strokeStyle =
+        DOT_STYLES[tone * DOT_ALPHA_BUCKETS + alpha];
+      ctx.beginPath();
+
+      for (let ring = 0; ring < DOT_LATITUDES; ring++) {
+        const base = ring * DOTS_PER_LATITUDE;
+        for (let point = 0; point < DOTS_PER_LATITUDE; point++) {
+          const from = base + point;
+          const to =
+            base + ((point + 1) % DOTS_PER_LATITUDE);
+          if (
+            Math.round(
+              (this._dotToneBucket[from] +
+                this._dotToneBucket[to]) *
+                0.5
+            ) !== tone ||
+            ((this._dotDepth[from] + this._dotDepth[to]) * 0.5 >=
+              0) !==
+              front
+          ) {
+            continue;
+          }
+          ctx.moveTo(this._dotScreenX[from], this._dotScreenY[from]);
+          ctx.lineTo(this._dotScreenX[to], this._dotScreenY[to]);
+        }
+      }
+
+      const longitudeBase = DOT_LATITUDES * DOTS_PER_LATITUDE;
+      for (
+        let meridian = 0;
+        meridian < DOT_LONGITUDES;
+        meridian++
+      ) {
+        const base =
+          longitudeBase + meridian * DOTS_PER_LONGITUDE;
+        for (let point = 0; point < DOTS_PER_LONGITUDE - 1; point++) {
+          const from = base + point;
+          const to = from + 1;
+          if (
+            Math.round(
+              (this._dotToneBucket[from] +
+                this._dotToneBucket[to]) *
+                0.5
+            ) !== tone ||
+            ((this._dotDepth[from] + this._dotDepth[to]) * 0.5 >=
+              0) !==
+              front
+          ) {
+            continue;
+          }
+          ctx.moveTo(this._dotScreenX[from], this._dotScreenY[from]);
+          ctx.lineTo(this._dotScreenX[to], this._dotScreenY[to]);
+        }
+      }
+      ctx.stroke();
+    }
     ctx.globalAlpha = this._sceneAlpha;
   }
 
+  _drawDotGlowPass(front) {
+    const ctx = this.ctx;
+    for (let alpha = 8; alpha < DOT_ALPHA_BUCKETS; alpha++) {
+      ctx.globalAlpha =
+        this._sceneAlpha * (alpha === 9 ? 0.5 : 0.3);
+      for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
+        const sprite = this._dotGlowSprites[tone];
+        const group = tone * DOT_ALPHA_BUCKETS + alpha;
+        const groupBase = group * DOT_COUNT;
+        const groupCount = this._dotStyleCounts[group];
+        for (let item = 0; item < groupCount; item++) {
+          const i = this._dotStyleIndices[groupBase + item];
+          if ((this._dotDepth[i] >= 0) !== front) continue;
+          const size = this._dotRadius[i] * 8;
+          ctx.drawImage(
+            sprite,
+            this._dotScreenX[i] - size * 0.5,
+            this._dotScreenY[i] - size * 0.5,
+            size,
+            size
+          );
+        }
+      }
+    }
 
+    ctx.globalAlpha = this._sceneAlpha * 0.46;
+    for (let bucket = 4; bucket <= 5; bucket++) {
+      const bucketBase = bucket * DOT_COUNT;
+      const bucketCount = this._lightBucketCounts[bucket];
+      for (let item = 0; item < bucketCount; item++) {
+        const i = this._lightBucketIndices[bucketBase + item];
+        if ((this._dotDepth[i] >= 0) !== front) continue;
+        const size = this._dotRadius[i] * 9;
+        ctx.drawImage(
+          this._highlightGlow,
+          this._dotScreenX[i] - size * 0.5,
+          this._dotScreenY[i] - size * 0.5,
+          size,
+          size
+        );
+      }
+    }
+    ctx.globalAlpha = this._sceneAlpha;
+  }
+
+  _drawDotPass(front) {
+    const ctx = this.ctx;
+    ctx.globalAlpha = this._sceneAlpha;
+    for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
+      for (let alpha = 1; alpha < DOT_ALPHA_BUCKETS; alpha++) {
+        let hasDots = false;
+        const group = tone * DOT_ALPHA_BUCKETS + alpha;
+        const groupBase = group * DOT_COUNT;
+        const groupCount = this._dotStyleCounts[group];
+        ctx.beginPath();
+        for (let item = 0; item < groupCount; item++) {
+          const i = this._dotStyleIndices[groupBase + item];
+          if ((this._dotDepth[i] >= 0) !== front) continue;
+          const x = this._dotScreenX[i];
+          const y = this._dotScreenY[i];
+          const radius = this._dotRadius[i];
+          ctx.moveTo(x + radius, y);
+          ctx.arc(x, y, radius, 0, TAU);
+          hasDots = true;
+        }
+        if (hasDots) {
+          ctx.fillStyle = DOT_STYLES[tone * DOT_ALPHA_BUCKETS + alpha];
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  _drawLightPacketPass(front) {
+    const ctx = this.ctx;
+    ctx.globalAlpha = this._sceneAlpha;
+    for (let bucket = 1; bucket <= 5; bucket++) {
+      let hasLight = false;
+      const bucketBase = bucket * DOT_COUNT;
+      const bucketCount = this._lightBucketCounts[bucket];
+      ctx.fillStyle = HL_STYLES[6 + bucket];
+      ctx.beginPath();
+      for (let item = 0; item < bucketCount; item++) {
+        const i = this._lightBucketIndices[bucketBase + item];
+        if ((this._dotDepth[i] >= 0) !== front) continue;
+        const radius =
+          this._dotRadius[i] * (0.3 + bucket * 0.065);
+        const x = this._dotScreenX[i];
+        const y = this._dotScreenY[i];
+        ctx.moveTo(x + radius, y);
+        ctx.arc(x, y, radius, 0, TAU);
+        hasLight = true;
+      }
+      if (hasLight) ctx.fill();
+    }
+  }
+
+  _drawDataArcPass(front) {
+    const ctx = this.ctx;
+    ctx.globalAlpha = this._sceneAlpha;
+    ctx.lineCap = "round";
+    const forceViolet = this.status === "thinking";
+    for (let tone = 0; tone < 2; tone++) {
+      const pool = tone ? V_STYLES : O_STYLES;
+      for (let step = 1; step <= DATA_ARC_TAIL_STEPS; step++) {
+        const strength = step / DATA_ARC_TAIL_STEPS;
+        const alpha = (0.08 + strength * 0.5) * (front ? 1 : 0.43);
+        const bucket = Math.max(
+          1,
+          Math.min(
+            STYLE_ALPHA_BUCKETS - 1,
+            Math.round(alpha * (STYLE_ALPHA_BUCKETS - 1))
+          )
+        );
+        let hasSegments = false;
+        ctx.strokeStyle = pool[bucket];
+        ctx.lineWidth = 0.55 + strength * 0.8;
+        ctx.beginPath();
+        for (let arc = 0; arc < DATA_ARC_POOL_SIZE; arc++) {
+          if (
+            !this._dataArcActive[arc] ||
+            (forceViolet ? 1 : this._dataArcTone[arc]) !== tone
+          ) {
+            continue;
+          }
+          const base = arc * (DATA_ARC_TAIL_STEPS + 1);
+          const from = base + step - 1;
+          const to = from + 1;
+          const segmentFront =
+            (this._dataArcSampleDepth[from] +
+              this._dataArcSampleDepth[to]) *
+              0.5 >=
+            0;
+          if (segmentFront !== front) continue;
+          ctx.moveTo(
+            this._dataArcSampleX[from],
+            this._dataArcSampleY[from]
+          );
+          ctx.lineTo(
+            this._dataArcSampleX[to],
+            this._dataArcSampleY[to]
+          );
+          hasSegments = true;
+        }
+        if (hasSegments) ctx.stroke();
+      }
+    }
+
+    for (let arc = 0; arc < DATA_ARC_POOL_SIZE; arc++) {
+      if (!this._dataArcActive[arc]) continue;
+      const head =
+        arc * (DATA_ARC_TAIL_STEPS + 1) + DATA_ARC_TAIL_STEPS;
+      if ((this._dataArcSampleDepth[head] >= 0) !== front) continue;
+      const tone = forceViolet ? 1 : this._dataArcTone[arc];
+      const pool = tone ? V_STYLES : O_STYLES;
+      const x = this._dataArcSampleX[head];
+      const y = this._dataArcSampleY[head];
+      const glowSize = front ? 18 : 14;
+      ctx.globalAlpha = this._sceneAlpha * (front ? 0.9 : 0.4);
+      ctx.drawImage(
+        this._arcHeadGlow[tone],
+        x - glowSize * 0.5,
+        y - glowSize * 0.5,
+        glowSize,
+        glowSize
+      );
+      ctx.globalAlpha = this._sceneAlpha;
+      ctx.fillStyle = pool[front ? 15 : 8];
+      ctx.beginPath();
+      ctx.arc(x, y, front ? 1.35 : 1, 0, TAU);
+      ctx.fill();
+    }
+    ctx.lineCap = "butt";
+    ctx.globalAlpha = this._sceneAlpha;
+  }
+
+  _drawScanPass(front) {
+    if (this.reduced || !this._scanActive[0]) return;
+    const ctx = this.ctx;
+    let hasSegments = false;
+    ctx.globalAlpha = this._sceneAlpha;
+    ctx.beginPath();
+    for (let point = 0; point < SCAN_RING_STEPS; point++) {
+      const next = (point + 1) % SCAN_RING_STEPS;
+      const segmentFront =
+        (this._scanRingDepth[point] + this._scanRingDepth[next]) *
+          0.5 >=
+        0;
+      if (segmentFront !== front) continue;
+      ctx.moveTo(this._scanRingX[point], this._scanRingY[point]);
+      ctx.lineTo(this._scanRingX[next], this._scanRingY[next]);
+      hasSegments = true;
+    }
+    if (!hasSegments) return;
+
+    ctx.lineCap = "round";
+    ctx.strokeStyle = O_STYLES[front ? 4 : 2];
+    ctx.shadowColor = O_STYLES[front ? 9 : 5];
+    ctx.shadowBlur = front ? 7 : 4;
+    ctx.lineWidth = front ? 3.2 : 2.4;
+    ctx.stroke();
+    ctx.strokeStyle = HL_STYLES[front ? 14 : 7];
+    ctx.lineWidth = front ? 0.85 : 0.65;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.lineCap = "butt";
+  }
 
   _drawMoonLightPass(front, time, silhouetteRadius) {
     for (let i = 0; i < MOON_COUNT; i++) {
       if ((this._moonDepth[i] >= 0) !== front) continue;
+      if (this._moonRuns[i]) {
+        this._drawFilament(i, time, silhouetteRadius);
+      }
       this._drawMoonLight(i, time);
     }
   }
 
+  _drawFilament(index, time, silhouetteRadius) {
+    const ctx = this.ctx;
+    const x = this._moonScreenX[index];
+    const y = this._moonScreenY[index];
+    const length = Math.sqrt(x * x + y * y);
+    if (length < 1) return;
 
-  // HUD marker: a diamond inside corner brackets. Gold while the moon's task
-  // runs (with a slow blink), state cyan otherwise; settle flash keeps the
-  // ok/err glow for completion feedback.
+    const endX = (x / length) * silhouetteRadius * 0.96;
+    const endY = (y / length) * silhouetteRadius * 0.96;
+    const normalX = -y / length;
+    const normalY = x / length;
+    const curl =
+      Math.sin(time * 0.9 + index * 1.7) * silhouetteRadius * 0.045;
+    const middleX = (x + endX) * 0.5 + normalX * curl;
+    const middleY = (y + endY) * 0.5 + normalY * curl;
+    const control1X = x * 0.72 + endX * 0.28 + normalX * curl * 1.2;
+    const control1Y = y * 0.72 + endY * 0.28 + normalY * curl * 1.2;
+    const control2X = x * 0.28 + endX * 0.72 - normalX * curl * 0.45;
+    const control2Y = y * 0.28 + endY * 0.72 - normalY * curl * 0.45;
+    const pool = MOON_STYLES[index];
+    const activity = this._moonActivityMix[index];
+    const styleBucket = Math.max(
+      7,
+      Math.min(
+        STYLE_ALPHA_BUCKETS - 1,
+        Math.round((0.5 + activity * 0.5) * (STYLE_ALPHA_BUCKETS - 1))
+      )
+    );
+
+    ctx.setLineDash(FILAMENT_DASH);
+    ctx.lineDashOffset = -time * 6 - index * 3;
+    ctx.lineCap = "round";
+    ctx.shadowColor = pool[12];
+    ctx.shadowBlur = 8 + activity * 6;
+    ctx.strokeStyle = pool[5];
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(control1X, control1Y, middleX, middleY);
+    ctx.quadraticCurveTo(control2X, control2Y, endX, endY);
+    ctx.stroke();
+    ctx.strokeStyle = pool[styleBucket];
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.lineCap = "butt";
+    ctx.setLineDash(SOLID_LINE);
+    ctx.lineDashOffset = 0;
+  }
+
   _drawMoonLight(index, time) {
     const ctx = this.ctx;
     const x = this._moonScreenX[index];
     const y = this._moonScreenY[index];
+    const perspective = this._moonScale[index];
     const activity = this._moonActivityMix[index];
+    const pool = MOON_STYLES[index];
     const settle = this._moonSettleMix[index];
-    const alpha = this._moonAlphaBucket[index] / (STYLE_ALPHA_BUCKETS - 1);
-    const s = this._moonVisualRadius[index];
-    const active = this._moonRuns[index] > 0;
+    const flashPool = this._moonSettleOk[index] ? OK_STYLES : ERR_STYLES;
+    const drawPool = settle > 0 ? flashPool : pool;
+    const alphaBucket = this._moonAlphaBucket[index];
+    const radius = this._moonVisualRadius[index];
 
-    const glowSize = s * 8;
+    const glowSize = radius * 8;
     const glowSprite =
       settle > 0
         ? this._settleGlowSprites[this._moonSettleOk[index]]
         : this._moonGlowSprites[index];
     ctx.globalAlpha =
-      this._sceneAlpha * (0.3 + activity * 0.3 + settle * 0.24);
+      this._sceneAlpha * (0.42 + activity * 0.32 + settle * 0.24);
     ctx.drawImage(
       glowSprite,
       x - glowSize * 0.5,
@@ -1360,32 +2310,42 @@ export class VoiceOrb {
       glowSize
     );
     ctx.globalAlpha = this._sceneAlpha;
-
-    const gold = STATE_COLORS.thinking.ring;
-    const rgb = active ? gold : this._coreRGB;
-    const blink =
-      active && !this.reduced ? 0.7 + 0.3 * Math.sin(time * 3 + index) : 1;
-    ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(alpha * blink).toFixed(3)})`;
+    ctx.fillStyle = drawPool[alphaBucket];
+    ctx.shadowColor = drawPool[Math.max(8, alphaBucket)];
+    ctx.shadowBlur = (4 + activity * 9 + settle * 8) * perspective;
     ctx.beginPath();
-    ctx.moveTo(x, y - s);
-    ctx.lineTo(x + s, y);
-    ctx.lineTo(x, y + s);
-    ctx.lineTo(x - s, y);
-    ctx.closePath();
+    ctx.arc(x, y, radius, 0, TAU);
     ctx.fill();
+    ctx.shadowBlur = 0;
 
-    const bracket = s * 1.9;
-    const arm = s * 0.7;
-    ctx.lineWidth = active ? 1.6 : 1;
-    ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(alpha * (active ? 0.9 : 0.5)).toFixed(3)})`;
-    for (let side = -1; side <= 1; side += 2) {
-      const tip = x + side * bracket;
-      const back = tip - side * arm * 0.6;
+    if (this._moonRuns[index]) {
+      const ringRadius =
+        radius + 3.5 + Math.sin(time * 3.2 + index) * 0.7;
+      const spin = time * 3.4 + index * 0.77;
+      ctx.strokeStyle = pool[15];
+      ctx.shadowColor = pool[12];
+      ctx.shadowBlur = 6 + activity * 5;
+      ctx.lineWidth = 1;
+      ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.moveTo(back, y - arm);
-      ctx.lineTo(tip, y);
-      ctx.lineTo(back, y + arm);
+      ctx.moveTo(
+        x + Math.cos(spin) * ringRadius,
+        y + Math.sin(spin) * ringRadius
+      );
+      ctx.arc(x, y, ringRadius, spin, spin + 1.15);
+      ctx.moveTo(
+        x + Math.cos(spin + 2.08) * ringRadius,
+        y + Math.sin(spin + 2.08) * ringRadius
+      );
+      ctx.arc(x, y, ringRadius, spin + 2.08, spin + 3.2);
+      ctx.moveTo(
+        x + Math.cos(spin + 4.16) * ringRadius,
+        y + Math.sin(spin + 4.16) * ringRadius
+      );
+      ctx.arc(x, y, ringRadius, spin + 4.16, spin + 5.3);
       ctx.stroke();
+      ctx.lineCap = "butt";
+      ctx.shadowBlur = 0;
     }
   }
 
@@ -1406,9 +2366,7 @@ export class VoiceOrb {
     const flashPool = this._moonSettleOk[index] ? OK_STYLES : ERR_STYLES;
     const drawPool = settle > 0 ? flashPool : pool;
     const radius = this._moonVisualRadius[index];
-    // Dimmer than the marker — labels are secondary HUD chrome.
-    const labelAlpha =
-      Math.min(1, 0.5 + activity * 0.5 + settle * 0.3) * 0.75;
+    const labelAlpha = Math.min(1, 0.5 + activity * 0.5 + settle * 0.3);
     const labelBucket = Math.max(
       1,
       Math.min(
@@ -1433,6 +2391,176 @@ export class VoiceOrb {
     ctx.shadowBlur = 0;
   }
 
+
+  // Idle tethers: every labeled node stays visibly attached to the sphere —
+  // a 1px curved line plus a small bright pulse traveling node→sphere every
+  // 4-6s, staggered per node so the sky never beats in unison.
+
+  // Layer 2: parametric lat/long wireframe — 1px cyan, brighter on the rim.
+  _drawLatLongWires(R) {
+    const ctx = this.ctx;
+    const yc = this._fYawCos, ys = this._fYawSin, pc = this._fPitchCos, ps = this._fPitchSin;
+    ctx.lineWidth = 1;
+    const seg = 36;
+    const drawRing = (fn) => {
+      let prev = null;
+      for (let k = 0; k <= seg; k++) {
+        const [x, y, z] = fn(k / seg);
+        const cx = x * yc + z * ys, cz = -x * ys + z * yc;
+        const cy = y * pc - cz * ps, depth = y * ps + cz * pc;
+        const persp = CAM_DISTANCE / (CAM_DISTANCE - depth);
+        const sx = cx * R * persp, sy = cy * R * persp;
+        if (prev) {
+          const rim = 1 - Math.min(1, Math.abs((prev[2] + depth) / 2) / 0.9);
+          ctx.strokeStyle = "rgba(34,211,238," + (0.3 + 0.2 * rim).toFixed(3) + ")";
+          ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(sx, sy); ctx.stroke();
+        }
+        prev = [sx, sy, depth];
+      }
+    };
+    for (let li = 1; li < 9; li++) {
+      const lat = (li / 9 - 0.5) * Math.PI;
+      const cl = Math.cos(lat), sl = Math.sin(lat);
+      drawRing((u) => [Math.cos(u * TAU) * cl, sl, Math.sin(u * TAU) * cl]);
+    }
+    for (let mi = 0; mi < 8; mi++) {
+      const lon = (mi / 8) * Math.PI;
+      const co = Math.cos(lon), so = Math.sin(lon);
+      drawRing((u) => {
+        const a = u * TAU;
+        const r2 = Math.cos(a), yy = Math.sin(a);
+        return [r2 * co, yy, r2 * so];
+      });
+    }
+  }
+
+  // Layer 3: the plexus — clustered node web with propagating flares.
+  _drawPlexus(time, R) {
+    const ctx = this.ctx;
+    const yc = this._fYawCos, ys = this._fYawSin, pc = this._fPitchCos, ps = this._fPitchSin;
+    const N = this._plexSize.length;
+    for (let i = 0; i < N; i++) {
+      const x = this._plexBase[i * 3], y = this._plexBase[i * 3 + 1], z = this._plexBase[i * 3 + 2];
+      const cx = x * yc + z * ys, cz = -x * ys + z * yc;
+      const cy = y * pc - cz * ps, depth = y * ps + cz * pc;
+      const persp = CAM_DISTANCE / (CAM_DISTANCE - depth);
+      this._plexSX[i] = cx * R * persp;
+      this._plexSY[i] = cy * R * persp;
+      this._plexDepth[i] = depth;
+    }
+    // flare scheduling: one random node every 2-4s, 300ms propagation
+    if (!this.reduced && time >= this._nextFlareAt) {
+      this._flareNode = Math.floor(hashUnit(Math.floor(time * 7) + 917) * N);
+      this._flareAt = time;
+      this._nextFlareAt = time + 2 + hashUnit(Math.floor(time * 13) + 311) * 2;
+    }
+    const flareK = this._flareNode >= 0 ? Math.max(0, 1 - (time - this._flareAt) / 0.3) : 0;
+    ctx.lineWidth = 1;
+    for (const key of this._plexEdges) {
+      const a = Math.floor(key / 1000), b = key % 1000;
+      const front = (this._plexDepth[a] + this._plexDepth[b]) / 2 > 0;
+      let alpha = front ? 0.7 : 0.26;
+      if (flareK > 0 && (a === this._flareNode || b === this._flareNode)) alpha = Math.min(1, alpha + flareK * 0.65);
+      ctx.strokeStyle = "rgba(34,211,238," + alpha.toFixed(3) + ")";
+      ctx.beginPath();
+      ctx.moveTo(this._plexSX[a], this._plexSY[a]);
+      ctx.lineTo(this._plexSX[b], this._plexSY[b]);
+      ctx.stroke();
+    }
+    for (let i = 0; i < N; i++) {
+      const front = this._plexDepth[i] > 0;
+      const size = this._plexSize[i] * (front ? 1 : 0.7);
+      let alpha = front ? 1 : 0.6;
+      if (flareK > 0 && (i === this._flareNode || this._plexAdj[this._flareNode].includes(i)))
+        alpha = Math.min(1, alpha + flareK);
+      if (size > 2.2) {
+        const g = size * 7;
+        ctx.globalAlpha = this._sceneAlpha * alpha * 0.5;
+        ctx.drawImage(this._highlightGlow, this._plexSX[i] - g / 2, this._plexSY[i] - g / 2, g, g);
+        ctx.globalAlpha = this._sceneAlpha;
+      }
+      ctx.fillStyle = "rgba(214,248,255," + alpha.toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(this._plexSX[i], this._plexSY[i], size * 0.75, 0, TAU); ctx.fill();
+    }
+  }
+
+  // Layer 4: ambient particles rising from the base ring, despawning above.
+  _drawAmbientRise(time, R) {
+    if (this.reduced) return;
+    const ctx = this.ctx;
+    for (let i = 0; i < this._ambPhase.length; i++) {
+      const k = (this._ambPhase[i] + time * this._ambSpeed[i]) % 1;
+      const y = R * 1.05 - k * R * 2.3;
+      const sway = Math.sin(time * 0.6 + i) * R * 0.08;
+      const x = Math.cos(this._ambAngle[i]) * R * (0.55 + 0.35 * Math.sin(i)) + sway;
+      const fade = Math.sin(k * Math.PI);
+      ctx.fillStyle = "rgba(34,211,238," + (0.3 * fade).toFixed(3) + ")";
+      ctx.beginPath(); ctx.arc(x, y, 1.4, 0, TAU); ctx.fill();
+    }
+  }
+
+  // The projector: floor glow, three concentric rings, and the light beam.
+  _drawProjectorBase(time, R) {
+    const ctx = this.ctx;
+    const baseY = R * 1.14;
+    const pulse = this.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(time * (TAU / 5) + Math.PI);
+    // floor glow
+    const fg = ctx.createRadialGradient(0, baseY, 0, 0, baseY, R * 1.1);
+    fg.addColorStop(0, "rgba(34,211,238,0.1)");
+    fg.addColorStop(1, "rgba(34,211,238,0)");
+    ctx.fillStyle = fg;
+    ctx.save(); ctx.translate(0, baseY); ctx.scale(1, 0.28); ctx.translate(0, -baseY);
+    ctx.beginPath(); ctx.arc(0, baseY, R * 1.1, 0, TAU); ctx.fill();
+    ctx.restore();
+    // three rings, brightest inner, inner one pulsing off the core's beat
+    const rings = [
+      [R * 0.72, 0.6 + 0.25 * pulse],
+      [R * 0.96, 0.34],
+      [R * 1.2, 0.18]
+    ];
+    ctx.lineWidth = 1.2;
+    for (const [rr, a] of rings) {
+      ctx.strokeStyle = "rgba(103,232,249," + a.toFixed(3) + ")";
+      ctx.beginPath(); ctx.ellipse(0, baseY, rr, rr * 0.24, 0, 0, TAU); ctx.stroke();
+    }
+    // vertical beam: base ring up to the globe underside
+    const beam = ctx.createLinearGradient(0, baseY, 0, R * 0.2);
+    beam.addColorStop(0, "rgba(34,211,238,0.18)");
+    beam.addColorStop(1, "rgba(34,211,238,0)");
+    ctx.fillStyle = beam;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.62, baseY); ctx.lineTo(R * 0.62, baseY);
+    ctx.lineTo(R * 0.3, R * 0.55); ctx.lineTo(-R * 0.3, R * 0.55);
+    ctx.closePath(); ctx.fill();
+  }
+
+  _drawMoonTethers(time, silhouetteRadius) {
+    const ctx = this.ctx;
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineWidth = 1;
+    for (let i = 0; i < MOON_COUNT; i++) {
+      const mx = this._moonScreenX[i], my = this._moonScreenY[i];
+      const len = Math.hypot(mx, my) || 1;
+      if (len <= silhouetteRadius * 1.02) continue;
+      const ex = (mx / len) * silhouetteRadius, ey = (my / len) * silhouetteRadius;
+      const midx = (mx + ex) / 2 - (my - ey) * 0.12;
+      const midy = (my + ey) / 2 + (mx - ex) * 0.12;
+      ctx.strokeStyle = "rgba(34,211,238,0.3)";
+      ctx.beginPath(); ctx.moveTo(mx, my); ctx.quadraticCurveTo(midx, midy, ex, ey); ctx.stroke();
+      if (!this.reduced) {
+        const period = 4 + (i % 3);
+        const phase = ((time / period) + i * 0.618) % 1;
+        const t1 = phase, u = 1 - t1;
+        const px = u * u * mx + 2 * u * t1 * midx + t1 * t1 * ex;
+        const py = u * u * my + 2 * u * t1 * midy + t1 * t1 * ey;
+        ctx.fillStyle = "rgba(214,248,255,0.9)";
+        ctx.shadowColor = "rgba(34,211,238,0.9)"; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(px, py, 1.6, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+    ctx.globalCompositeOperation = "source-over";
+  }
 
   _drawHalos(time, silhouetteRadius) {
     const ctx = this.ctx;
