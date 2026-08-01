@@ -1086,8 +1086,8 @@ export class VoiceOrb {
 
     // Outer halo (wide soft bloom), crossfaded through cached state sprites.
     // Capped so the peak stays a glow, never a white-out.
-    const haloSize = coreR * 4.2;
-    const haloAlpha = Math.min(0.62, 0.42 + env * 0.28);
+    const haloSize = coreR * 3.6;
+    const haloAlpha = Math.min(0.5, 0.34 + env * 0.24);
     for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
       const weight = this._coreSpriteWeights[state];
       if (weight <= 0.002) continue;
@@ -1105,7 +1105,7 @@ export class VoiceOrb {
     // breathes with the idle cycle and is capped so structure stays visible.
     const discSize = coreR * 2;
     const discBreath = this.reduced ? 0 : 0.06 * Math.sin(time * (TAU / 4));
-    const discAlpha = Math.min(0.88, 0.74 + discBreath + env * 0.1);
+    const discAlpha = Math.min(0.8, 0.66 + discBreath + env * 0.1);
     for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
       const weight = this._coreSpriteWeights[state];
       if (weight <= 0.002) continue;
@@ -1162,13 +1162,15 @@ export class VoiceOrb {
     // (never a constant-speed spinner), voice swell adds urgency on top.
     const speed = 1 + this._activeMix * 2 + this._breathEnv * 0.8;
     if (!this.reduced) {
+      // Surge floor at ~50% so the rings never crawl to a near-stop — the
+      // 10% floor read as "frozen" for whole seconds at real app scale.
       const t = time;
       this._ringAngleInner +=
-        this._dt * 0.3 * speed * (0.55 + 0.45 * Math.sin(t * 0.31));
+        this._dt * 0.34 * speed * (0.75 + 0.25 * Math.sin(t * 0.31));
       this._ringAngleOuter -=
-        this._dt * 0.2 * speed * (0.55 + 0.45 * Math.sin(t * 0.23 + 2.1));
+        this._dt * 0.24 * speed * (0.75 + 0.25 * Math.sin(t * 0.23 + 2.1));
       this._tickAngle +=
-        this._dt * 0.05 * speed * (0.6 + 0.4 * Math.sin(t * 0.17 + 4.2));
+        this._dt * 0.06 * speed * (0.8 + 0.2 * Math.sin(t * 0.17 + 4.2));
     }
     const tickBoost = this._listeningMix * 0.3;
 
