@@ -803,21 +803,35 @@ function installPerformanceGuard(shell, panels) {
       sparkline(renderHolo, fpsHistory, 70);
       renderHolo.value.textContent = Math.round(1000 / Math.max(1, dt)) + " fps";
 
-      // dock voice console: her 28 spectrum bands, mirrored, cyan
-      const bins = window.__voiceOrb && window.__voiceOrb.bins;
+      // dock voice console: a mirrored audio waveform — the last ~5s of her
+      // speech envelope scrolling by, symmetric around a center line. Calm
+      // near-flat line when she's quiet; swells like a real recording as she
+      // talks. (Replaced the spectrum bars — they read as a piano game.)
       const w = scope.width, h = scope.height;
+      const mid = h / 2;
       scopeCtx.clearRect(0, 0, w, h);
-      if (bins) {
-        const bars = bins.length * 2;
-        const bw = w / bars;
-        for (let i = 0; i < bars; i++) {
-          const bin = i < bins.length ? bins.length - 1 - i : i - bins.length;
-          const v = Math.min(1, bins[bin] * (0.35 + amp));
-          const bh = Math.max(1, v * (h - 3));
-          scopeCtx.fillStyle = "rgba(110,210,255," + (0.25 + v * 0.6).toFixed(3) + ")";
-          scopeCtx.fillRect(i * bw + 0.5, h - bh, bw - 1, bh);
-        }
+      scopeCtx.fillStyle = "rgba(160,230,255,0.22)";
+      scopeCtx.fillRect(0, mid - 0.5, w, 1); // center line
+      const n = ampHistory.length;
+      scopeCtx.fillStyle = "rgba(110,210,255,0.5)";
+      scopeCtx.strokeStyle = "rgba(170,235,255,0.85)";
+      scopeCtx.lineWidth = 1;
+      scopeCtx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * w;
+        const lift = Math.max(ampHistory[i] * (mid - 2), 0.6);
+        const y = mid - lift;
+        if (i === 0) scopeCtx.moveTo(x, y);
+        else scopeCtx.lineTo(x, y);
       }
+      for (let i = n - 1; i >= 0; i--) {
+        const x = (i / (n - 1)) * w;
+        const lift = Math.max(ampHistory[i] * (mid - 2), 0.6);
+        scopeCtx.lineTo(x, mid + lift);
+      }
+      scopeCtx.closePath();
+      scopeCtx.fill();
+      scopeCtx.stroke();
     };
     loop();
     return true;
