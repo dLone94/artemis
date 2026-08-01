@@ -241,7 +241,7 @@ function initializeDashboardV2() {
     }
   }
 
-  function pulseSpoke(name) {
+  function pulseSpoke(name, flare = false) {
     const group = spokes.querySelector(`[data-v2-spoke="${name}"]`);
     if (!group) return;
     group.classList.remove("is-pulsing");
@@ -249,8 +249,10 @@ function initializeDashboardV2() {
     group.classList.add("is-pulsing");
     window.clearTimeout(pulseTimers.get(name));
     pulseTimers.set(name, window.setTimeout(() => group.classList.remove("is-pulsing"), 1200));
-    // Cinematics v2: the panel at the end of the spoke flares with it.
-    if (reducedMotion) return;
+    // Cinematics v2: the panel flares ONLY for real tool activity (flare=true).
+    // Log lines and the telemetry heartbeat keep the subtle spoke pulse alone —
+    // flaring on those made panels flash every couple of seconds.
+    if (!flare || reducedMotion) return;
     const panel = shell.querySelector(`.v2-panel--${name}`);
     if (!panel) return;
     panel.classList.remove("v2-flare");
@@ -346,7 +348,7 @@ function initializeDashboardV2() {
     const skill = title ? skillNodes.get(title) : null;
     if (phase === "start") {
       pulseSpoke("neural");
-      pulseSpoke(route?.spoke || "context");
+      pulseSpoke(route?.spoke || "context", true);
       if (!skill) return;
       window.clearTimeout(settleTimers.get(title));
       skill.classList.remove("is-success", "is-failure");

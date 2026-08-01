@@ -188,7 +188,21 @@ body.dashboard-v2 .hud-ttfw {
 
 body.dashboard-v2 .hud-clock { font-size: clamp(0.64rem, 0.58vw, 0.78rem); }
 body.dashboard-v2 .hud-links { white-space: nowrap; }
-body.dashboard-v2 .hud-links a { margin-left: 10px; font-size: clamp(0.5rem, 0.45vw, 0.62rem); }
+body.dashboard-v2 .hud-links a {
+  margin-left: 12px;
+  font-size: clamp(0.72rem, 0.75vw, 0.88rem);
+  letter-spacing: 0.14em;
+  padding: 6px 10px;
+  border: 1px solid rgba(90, 200, 255, 0.22);
+  border-radius: 3px;
+  color: rgba(170, 225, 255, 0.85);
+  transition: color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+body.dashboard-v2 .hud-links a:hover {
+  color: #eafaff;
+  border-color: rgba(140, 225, 255, 0.65);
+  box-shadow: 0 0 14px rgba(90, 200, 255, 0.3);
+}
 body.dashboard-v2 .hud-links a:focus-visible { outline: 2px solid var(--v2-cyan); outline-offset: 4px; }
 
 /* Architecture map: three unequal columns around a central, square hub. */
