@@ -66,7 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         // space would hide its permission prompts).
         if mode != .compatCheck {
             window.collectionBehavior.insert(.fullScreenPrimary)
-            DispatchQueue.main.async { [weak self] in
+            // A bare async fires during launch activation and macOS drops the
+            // toggle — verified live. A short delay lands after activation.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                 guard let window = self?.window,
                       !window.styleMask.contains(.fullScreen) else { return }
                 window.toggleFullScreen(nil)
