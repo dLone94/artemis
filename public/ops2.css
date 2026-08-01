@@ -1387,7 +1387,11 @@ body.dashboard-v2 .v2-spoke [class*="heartbeat"] { animation-duration: 16s !impo
 @keyframes v2-scan-reveal {
   0% { opacity: 0; clip-path: inset(0 0 100% 0); transform: translateY(10px); }
   14% { opacity: 1; }
-  100% { opacity: 1; clip-path: inset(0 0 -2% 0); transform: none; }
+  92% { clip-path: inset(0 0 -2% 0); }
+  /* Release the clip at the end: fill-mode both persists the final keyframe
+     forever, and a lingering clip-path amputates hover tooltips that pop
+     outside the element's box (the skills strip's cards lost their text). */
+  100% { opacity: 1; clip-path: none; transform: none; }
 }
 @keyframes v2-scan-drift {
   0% { background-position: 0 -260px, 0 0; }
