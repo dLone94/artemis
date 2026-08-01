@@ -4,6 +4,10 @@
 // matter: opening a chat with the wrong number, and telling the user something
 // was sent when it is still sitting in a text box.
 // Run: node test/whatsapp.test.mjs
+// Belt AND braces: even when this file runs alone, a missed mock must never
+// type into the real WhatsApp. pressSend refuses under this flag.
+process.env.ARTEMIS_DISABLE_UI_AUTOMATION = "1";
+
 import assert from "node:assert";
 import { normalizePhone, composeUrl, openLocally } from "../whatsapp.js";
 import { getSkill } from "../skills.js";
@@ -68,11 +72,13 @@ import { getSkill } from "../skills.js";
   const skill = getSkill("send_message");
   assert.equal(skill.requiresConfirmation, true, "messaging a person always needs an explicit yes");
 
-  // a context whose opener records instead of launching WhatsApp
+  // a context whose sender records instead of launching WhatsApp — tests must
+  // never drive the real app (sendComposed presses Return via System Events)
   const opened = [];
   const ctx = (contact) => ({
     resolveContact: async () => contact,
-    openWhatsApp: async (url) => { opened.push(url); }
+    sendWhatsApp: async (url) => { opened.push(url); },
+    openWhatsApp: async (url) => { throw new Error("draft fallback not expected here"); }
   });
 
   // happy path
@@ -84,9 +90,10 @@ import { getSkill } from "../skills.js";
   assert.ok(opened[0].startsWith("whatsapp://send?phone=359881234567"), "correct recipient");
   assert.match(opened[0], /twenty\+minutes\+late|twenty%20minutes%20late/, "body carried through");
 
-  // THE claim test: it must never say the message was sent, because it wasn't
-  assert.match(ok.summary, /press Enter/i, "tells the user what's left to do");
-  assert.doesNotMatch(ok.summary, /\bsent\b|\bI sent\b/i, "must not claim it was sent");
+  // THE claim test, inverted by design (2026-08-01): the confirmed send now
+  // completes via keystroke, so success SHOULD say sent — and the fallback
+  // tests below still forbid "sent" whenever the keystroke didn't run.
+  assert.match(ok.summary, /\bsent\b/i, "confirmed send reports sent");
   assert.match(ok.summary, /Maria/, "names who it's for");
 
   // unknown contact — no launch, and a useful next step
@@ -109,7 +116,7 @@ import { getSkill } from "../skills.js";
     { to: "wife", body: "on my way", phone: "+359 88 123 4567" },
     {
       resolveContact: async () => null,
-      openWhatsApp: async (url) => { opened.push(url); },
+      sendWhatsApp: async (url) => { opened.push(url); },
       readJson: async () => saved,
       writeJson: async (_n, d) => Object.assign(saved, d)
     }
@@ -123,7 +130,7 @@ import { getSkill } from "../skills.js";
   // a supplied number that is junk fails honestly instead of dialling nonsense
   opened.length = 0;
   const junk = await skill.execute({ to: "wife", body: "hi", phone: "12345" }, {
-    resolveContact: async () => null, openWhatsApp: async (u) => opened.push(u),
+    resolveContact: async () => null, sendWhatsApp: async (u) => opened.push(u),
     readJson: async () => ({}), writeJson: async () => {}
   });
   assert.equal(junk.ok, false);
@@ -149,9 +156,11 @@ import { getSkill } from "../skills.js";
   assert.equal(opened.length, 0);
   assert.match(bad.summary, /country code/i);
 
-  // a failing opener is reported, not papered over
+  // when both the send automation AND the draft fallback fail, that is
+  // reported, not papered over
   const boom = await skill.execute({ to: "wife", body: "hi" }, {
     resolveContact: async () => ({ name: "Maria", phone: "+359881234567" }),
+    sendWhatsApp: async () => { throw new Error("automation blocked"); },
     openWhatsApp: async () => { throw new Error("WhatsApp is not responding"); }
   });
   assert.equal(boom.ok, false);
@@ -206,4 +215,62 @@ console.log("PASS ✅  whatsapp: right recipient, encoded body, and an honest su
   // skills with no precheck are unaffected
   assert.equal((await precheckSkill("open_url", { url: "https://x.dev" }, {})).ok, true);
   console.log("  ✓ an impossible send asks for what's missing instead of confirming first");
+}
+
+// ---- completing the send ----------------------------------------------------
+// sendComposed must open the chat FIRST, wait for it to settle, and only then
+// press Return. A keystroke into the wrong window is a message to the wrong
+// person; order and failure honesty are the whole test.
+{
+  const { sendComposed, pressSend } = await import("../whatsapp.js");
+  const calls = [];
+  await sendComposed("whatsapp://send?phone=359881234567&text=hi", {
+    open: async (url) => calls.push(["open", url]),
+    wait: async (ms) => calls.push(["wait", ms]),
+    run: (file, args, cb) => { calls.push(["osascript", file]); cb(null, ""); }
+  });
+  assert.equal(calls.length, 3, "exactly open → wait → keystroke");
+  assert.equal(calls[0][0], "open", "chat opens first");
+  assert.ok(calls[0][1].startsWith("whatsapp://send?"), "opens the compose link");
+  assert.equal(calls[1][0], "wait", "waits for the chat box to focus");
+  assert.ok(calls[1][1] >= 1000, "settle time is generous enough for a cold start");
+  assert.equal(calls[2][0], "osascript", "then presses Return via System Events");
+  console.log("  ✓ sendComposed opens the chat, settles, then presses send — in that order");
+
+  // a failing keystroke must reject, so the skill can fall back to draft-only
+  let rejected = false;
+  await sendComposed("whatsapp://send?phone=359881234567&text=hi", {
+    open: async () => {},
+    wait: async () => {},
+    run: (file, args, cb) => cb(new Error("osascript not allowed"))
+  }).catch(() => { rejected = true; });
+  assert.ok(rejected, "automation failure propagates instead of pretending");
+  assert.ok(typeof pressSend === "function");
+  console.log("  ✓ a blocked keystroke rejects — no false 'sent'");
+}
+
+// ---- the skill never lies about sending -------------------------------------
+{
+  const skill = getSkill("send_message");
+  const ctx = {
+    resolveContact: async () => ({ name: "Mom", phone: "+359881234567" }),
+    readJson: async () => ({}),
+    writeJson: async () => {},
+    sendWhatsApp: async () => {},               // automation succeeds
+    openWhatsApp: async () => { throw new Error("should not fall back"); }
+  };
+  const sent = await skill.execute({ to: "Mom", body: "on my way" }, ctx);
+  assert.ok(sent.ok);
+  assert.ok(/sent/i.test(sent.summary), "success says sent");
+
+  const ctxBlocked = {
+    ...ctx,
+    sendWhatsApp: async () => { throw new Error("accessibility denied"); },
+    openWhatsApp: async () => {}                // draft fallback works
+  };
+  const draft = await skill.execute({ to: "Mom", body: "on my way" }, ctxBlocked);
+  assert.ok(draft.ok);
+  assert.ok(!/^sent/i.test(draft.summary), "fallback never claims sent");
+  assert.ok(/press enter/i.test(draft.summary), "fallback tells the user to finish it");
+  console.log("  ✓ send_message: 'sent' only when the keystroke ran; honest draft otherwise");
 }

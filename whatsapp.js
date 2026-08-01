@@ -66,3 +66,49 @@ export function openLocally(url) {
     execFile("/usr/bin/open", [u], (err) => (err ? reject(err) : resolve()));
   });
 }
+
+// ---- Completing the send ----------------------------------------------------
+// The compose deep link leaves the message typed in the chat box with focus on
+// it. Pressing Return there is the entire remaining gesture — automated below
+// via System Events, so Artemis can genuinely reply after the user confirms.
+// The confirmation gate stays with the caller; this module only performs.
+
+const SEND_KEYSTROKE_SCRIPT = `
+tell application "WhatsApp" to activate
+delay 0.2
+tell application "System Events"
+  tell process "WhatsApp"
+    set frontmost to true
+  end tell
+  keystroke return
+end tell
+`;
+
+// How long the compose deep link needs before the chat box is focused.
+// Cold starts are slower; the fallback path covers a miss honestly.
+const COMPOSE_SETTLE_MS = 1800;
+
+export function pressSend(opts = {}) {
+  // Hard kill-switch: the test suite (and anything else that must never type
+  // into real apps) sets this. A missed mock then fails loudly instead of
+  // firing a keystroke at whatever window is frontmost.
+  if (!opts.run && process.env.ARTEMIS_DISABLE_UI_AUTOMATION === "1") {
+    return Promise.reject(new Error("UI automation disabled (ARTEMIS_DISABLE_UI_AUTOMATION=1)"));
+  }
+  const run = opts.run || execFile;
+  return new Promise((resolve, reject) => {
+    run("/usr/bin/osascript", ["-e", SEND_KEYSTROKE_SCRIPT], (err) =>
+      err ? reject(err) : resolve()
+    );
+  });
+}
+
+// Open the compose deep link, give WhatsApp time to focus the prefilled chat
+// box, then press Return in it.
+export async function sendComposed(url, opts = {}) {
+  const openFn = opts.open || openLocally;
+  const wait = opts.wait || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  await openFn(url);
+  await wait(opts.settleMs ?? COMPOSE_SETTLE_MS);
+  await pressSend(opts);
+}

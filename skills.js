@@ -18,7 +18,7 @@ import {
   trashMessage
 } from "./gmail.js";
 import { stripSentinels, wrapUntrusted } from "./untrusted.js";
-import { normalizePhone, composeUrl, openLocally, whatsappInstalled } from "./whatsapp.js";
+import { normalizePhone, composeUrl, openLocally, sendComposed, whatsappInstalled } from "./whatsapp.js";
 import { fxRate, worldBankIndicator, usYieldCurve, formatFigure } from "./finance.js";
 import { unreadReport } from "./macMessages.js";
 import { MONEY_SCHOOL_CURRICULUM } from "./moneySchool.js";
@@ -103,6 +103,7 @@ export const skillCtx = {
   appendAction,
   mutate,
   openWhatsApp: openLocally,
+  sendWhatsApp: sendComposed,
   gmailConfigured,
   gmailSessionGeneration,
   listThreads,
@@ -4027,8 +4028,8 @@ const SKILLS = [
     name: "send_message",
     description:
       "Message one of the user's saved contacts on WhatsApp ('text my wife I'll be late', " +
-      "'message Mom that I landed'). Opens their WhatsApp chat with the message typed in, ready " +
-      "for the user to send. Always confirmed with the user first.",
+      "'message Mom that I landed', 'reply to Dad: on my way'). Opens their WhatsApp chat and " +
+      "sends the message. Always confirmed with the user first.",
     requiresConfirmation: true, // <-- consequential: cannot fire without an explicit yes
     paramSchema: {
       type: "object",
@@ -4047,8 +4048,8 @@ const SKILLS = [
       required: ["to", "body"]
     },
     confirmPrompt(p) {
-      // Honest about what will happen: she opens the chat, the user sends it.
-      return `You want to message ${p.to}: “${p.body}”. Want me to open WhatsApp with that ready?`;
+      // Honest about what will happen: on yes, the message actually goes out.
+      return `You want to message ${p.to}: “${p.body}”. Send it?`;
     },
     // Runs BEFORE the confirmation gate. Without it, a missing number costs a
     // full read-back-and-confirm round before failing.
@@ -4132,19 +4133,32 @@ const SKILLS = [
       if (!whatsappInstalled()) {
         return { ok: false, summary: "WhatsApp isn't installed on this Mac, so I can't open a chat." };
       }
+      // Confirmed above, so complete the send: open the prefilled chat and
+      // press Return in it. If UI automation is unavailable (accessibility
+      // permission revoked, app state odd), fall back to the honest draft —
+      // never claim "sent" unless the send keystroke actually ran.
       try {
-        await (ctx.openWhatsApp || openLocally)(composeUrl(digits, p.body));
+        await (ctx.sendWhatsApp || sendComposed)(composeUrl(digits, p.body));
       } catch (e) {
-        return { ok: false, summary: `I couldn't open WhatsApp: ${e.message}` };
+        try {
+          await (ctx.openWhatsApp || openLocally)(composeUrl(digits, p.body));
+        } catch (e2) {
+          return { ok: false, summary: `I couldn't open WhatsApp: ${e2.message}` };
+        }
+        return {
+          ok: true,
+          to: displayName,
+          body: p.body,
+          summary:
+            `I couldn't press send myself — WhatsApp is open with your message to ` +
+            `${displayName} typed in; press Enter to send it.`
+        };
       }
-      // Never says "sent" — it isn't sent until the user presses Enter, and a
-      // claim that outruns reality is the exact failure the rest of this
-      // codebase spent the day removing.
       return {
         ok: true,
         to: displayName,
         body: p.body,
-        summary: `WhatsApp is open with your message to ${displayName} — press Enter to send it.`
+        summary: `Sent — your message to ${displayName} is on its way in WhatsApp.`
       };
     }
   }

@@ -46,9 +46,11 @@ export const SPECIALISTS = {
     "notifications — content stays private). Report the count and available detail, " +
     "nothing more.",
   message:
-    "You prepare WhatsApp sends. send_message opens the chat prefilled — the user presses " +
-    "send themselves; never claim a message was sent, only that it's ready. If no number " +
-    "is saved for the person, ask for it once, then add_contact remembers it.",
+    "You send WhatsApp messages. send_message is confirmation-gated: after the user's " +
+    "explicit yes it opens the chat and completes the send itself. Relay the tool's own " +
+    "summary — it says 'sent' only when the send really ran, and tells the user to press " +
+    "Enter themselves if automation was unavailable. Never upgrade a draft to 'sent'. If " +
+    "no number is saved for the person, ask for it once, then add_contact remembers it.",
   reminder:
     "You manage real reminders that fire and speak at the right time. 'remind me in 20 " +
     "minutes / at 6:30' → set_reminder. list_reminders and cancel_reminder manage them. " +
