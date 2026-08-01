@@ -61,6 +61,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
+        // Full-screen cockpit by default. Deferred a tick so the window is
+        // fully key first; compat-check keeps a normal window (a fullscreen
+        // space would hide its permission prompts).
+        if mode != .compatCheck {
+            window.collectionBehavior.insert(.fullScreenPrimary)
+            DispatchQueue.main.async { [weak self] in
+                guard let window = self?.window,
+                      !window.styleMask.contains(.fullScreen) else { return }
+                window.toggleFullScreen(nil)
+            }
+        }
+
         if mode == .compatCheck {
             DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
                 print("compat-check timed out after 60s (unanswered permission prompt?)")
