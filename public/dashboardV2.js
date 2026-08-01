@@ -655,3 +655,178 @@ function installPerformanceGuard(shell, panels) {
   };
   requestAnimationFrame(sample);
 }
+
+// ===== Cockpit v3: holo readouts, mission ticker, voice console, parallax =====
+// Self-contained: waits for the v2 shell to mount, builds its own DOM, and
+// reads only live data (voice bins/amp, tool events, frame rate). Fully
+// skipped under reduced motion.
+(function cockpitV3() {
+  const reduced =
+    window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) return;
+
+  const tryBoot = () => {
+    const body = document.body;
+    if (!body.classList.contains("dashboard-v2")) return false;
+    const shell = document.querySelector(".v2-shell");
+    const map = document.querySelector(".v2-map");
+    const dock = document.getElementById("dock");
+    if (!shell || !map || !dock) return false;
+
+    /* ---- holographic micro-readouts around the orb ---- */
+    const mkHolo = (cls, title) => {
+      const el = document.createElement("div");
+      el.className = "v2-holo " + cls;
+      el.innerHTML =
+        '<span class="v2-holo-title">' + title + "</span>" +
+        '<canvas width="150" height="34"></canvas>' +
+        '<span class="v2-holo-value">—</span>';
+      map.appendChild(el);
+      return {
+        canvas: el.querySelector("canvas"),
+        ctx: el.querySelector("canvas").getContext("2d"),
+        value: el.querySelector(".v2-holo-value"),
+      };
+    };
+    const voiceHolo = mkHolo("v2-holo--voice", "VOICE LINK");
+    const opsHolo = mkHolo("v2-holo--ops", "OPS TRAFFIC");
+    const renderHolo = mkHolo("v2-holo--render", "RENDER");
+
+    /* ---- mission ticker under the top bar ---- */
+    const ticker = document.createElement("div");
+    ticker.className = "v2-ticker";
+    ticker.innerHTML = '<span class="v2-ticker-label">SYS</span><div class="v2-ticker-feed"></div>';
+    document.body.appendChild(ticker);
+    const feed = ticker.querySelector(".v2-ticker-feed");
+    const tick = (text) => {
+      const item = document.createElement("span");
+      item.className = "v2-tick";
+      const at = new Date();
+      item.textContent =
+        at.toTimeString().slice(0, 8) + " · " + text;
+      feed.prepend(item);
+      while (feed.children.length > 4) feed.lastChild.remove();
+    };
+    tick("cockpit v3 online");
+
+    /* ---- live data feeds ---- */
+    const ampHistory = new Float32Array(75);
+    const fpsHistory = new Float32Array(75);
+    const opsHistory = new Float32Array(75); // decaying activity blips
+    let running = 0;
+    let lastTool = "";
+    window.addEventListener("artemis-tool", (event) => {
+      const d = event.detail || {};
+      const name = String(d.family || d.name || "tool");
+      if (d.phase === "start") {
+        running += 1;
+        opsHistory[opsHistory.length - 1] = 1;
+        tick(name + " ▸ start");
+      } else if (d.phase === "end") {
+        running = Math.max(0, running - 1);
+        tick(name + (d.ok === false ? " ▸ failed ✕" : " ▸ done ✓"));
+      }
+      lastTool = name;
+    });
+    window.addEventListener("artemis-telemetry", (event) => {
+      const d = event.detail || {};
+      if (typeof d.ttfw === "number") tick("ttfw " + Math.round(d.ttfw) + "ms");
+    });
+
+    /* ---- voice console in the dock ---- */
+    const scope = document.createElement("canvas");
+    scope.className = "dock-scope";
+    scope.width = 900;
+    scope.height = 26;
+    const dockBody = document.getElementById("dockBody");
+    dock.insertBefore(scope, dockBody);
+    const scopeCtx = scope.getContext("2d");
+
+    /* ---- parallax vars ---- */
+    let targetX = 0, targetY = 0, parX = 0, parY = 0;
+    window.addEventListener(
+      "pointermove",
+      (event) => {
+        targetX = (event.clientX / window.innerWidth) * 2 - 1;
+        targetY = (event.clientY / window.innerHeight) * 2 - 1;
+      },
+      { passive: true }
+    );
+
+    /* ---- one shared draw loop ---- */
+    const sparkline = (holo, data, peak) => {
+      const ctx = holo.ctx;
+      const w = holo.canvas.width, h = holo.canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = "rgba(120,215,255,0.85)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const y = h - 2 - (data[i] / (peak || 1)) * (h - 6);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+    let lastFrame = performance.now();
+    let frame = 0;
+    const loop = () => {
+      requestAnimationFrame(loop);
+      if (document.hidden) return;
+      const now = performance.now();
+      const dt = now - lastFrame;
+      lastFrame = now;
+      frame += 1;
+
+      // parallax easing → CSS vars (map drifts, holos counter-drift)
+      parX += (targetX - parX) * 0.06;
+      parY += (targetY - parY) * 0.06;
+      shell.style.setProperty("--parx", parX.toFixed(4));
+      shell.style.setProperty("--pary", parY.toFixed(4));
+
+      // shift histories at ~15Hz; draw at ~15Hz — sparklines don't need 60
+      if (frame % 4 !== 0) return;
+      const amp = typeof window.__artemisAmp === "number" ? window.__artemisAmp : 0;
+      ampHistory.copyWithin(0, 1);
+      ampHistory[ampHistory.length - 1] = amp;
+      fpsHistory.copyWithin(0, 1);
+      fpsHistory[fpsHistory.length - 1] = Math.min(70, 1000 / Math.max(1, dt));
+      opsHistory.copyWithin(0, 1);
+      opsHistory[opsHistory.length - 1] *= 0.92;
+
+      sparkline(voiceHolo, ampHistory, 1);
+      voiceHolo.value.textContent = amp > 0.02 ? Math.round(amp * 100) + "%" : "quiet";
+      sparkline(opsHolo, opsHistory, 1);
+      opsHolo.value.textContent = running > 0 ? running + " running · " + lastTool : lastTool ? "idle · last " + lastTool : "idle";
+      sparkline(renderHolo, fpsHistory, 70);
+      renderHolo.value.textContent = Math.round(1000 / Math.max(1, dt)) + " fps";
+
+      // dock voice console: her 28 spectrum bands, mirrored, cyan
+      const bins = window.__voiceOrb && window.__voiceOrb.bins;
+      const w = scope.width, h = scope.height;
+      scopeCtx.clearRect(0, 0, w, h);
+      if (bins) {
+        const bars = bins.length * 2;
+        const bw = w / bars;
+        for (let i = 0; i < bars; i++) {
+          const bin = i < bins.length ? bins.length - 1 - i : i - bins.length;
+          const v = Math.min(1, bins[bin] * (0.35 + amp));
+          const bh = Math.max(1, v * (h - 3));
+          scopeCtx.fillStyle = "rgba(110,210,255," + (0.25 + v * 0.6).toFixed(3) + ")";
+          scopeCtx.fillRect(i * bw + 0.5, h - bh, bw - 1, bh);
+        }
+      }
+    };
+    loop();
+    return true;
+  };
+
+  if (!tryBoot()) {
+    const poll = setInterval(() => {
+      if (tryBoot()) clearInterval(poll);
+    }, 250);
+    setTimeout(() => clearInterval(poll), 15000);
+  }
+})();
