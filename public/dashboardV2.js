@@ -830,3 +830,89 @@ function installPerformanceGuard(shell, panels) {
     setTimeout(() => clearInterval(poll), 15000);
   }
 })();
+
+// ===== Cockpit v4: boot self-check + conversation transcript overlay =====
+(function cockpitV4() {
+  const tryBoot = () => {
+    if (!document.body.classList.contains("dashboard-v2")) return false;
+    const neural = document.querySelector(".v2-panel--neural");
+    const comms = document.querySelector(".v2-panel--comms");
+    const log = document.getElementById("cmdLog");
+    if (!neural || !comms || !log) return false;
+
+    /* ---- honest boot self-check: real subsystem states within seconds ---- */
+    const check = document.createElement("div");
+    check.className = "v2-selfcheck";
+    check.innerHTML = '<span class="v2-selfcheck-label">SELF-CHECK</span><span class="v2-selfcheck-items">running…</span>';
+    neural.appendChild(check);
+    const items = check.querySelector(".v2-selfcheck-items");
+    fetch("/api/status", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((s) => {
+        const subsystems = [
+          ["BRAIN", s.chatEnabled],
+          ["VOICE", s.voiceEnabled],
+          ["WEB", s.webEnabled],
+          ["MAIL", s.gmailEnabled],
+          ["WAKE", s.localWake && (s.localWake.ready ?? true)],
+        ];
+        items.innerHTML = subsystems
+          .map(([name, ok]) => {
+            const state = ok === undefined ? "unknown" : ok ? "ok" : "down";
+            const glyph = ok === undefined ? "·" : ok ? "✓" : "✕";
+            return `<em data-state="${state}">${name} ${glyph}</em>`;
+          })
+          .join("");
+        const down = subsystems.filter(([, ok]) => ok === false).map(([n]) => n);
+        const tickerFeed = document.querySelector(".v2-ticker-feed");
+        if (tickerFeed) {
+          const item = document.createElement("span");
+          item.className = "v2-tick";
+          item.textContent =
+            new Date().toTimeString().slice(0, 8) +
+            " · self-check " +
+            (down.length ? "⚠ " + down.join("/").toLowerCase() + " down" : "all systems ✓");
+          tickerFeed.prepend(item);
+          while (tickerFeed.children.length > 4) tickerFeed.lastChild.remove();
+        }
+      })
+      .catch(() => {
+        items.innerHTML = '<em data-state="down">STATUS UNREACHABLE ✕</em>';
+      });
+
+    /* ---- conversation transcript overlay (click COMMS header / ⤢) ---- */
+    const heading = comms.querySelector(".v2-panel-heading");
+    const expand = document.createElement("button");
+    expand.className = "v2-expand";
+    expand.type = "button";
+    expand.textContent = "⤢";
+    expand.setAttribute("aria-label", "Expand conversation transcript");
+    heading.appendChild(expand);
+
+    const overlay = document.createElement("div");
+    overlay.className = "v2-transcript";
+    overlay.hidden = true;
+    overlay.innerHTML =
+      '<div class="v2-transcript-card" role="dialog" aria-label="Conversation transcript">' +
+      '<header><h2>TRANSCRIPT</h2><button type="button" class="v2-transcript-close" aria-label="Close">✕</button></header>' +
+      '<div class="v2-transcript-body"></div></div>';
+    document.body.appendChild(overlay);
+    const bodyEl = overlay.querySelector(".v2-transcript-body");
+    const close = () => { overlay.hidden = true; };
+    const open = () => {
+      bodyEl.innerHTML = "";
+      bodyEl.appendChild(log.cloneNode(true));
+      overlay.hidden = false;
+      bodyEl.scrollTop = bodyEl.scrollHeight;
+    };
+    expand.addEventListener("click", open);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector(".v2-transcript-close").addEventListener("click", close);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) close(); });
+    return true;
+  };
+  if (!tryBoot()) {
+    const poll = setInterval(() => { if (tryBoot()) clearInterval(poll); }, 250);
+    setTimeout(() => clearInterval(poll), 15000);
+  }
+})();
