@@ -242,3 +242,31 @@ suite green); shared .data stores go through the mutation seam; voice
 pipeline post-meeting verified via followup+meeting suites. Floor: 19
 suites + 19/19 eval. VERDICT: PASS. A Codex re-audit is worth running
 when quota resets.
+
+## Act 3 — Build (Reactor Core orb, 2026-08-01)
+
+### Round 1 — Codex build (thread 019fbc3f-558b-7f83-959a-8f32d1591dc2)
+Codex (gpt-5.6-sol, ultra) implemented Tasks 1-4 of docs/superpowers/plans/2026-08-01-reactor-orb.md:
+screenshot harness + __voiceOrb handle, Earth-era strip (2996 → ~1324 lines), STATE_COLORS palette
+engine with per-state cached reactor sprites, _drawCore with crossfaded halo/disc + coil ring.
+Process was killed mid-Task-5; no final report emitted. Tree left uncommitted as instructed.
+
+### Claude's verdict
+Tasks 1-4 verified: syntax clean, npm test 19/19 green, code follows house conventions
+(sprite caching, no frame-loop allocation, reduced-motion gates). Takeover invoked per skill
+rule rather than resuming the killed run.
+
+### Round 2 — Claude takeover (Tasks 5-7)
+Implemented _drawInstrumentRings (5+8 segmented rings, per-state tick sprites crossfaded via
+_coreSpriteWeights, tool-call sweep wired from toolEvent start phase), _drawGimbal (two tilted
+precessing rings, back/front passes, hologram shimmer), moon HUD restyle (bracket-diamond
+markers, gold-while-running + blink, hairline orbits at 40% alpha, dimmed labels). Deleted
+_drawLimb/makeLimbSprite/ATMOSPHERE_SPRITE_SIZE. Deviation from plan: tick sprites built once
+in constructor at fixed 512px (scaled at draw) instead of rebuilt per resize — simpler and
+matches the makeReactorSprite convention.
+
+### Proof
+npm test: 19/19 PASS. Dead-code sweep clean (no EARTH/_dot/plexus/nebula/Cage/limb refs).
+Screenshots: artifacts/orb-final-{idle,listening,thinking,speaking}.png — idle/listening cyan,
+thinking gold, speaking white-hot; gimbal + rings + HUD moons render in all four.
+Awaiting human diff sign-off before commit.

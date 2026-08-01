@@ -1,191 +1,36 @@
-// The Artemis System — a voice-reactive particle-wireframe globe with six
-// honest agent moons. Canvas 2D only; all scene geometry and draw-style pools
-// are fixed before the animation loop starts.
+// The Artemis System — a voice-reactive reactor orb with eleven
+// honest agent moons. Canvas 2D only; all scene geometry and draw-style
+// pools are fixed before the animation loop starts.
 
 import { PAL, prefersReducedMotion } from "./orbShared.js";
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
-const LEGACY_DOT_COUNT = 7 * 100 + 11 * 64;
-const DOT_COUNT = 12500; // 240x120 mask: continents as filled dot-fields
-const EARTH_MASK_WIDTH = 240;
-const EARTH_MASK_HEIGHT = 120;
-const EARTH_FRONT_LONGITUDE = 10 * DEG;
-const CAGE_LATITUDE_COUNT = 8;
-const CAGE_LONGITUDE_COUNT = 12;
-const CAGE_LINE_COUNT = CAGE_LATITUDE_COUNT + CAGE_LONGITUDE_COUNT;
-const CAGE_SEGMENTS_PER_LINE = 48;
-const CAGE_POINTS_PER_LINE = CAGE_SEGMENTS_PER_LINE + 1;
-const CAGE_POINT_COUNT = CAGE_LINE_COUNT * CAGE_POINTS_PER_LINE;
-const CAGE_SEGMENT_COUNT = CAGE_LINE_COUNT * CAGE_SEGMENTS_PER_LINE;
-const DOT_TONE_BUCKETS = 5;
-const DOT_ALPHA_BUCKETS = 10;
-const DOT_STYLE_GROUPS = DOT_TONE_BUCKETS * DOT_ALPHA_BUCKETS;
 const STYLE_ALPHA_BUCKETS = 16;
 const WORDMARK_LETTERS = ["A","R","T","E","M","I","S"];
 const RIPPLE_POOL_SIZE = 16;
 const HALO_LIFE = 1.25;
-const BASE_SPIN_RATE = TAU / 60; // ops redesign: stately ~60s/rev
+const BASE_SPIN_RATE = TAU / 60;
 const REFORM_DURATION = 0.72;
 const CAM_DISTANCE = 3.2;
-const DATA_ARC_POOL_SIZE = 10;
-const DATA_ARC_PAIR_COUNT = 40;
-const DATA_ARC_LIFE = 1.2;
-const DATA_ARC_TAIL_STEPS = 8;
-const DATA_ARC_TAIL_SPAN = 0.32;
-const WIRE_PULSE_COUNT = 5;
-const SCAN_INTERVAL = 10;
-const SCAN_DURATION = 2.5;
-const SCAN_RING_STEPS = 64;
 const MOON_COUNT = 11;
 const MOON_SETTLE_TIME = 0.6;
 const MOON_ORBIT_STEPS = 48;
-const MOON_TAIL_SAMPLES = 5;
-const MOON_TAIL_INTERVAL = 0.1;
-const DOT_GLOW_SIZE = 32;
-const ARC_GLOW_SIZE = 48;
-const ATMOSPHERE_SPRITE_SIZE = 256;
 const MOON_LABEL_FONT = '600 9px "JetBrains Mono", monospace';
-const FILAMENT_DASH = Object.freeze([5, 8]);
-const SOLID_LINE = Object.freeze([]);
+const SWEEP_LIFE = 0.8;
 
-// Authored 96×48 equirectangular land mask, north-to-south and west-to-east.
-// Each row is 96 packed bits (24 hex digits): Greenland, the Americas,
-// Europe/Africa, Eurasia, island chains, Australia, and Antarctica are all
-// represented explicitly. It is decoded once per orb; the frame loop never
-// performs a mask lookup.
-const EARTH_MASK_HEX = Object.freeze([
-  // Natural Earth 110m land polygons rasterized at 240x120 —
-  // fine enough that coastlines read as shapes, not blobs.
-  "000000000000000000000000000000000000000000000000000000000000",
-  "000000000000000000000000000000000000000000000000000000000000",
-  "000000000000000000000000000000000000000000000000000000000000",
-  "000000000000000000000000000000000000000000000000000000000000",
-  "000000000000000000000003fe0000000000000000000000000000000000",
-  "000000000000001ffff3ffffff8e00000000000000000000000000000000",
-  "00000000000000fc7f9ffffffff000000fc00180000007c0000000000000",
-  "0000000000043b7bf87fffffffe00000f80000000000001c000000000000",
-  "0000000000c00007e03fffffffe00000700000000000000c000000000000",
-  "00000000003d8e308000ffffffe0000000000001e00003fff0000f000000",
-  "000000000700000000003fffffc000000000000600003fff800000000000",
-  "0000000007bacecfc0001fffff800000000000180303fffffffc06000000",
-  "c0010000023fc0cfff0007ffff8000000000001c077ffffffffcfff80001",
-  "001fffc0f23ffac10fe00fffff00000007fc0000877fffffffffffffc07c",
-  "c07ffffffff0c37981e007fff00000003fffc637fbbfffffffffffffffff",
-  "ec0fffffffffffff81fe0fff800000007fffe3ffff7fffffffffffffffff",
-  "187ffffffffffffd0fe407f8007e0000fc7e1fffffffffffffffffffffff",
-  "0007fffffffffff360f803f800300003f9fffffffffffffffffffffffffe",
-  "003fffffffffffc08e3001f00000000ff3fffffffffffffffffffffffbfc",
-  "003ffbffffffff800fc000600000001ff3ffffffffffffffffffffff07c0",
-  "000f801fffffff800fcc00000000000ff0ffffffffffffffffffff261800",
-  "00014001ffffffc007fe000000000800e0fffffffffffffffffff8007000",
-  "00040000fffffffc07fe000000000c06e3fffffffffffffffffff000f800",
-  "002000007fffffff9fffc0000000160217ffffffffffffffffffc000f000",
-  "000000013fffffff9fffe0000000371ffffffffffffffffffffffe00e000",
-  "000000001fffffffdfffc0000000079ffffffffffffffffffffffe008000",
-  "000000001ffffffffff3000000000c7ffffffffffffffffffffffd000000",
-  "000000000fffffffffd87000000005fffffffffffffffffffffff8000000",
-  "0000000007fffffffff80800000003fffffffffffffffffffffff8000000",
-  "0000000007ffffffffff0000000001fffff27f1ffffffffffffff0000000",
-  "0000000007ffffffffc80000000001ff3fe03e3fffffffffffffe3000000",
-  "0000000007ffffffff80000000003fc18fe00f1fffffffffffff07000000",
-  "0000000007ffffffff00000000003f8067e79f8ffffffffffffc00000000",
-  "0000000007fffffffe00000000003f00263fff8fffffffffff5806000000",
-  "0000000003fffffffc00000000003f00233fff8ffffffffffe1c04000000",
-  "0000000001fffffff800000000000e2e003fffffffffffffff8c1c000000",
-  "0000000001fffffff800000000000dfe00c2ffffffffffffff0cfc000000",
-  "00000000007ffffff000000000001ffe0000ffffffffffffff00e0000000",
-  "00000000003fffffc000000000003fffc601ffffffffffffff8100000000",
-  "000000000017ffffc000000000003ffff7ffffffffffffffff8000000000",
-  "000000000017ff904000000000007fffffffff3fffffffffff8000000000",
-  "00000000001bfe00400000000001fffffffcff9fffffffffff8000000000",
-  "000000000005fe00680000000003fffffffeff87ffffffffff0000000000",
-  "000000000004fe00000000000003fffffffe7fcc07fffffffe0000000000",
-  "0000000000007e00000000000007ffffffff3ffe03fffffffc8000000000",
-  "0000000000003e00100000000007ffffffffbfff03ffe7ffe00000000000",
-  "0000000000003e0c0e0000000007ffffffff9ffe007fc3fe000000000000",
-  "0000000000001f1c00c000000007ffffffff9ffc007f01fec00000000000",
-  "00000000000007f8000000000007ffffffffcff8007e01fe00c000000000",
-  "000000000000013f000000000007ffffffffcfe0007c017f008000000000",
-  "000000000000001f800000000007fffffffff7800038007f808000000000",
-  "0000000000000003000000000007fffffffffc000038003f802000000000",
-  "0000000000000001014000000003fffffffff8c000180007005000000000",
-  "0000000000000000837e00000001ffffffffffc000180002000000000000",
-  "00000000000000004fff00000001ffffffffff8000040060003000000000",
-  "00000000000000000fff80000000ffffffffff8000040010001000000000",
-  "00000000000000000ffff80000003f1fffffff0000000098060000000000",
-  "000000000000000007fffc0000000003ffffff00000000d80c0000000000",
-  "00000000000000000ffffc0000000003fffffe00000000683e0000000000",
-  "00000000000000001ffffe0000000003fffff800000000387ee400000000",
-  "00000000000000003fffff8000000003fffff000000000187c0480000000",
-  "00000000000000003fffffc000000003ffffe0000000001c7d8058000000",
-  "00000000000000003ffffffc00000001ffffe0000000000e08487f000000",
-  "00000000000000003fffffff00000000ffffc0000000000600000f800000",
-  "00000000000000003fffffff80000000ffffc0000000000320004fc08000",
-  "00000000000000001fffffff800000007fffc0000000000038000f602000",
-  "00000000000000000fffffff000000007fffe00000000000002000300000",
-  "00000000000000000ffffffe000000007fffe00000000000000000000000",
-  "000000000000000007fffffe000000007fffe000000000000001e1000000",
-  "000000000000000007fffffc00000000ffffe08000000000000be3000000",
-  "000000000000000003fffffc00000000ffffe1c000000000001fe3800000",
-  "000000000000000000fffffc00000000ffff878000000000003ffb800000",
-  "0000000000000000007ffffc00000000ffff078000000000007fffc00000",
-  "0000000000000000007ffff8000000007ffe03000000000001ffffe00400",
-  "0000000000000000007ffff8000000007fff07000000000007fffff00200",
-  "0000000000000000007fffe0000000003fff0700000000000ffffff80000",
-  "0000000000000000007fff00000000003ffe0600000000000ffffffc0000",
-  "0000000000000000007fff00000000003ffc0000000000000ffffffc0000",
-  "0000000000000000007fff00000000003ffc0000000000000ffffffc0000",
-  "000000000000000000fffe00000000001ff800000000000007fffffc0000",
-  "000000000000000000fffc00000000000ff000000000000007fffffc0000",
-  "000000000000000000fff800000000000fe000000000000007f87ffc0000",
-  "000000000000000000fff000000000000f8000000000000007e02ff80000",
-  "000000000000000000ffc00000000000000000000000000000000ff00010",
-  "000000000000000001ffc000000000000000000000000000000007f00008",
-  "000000000000000001ff800000000000000000000000000000000340000e",
-  "000000000000000001fe000000000000000000000000000000000000000c",
-  "000000000000000001f80000000000000000000000000000000000600008",
-  "000000000000000001f80000000000000000000000000000000000600030",
-  "000000000000000003f000000000000000000000000000000000000000c0",
-  "000000000000000003e000000000000000000000000000000000000001c0",
-  "000000000000000003f00000000000000000000000000000000000000000",
-  "000000000000000003e00000000000000000000000000000000000000000",
-  "000000000000000003c00000000000000000000000000000000000000000",
-  "000000000000000003c18000000000000000000000000000000000000000",
-  "000000000000000001e00000000000000000000000000000000000000000",
-  "000000000000000000f80000000000000000000000000000000000000000",
-  "000000000000000000000000000000000000000000000000000000000000",
-  "000000000000000000000000000000000000000000000000000000000000",
-  "000000000000000000000000000000000000000000000000000000000000",
-  "000000000000000000000000000000000000000000000000000000000000",
-  "000000000000000000000000000000000000000000000000000000000000",
-  "00000000000000000000c000000000000000000000000000000000000000",
-  "000000000000000000040000000000000000000000000000000000000000",
-  "000000000000000000180000000000000000003c0000201e7c7fe0000000",
-  "00000000000000000010000000000000000007fffc07ffffffffffe00000",
-  "000000000000000000fc0000000000000007fffffc3fffffffffffffc000",
-  "000000000000000001de00000000137ffffffffffcffffffffffffffff80",
-  "0000000000000008001e00000001ffffffffffffffffffffffffffffffc0",
-  "00000000007807fffffe00000003fffffffffffffffffffffffffffffe00",
-  "000003ffffffffffffe00000003ffffffffffffffffffffffffffffff800",
-  "0002cffffffffffffc0000000ffffffffffffffffffffffffffffffff800",
-  "0018fffffffffffff00001e0fffffffffffffffffffffffffffffffffe00",
-  "000003fffffffffffc010fc007ffffffffffffffffffffffffffffffe000",
-  "00007ffffffffffffffc018ffffffffffffffffffffffffffffffffff000",
-  "00003fffffffffffffffffffffffffffffffffffffffffffffffffffff00",
-  "ffc0007fffffffffffffffffffffffffffffffffffffffffffffffffffff",
-  "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-  "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-  "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-]);
-
-// lon, lat, longitudinal spread, latitudinal spread. Every plexus node is
-// mask-validated inside one of these four real population regions.
-const POPULATION_REGIONS = new Float32Array([
-  5, 50, 18, 9,       // Western Europe
-  118, 33, 20, 13,    // East Asia
-  -77, 40, 14, 12,    // eastern North America
-  -3, 9, 15, 11       // West Africa
+// Adaptive Jarvis palette: idle/listening cyan, thinking gold, speaking white-hot.
+const STATE_COLORS = {
+  idle:      { core: [143, 214, 255], ring: [79, 195, 255] },
+  listening: { core: [191, 239, 255], ring: [110, 210, 255] },
+  thinking:  { core: [255, 196, 102], ring: [255, 176, 76] },
+  speaking:  { core: [242, 251, 255], ring: [190, 235, 255] },
+};
+const REACTOR_STATE_KEYS = Object.freeze([
+  "idle",
+  "listening",
+  "thinking",
+  "speaking",
 ]);
 
 const MOON_LABELS = Object.freeze([
@@ -248,29 +93,6 @@ function makeAlphaStyles(prefix, count = STYLE_ALPHA_BUCKETS) {
   return Object.freeze(styles);
 }
 
-function makeDotTonePrefixes() {
-  return Object.freeze([
-    PAL.Hl,                    // coastline / brightest city lights
-    PAL.B,                     // inhabited land
-    PAL.O,                     // quieter inland structure
-    "rgba(132,153,249,",      // ocean transition
-    PAL.V                      // sparse deep-ocean lattice
-  ]);
-}
-
-function makeDotStyles(prefixes) {
-  const styles = new Array(DOT_TONE_BUCKETS * DOT_ALPHA_BUCKETS);
-  for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
-    for (let alpha = 0; alpha < DOT_ALPHA_BUCKETS; alpha++) {
-      styles[tone * DOT_ALPHA_BUCKETS + alpha] =
-        prefixes[tone] +
-        (alpha / (DOT_ALPHA_BUCKETS - 1)).toFixed(3) +
-        ")";
-    }
-  }
-  return Object.freeze(styles);
-}
-
 function makeGlowSprite(prefix, size, strength) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -294,145 +116,58 @@ function makeGlowSprite(prefix, size, strength) {
   return canvas;
 }
 
-function makeLimbSprite(prefix, size) {
+// 60 instrument ticks, every 5th one longer. The sprite spans 1.1 orb radii
+// half-width, so drawing it at 2.2R keeps tick radii proportional at any size.
+function makeTickSprite(rgb, size) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
   const center = size * 0.5;
-  const limb = ctx.createRadialGradient(
-    center,
-    center,
-    0,
-    center,
-    center,
-    center
-  );
-  limb.addColorStop(0, prefix + "0)");
-  limb.addColorStop(0.68, prefix + "0)");
-  limb.addColorStop(0.79, prefix + "0.05)");
-  limb.addColorStop(0.84, prefix + "0.42)");
-  limb.addColorStop(0.9, prefix + "0.16)");
-  limb.addColorStop(1, prefix + "0)");
-  ctx.fillStyle = limb;
-  ctx.fillRect(0, 0, size, size);
+  const unit = center / 1.1;
+  ctx.translate(center, center);
+  ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.9)`;
+  for (let i = 0; i < 60; i++) {
+    const major = i % 5 === 0;
+    const angle = (i / 60) * TAU;
+    const inner = unit * 0.57;
+    const outer = unit * (major ? 0.62 : 0.6);
+    ctx.lineWidth = major ? 3.6 : 2.2;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
+    ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
+    ctx.stroke();
+  }
   return canvas;
 }
 
-function makeNebulaSprite(prefix, size, variant) {
+function makeReactorSprite(rgb, size, halo) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
-  const centerX = size * (variant ? 0.56 : 0.44);
-  const centerY = size * (variant ? 0.44 : 0.56);
-  const nebula = ctx.createRadialGradient(
-    centerX,
-    centerY,
-    0,
-    centerX,
-    centerY,
-    size * 0.5
+  const center = size * 0.5;
+  const gradient = ctx.createRadialGradient(
+    center,
+    center,
+    halo ? center / 12 : 0,
+    center,
+    center,
+    center
   );
-  nebula.addColorStop(0, prefix + (variant ? "0.2)" : "0.17)"));
-  nebula.addColorStop(0.3, prefix + (variant ? "0.12)" : "0.1)"));
-  nebula.addColorStop(0.7, prefix + "0.035)");
-  nebula.addColorStop(1, prefix + "0)");
-  ctx.fillStyle = nebula;
+  if (halo) {
+    gradient.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},1)`);
+    gradient.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
+  } else {
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.55, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.8)`);
+    gradient.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
+  }
+  ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, size, size);
   return canvas;
 }
 
-function makeProjectorFloorSprite(prefix) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 64;
-  const ctx = canvas.getContext("2d");
-  const glow = ctx.createRadialGradient(128, 32, 0, 128, 32, 128);
-  glow.addColorStop(0, prefix + "0.14)");
-  glow.addColorStop(0.36, prefix + "0.075)");
-  glow.addColorStop(1, prefix + "0)");
-  ctx.save();
-  ctx.translate(128, 32);
-  ctx.scale(1, 0.24);
-  ctx.translate(-128, -32);
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, -96, 256, 256);
-  ctx.restore();
-  return canvas;
-}
-
-function makeProjectorBeamSprite(prefix) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 192;
-  canvas.height = 192;
-  const ctx = canvas.getContext("2d");
-  const beam = ctx.createLinearGradient(0, 192, 0, 0);
-  beam.addColorStop(0, prefix + "0.18)");
-  beam.addColorStop(1, prefix + "0)");
-  ctx.fillStyle = beam;
-  ctx.beginPath();
-  ctx.moveTo(0, 192);
-  ctx.lineTo(192, 192);
-  ctx.lineTo(144, 0);
-  ctx.lineTo(48, 0);
-  ctx.closePath();
-  ctx.fill();
-  return canvas;
-}
-
-function decodeEarthMask() {
-  const mask = new Uint8Array(EARTH_MASK_WIDTH * EARTH_MASK_HEIGHT);
-  for (let row = 0; row < EARTH_MASK_HEIGHT; row++) {
-    const encoded = EARTH_MASK_HEX[row];
-    for (let nibble = 0; nibble < encoded.length; nibble++) {
-      const value = parseInt(encoded[nibble], 16);
-      const column = nibble * 4;
-      mask[row * EARTH_MASK_WIDTH + column] = (value >> 3) & 1;
-      mask[row * EARTH_MASK_WIDTH + column + 1] = (value >> 2) & 1;
-      mask[row * EARTH_MASK_WIDTH + column + 2] = (value >> 1) & 1;
-      mask[row * EARTH_MASK_WIDTH + column + 3] = value & 1;
-    }
-  }
-  return mask;
-}
-
-function earthMaskValue(mask, column, row) {
-  if (row < 0 || row >= EARTH_MASK_HEIGHT) return 0;
-  let wrappedColumn = column % EARTH_MASK_WIDTH;
-  if (wrappedColumn < 0) wrappedColumn += EARTH_MASK_WIDTH;
-  return mask[row * EARTH_MASK_WIDTH + wrappedColumn];
-}
-
-function earthMaskValueAtGeo(mask, longitude, latitude) {
-  let normalizedLongitude = (longitude + 180) % 360;
-  if (normalizedLongitude < 0) normalizedLongitude += 360;
-  const column = Math.min(
-    EARTH_MASK_WIDTH - 1,
-    Math.floor((normalizedLongitude / 360) * EARTH_MASK_WIDTH)
-  );
-  const row = Math.max(
-    0,
-    Math.min(
-      EARTH_MASK_HEIGHT - 1,
-      Math.floor(((90 - latitude) / 180) * EARTH_MASK_HEIGHT)
-    )
-  );
-  return mask[row * EARTH_MASK_WIDTH + column];
-}
-
-function isPopulationRegion(longitude, latitude) {
-  return (
-    (longitude >= -13 && longitude <= 28 && latitude >= 39 && latitude <= 61) ||
-    (longitude >= 100 && longitude <= 145 && latitude >= 18 && latitude <= 48) ||
-    (longitude >= -93 && longitude <= -63 && latitude >= 27 && latitude <= 53) ||
-    (longitude >= -20 && longitude <= 14 && latitude >= -2 && latitude <= 22) ||
-    (longitude >= 67 && longitude <= 92 && latitude >= 7 && latitude <= 31)
-  );
-}
-
-const DOT_TONE_PREFIXES = makeDotTonePrefixes();
-const DOT_STYLES = makeDotStyles(DOT_TONE_PREFIXES);
 const O_STYLES = makeAlphaStyles(PAL.O);
 const B_STYLES = makeAlphaStyles(PAL.B);
 const V_STYLES = makeAlphaStyles(PAL.V);
@@ -472,14 +207,11 @@ const MOON_PREFIXES = Object.freeze([
 const SCENE_WASH = PAL.D + "0.022)";
 const GRID_STYLE = PAL.D + "0.05)";
 
-function hashUnit(value) {
-  const n = Math.sin(value * 12.9898 + 78.233) * 43758.5453;
-  return n - Math.floor(n);
-}
 
 export class VoiceOrb {
   constructor(container, opts = {}) {
     this.container = container;
+    if (typeof window !== "undefined") window.__voiceOrb = this;
     this.center = !!opts.center;
     this.reduced = prefersReducedMotion();
     this.status = "idle";
@@ -505,356 +237,26 @@ export class VoiceOrb {
     this._listeningMix = 0;
     this._thinkingMix = 0;
     this._speakingMix = 0;
+    this._coreRGB = [0, 0, 0];
+    this._ringRGB = [0, 0, 0];
+    this._activeMix = 0;
+    this._breathEnv = 0; // slow-eased voice envelope: a swell, not a jitter
+    this._dt = 0;
+    this._ringAngleInner = 0;
+    this._ringAngleOuter = 0;
+    this._tickAngle = 0;
+    this._sweep = { active: 0, t0: 0 }; // one sweep at a time; retrigger restarts
+    // Two hologram gimbal rings: fixed tilt, precessing axis, spinning phase.
+    this._gimbals = [
+      { radius: 1.12, tilt: 62 * DEG, prec: 0.6, precSpeed: 0.09, spin: 0, spinSpeed: 0.5 },
+      { radius: 1.26, tilt: 74 * DEG, prec: 2.1, precSpeed: -0.06, spin: 0, spinSpeed: -0.36 },
+    ];
     this._globeYaw = 0.78; // boot facing ~15E — Africa/Europe toward camera
-    this._cloudYaw = 0;
     this._reformStart = -1;
     this._reformStrength = 0;
     this._reformOvershoot = 0;
     this._lastFrameAt = 0;
     this._elapsed = 0;
-
-    // ---- Digital Earth surface: authored mask + constructor-only reseed ----
-    this._earthMask = decodeEarthMask();
-    const earthCoast = new Uint8Array(
-      EARTH_MASK_WIDTH * EARTH_MASK_HEIGHT
-    );
-    for (let row = 0; row < EARTH_MASK_HEIGHT; row++) {
-      for (let column = 0; column < EARTH_MASK_WIDTH; column++) {
-        if (!earthMaskValue(this._earthMask, column, row)) continue;
-        earthCoast[row * EARTH_MASK_WIDTH + column] =
-          !earthMaskValue(this._earthMask, column - 1, row) ||
-          !earthMaskValue(this._earthMask, column + 1, row) ||
-          !earthMaskValue(this._earthMask, column, row - 1) ||
-          !earthMaskValue(this._earthMask, column, row + 1)
-            ? 1
-            : 0;
-      }
-    }
-
-    this._dotBase = new Float32Array(DOT_COUNT * 3);
-    this._dotLatitude = new Float32Array(DOT_COUNT);
-    this._dotTwinkle = new Float32Array(DOT_COUNT);
-    this._dotShimmer = new Float32Array(DOT_COUNT);
-    this._dotIntensity = new Float32Array(DOT_COUNT);
-    this._dotDelay = new Float32Array(DOT_COUNT);
-    this._dotScatter = new Float32Array(DOT_COUNT * 3);
-    this._dotScreenX = new Float32Array(DOT_COUNT);
-    this._dotScreenY = new Float32Array(DOT_COUNT);
-    this._dotCameraX = new Float32Array(DOT_COUNT);
-    this._dotCameraY = new Float32Array(DOT_COUNT);
-    this._dotDepth = new Float32Array(DOT_COUNT);
-    this._dotRadius = new Float32Array(DOT_COUNT);
-    this._dotBaseSize = new Float32Array(DOT_COUNT);
-    this._dotSurface = new Uint8Array(DOT_COUNT);
-    this._dotCity = new Uint8Array(DOT_COUNT);
-    this._dotToneBase = new Uint8Array(DOT_COUNT);
-    this._dotWireKind = new Uint8Array(DOT_COUNT);
-    this._dotWireChain = new Uint8Array(DOT_COUNT);
-    this._dotWireParam = new Float32Array(DOT_COUNT);
-    this._dotToneBucket = new Uint8Array(DOT_COUNT);
-    this._dotStyleCounts = new Uint16Array(DOT_STYLE_GROUPS);
-    this._dotStyleIndices = new Uint16Array(
-      DOT_STYLE_GROUPS * DOT_COUNT
-    );
-    this._lightBucketCounts = new Uint16Array(6);
-    this._lightBucketIndices = new Uint16Array(6 * DOT_COUNT);
-
-    let dot = 0;
-    let landDots = 0;
-    let oceanDots = 0;
-    let coastDots = 0;
-    const longitudeStep = 360 / EARTH_MASK_WIDTH;
-    const latitudeStep = 180 / EARTH_MASK_HEIGHT;
-    const addEarthDot = (
-      longitudeDegrees,
-      latitudeDegrees,
-      surface,
-      seed,
-      extraLand
-    ) => {
-      if (dot >= DOT_COUNT) return;
-      const longitude = longitudeDegrees * DEG - EARTH_FRONT_LONGITUDE;
-      const latitude = latitudeDegrees * DEG;
-      const latitudeRadius = Math.cos(latitude);
-      const offset = dot * 3;
-      const populated = surface &&
-        isPopulationRegion(longitudeDegrees, latitudeDegrees);
-      const cityChance = populated ? 0.62 : extraLand ? 0.31 : 0.13;
-      const city = surface && hashUnit(seed + 821) < cityChance ? 1 : 0;
-      const longitudeFraction = (longitudeDegrees + 180) / 360;
-      const latitudeFraction = (latitudeDegrees + 90) / 180;
-      const wireKind = hashUnit(seed + 1871) < 0.5 ? 0 : 1;
-
-      this._dotBase[offset] = latitudeRadius * Math.sin(longitude);
-      this._dotBase[offset + 1] = Math.sin(latitude);
-      this._dotBase[offset + 2] = latitudeRadius * Math.cos(longitude);
-      this._dotLatitude[dot] = latitude;
-      this._dotSurface[dot] = surface;
-      this._dotCity[dot] = city;
-      this._dotTwinkle[dot] = hashUnit(seed + 4099) * TAU;
-      this._dotShimmer[dot] = surface
-        ? city ? 0.25 : surface === 2 ? 0.18 : 0.14
-        : 0.055;
-      this._dotIntensity[dot] = surface === 2
-        ? 1.3 + city * 0.1
-        : surface === 1 ? 0.4 + city * 0.16 : 0; // interiors mute — coasts carry the shape
-      this._dotToneBase[dot] = city
-        ? 0
-        : surface === 2
-          ? 1
-        : surface === 1
-          ? hashUnit(seed + 541) < 0.7 ? 1 : 2
-          : hashUnit(seed + 727) < 0.22 ? 3 : 4;
-      this._dotBaseSize[dot] = surface
-        ? (surface === 2 ? 1.3 : 0.94) +
-          Math.pow(hashUnit(seed + 5101), 2.6) * 0.98 +
-          city * 0.18
-        : 0.72 + hashUnit(seed + 5101) * 0.48;
-      this._dotWireKind[dot] = wireKind;
-      if (wireKind === 0) {
-        this._dotWireChain[dot] = Math.max(
-          0,
-          Math.min(
-            CAGE_LATITUDE_COUNT - 1,
-            Math.floor(latitudeFraction * CAGE_LATITUDE_COUNT)
-          )
-        );
-        this._dotWireParam[dot] = longitudeFraction;
-      } else {
-        this._dotWireChain[dot] = Math.max(
-          0,
-          Math.min(
-            CAGE_LONGITUDE_COUNT - 1,
-            Math.floor(longitudeFraction * CAGE_LONGITUDE_COUNT)
-          )
-        );
-        this._dotWireParam[dot] = latitudeFraction;
-      }
-
-      if (surface) {
-        landDots++;
-        if (surface === 2) coastDots++;
-      } else {
-        oceanDots++;
-      }
-      dot++;
-    };
-
-    for (let row = 0; row < EARTH_MASK_HEIGHT; row++) {
-      const latitude = 90 - (row + 0.5) * latitudeStep;
-      for (let column = 0; column < EARTH_MASK_WIDTH; column++) {
-        const cell = row * EARTH_MASK_WIDTH + column;
-        const longitude = -180 + (column + 0.5) * longitudeStep;
-        const land = this._earthMask[cell] !== 0;
-        const coast = earthCoast[cell] !== 0;
-        if (land) {
-          const polar = latitude < -66;
-          if (!polar || hashUnit(cell + 12011) < 0.36) {
-            const jitter = coast ? 0.08 : 0.32;
-            addEarthDot(
-              longitude +
-                (hashUnit(cell + 13001) - 0.5) * longitudeStep * jitter,
-              latitude +
-                (hashUnit(cell + 14009) - 0.5) * latitudeStep * jitter,
-              coast ? 2 : 1,
-              cell + 15013,
-              false
-            );
-          }
-          if (!polar && (coast || hashUnit(cell + 16001) < 0.32)) {
-            const extraJitter = coast ? 0.28 : 0.78;
-            addEarthDot(
-              longitude +
-                (hashUnit(cell + 17011) - 0.5) * longitudeStep * extraJitter,
-              latitude +
-                (hashUnit(cell + 18013) - 0.5) * latitudeStep * extraJitter,
-              coast ? 2 : 1,
-              cell + 19001,
-              true
-            );
-          }
-        } else if (false) { // ocean dots retired — the body is the ocean
-          addEarthDot(
-            longitude +
-              (hashUnit(cell + 21001) - 0.5) * longitudeStep * 0.84,
-            latitude +
-              (hashUnit(cell + 22003) - 0.5) * latitudeStep * 0.84,
-            0,
-            cell + 23003,
-            false
-          );
-        }
-      }
-    }
-    this._dotCount = dot;
-    this._earthLandDotCount = landDots;
-    this._earthOceanDotCount = oceanDots;
-    this._earthCoastDotCount = coastDots;
-
-    // Scatter direction, distance, easing delay, and twinkle phase are stable
-    // per dot, so dissolve/reform never creates geometry in the frame loop.
-    for (let i = 0; i < this._dotCount; i++) {
-      const u = hashUnit(i + 1);
-      const v = hashUnit(i + 1019);
-      const w = hashUnit(i + 2039);
-      const d = hashUnit(i + 3079);
-      const scatterY = u * 2 - 1;
-      const scatterRadius = Math.sqrt(Math.max(0, 1 - scatterY * scatterY));
-      const scatterAngle = v * TAU;
-      const scatterMagnitude = 0.08 + w * 0.42;
-      const offset = i * 3;
-      this._dotScatter[offset] =
-        Math.cos(scatterAngle) * scatterRadius * scatterMagnitude;
-      this._dotScatter[offset + 1] = scatterY * scatterMagnitude;
-      this._dotScatter[offset + 2] =
-        Math.sin(scatterAngle) * scatterRadius * scatterMagnitude;
-      this._dotDelay[i] = d * 0.55;
-    }
-
-    const landDotIndices = new Uint16Array(DOT_COUNT);
-    let landDotCount = 0;
-    for (let i = 0; i < this._dotCount; i++) {
-      if (this._dotSurface[i] && this._dotLatitude[i] > -60 * DEG) {
-        landDotIndices[landDotCount++] = i;
-      }
-    }
-
-    // The cage is independent from the masked surface so continent dots never
-    // inherit topology assumptions. All vertices and segment buckets are fixed.
-    this._cageBase = new Float32Array(CAGE_POINT_COUNT * 3);
-    this._cageScreenX = new Float32Array(CAGE_POINT_COUNT);
-    this._cageScreenY = new Float32Array(CAGE_POINT_COUNT);
-    this._cageDepth = new Float32Array(CAGE_POINT_COUNT);
-    this._cageSegmentFrom = new Uint16Array(CAGE_SEGMENT_COUNT);
-    this._cageSegmentTo = new Uint16Array(CAGE_SEGMENT_COUNT);
-    this._cageStyleCounts = new Uint16Array(STYLE_ALPHA_BUCKETS * 2);
-    this._cageStyleIndices = new Uint16Array(
-      STYLE_ALPHA_BUCKETS * 2 * CAGE_SEGMENT_COUNT
-    );
-    let cagePoint = 0;
-    for (let ring = 0; ring < CAGE_LATITUDE_COUNT; ring++) {
-      const latitude =
-        -Math.PI * 0.5 +
-        ((ring + 1) / (CAGE_LATITUDE_COUNT + 1)) * Math.PI;
-      const latitudeRadius = Math.cos(latitude);
-      const y = Math.sin(latitude);
-      for (let point = 0; point < CAGE_POINTS_PER_LINE; point++) {
-        const geographicLongitude =
-          -Math.PI + (point / CAGE_SEGMENTS_PER_LINE) * TAU;
-        const longitude = geographicLongitude - EARTH_FRONT_LONGITUDE;
-        const offset = cagePoint * 3;
-        this._cageBase[offset] = latitudeRadius * Math.sin(longitude);
-        this._cageBase[offset + 1] = y;
-        this._cageBase[offset + 2] = latitudeRadius * Math.cos(longitude);
-        cagePoint++;
-      }
-    }
-    for (let meridian = 0; meridian < CAGE_LONGITUDE_COUNT; meridian++) {
-      const geographicLongitude =
-        -Math.PI + (meridian / CAGE_LONGITUDE_COUNT) * TAU;
-      const longitude = geographicLongitude - EARTH_FRONT_LONGITUDE;
-      const longitudeSin = Math.sin(longitude);
-      const longitudeCos = Math.cos(longitude);
-      for (let point = 0; point < CAGE_POINTS_PER_LINE; point++) {
-        const latitude =
-          -Math.PI * 0.5 +
-          (point / CAGE_SEGMENTS_PER_LINE) * Math.PI;
-        const latitudeRadius = Math.cos(latitude);
-        const offset = cagePoint * 3;
-        this._cageBase[offset] = latitudeRadius * longitudeSin;
-        this._cageBase[offset + 1] = Math.sin(latitude);
-        this._cageBase[offset + 2] = latitudeRadius * longitudeCos;
-        cagePoint++;
-      }
-    }
-    let cageSegment = 0;
-    for (let line = 0; line < CAGE_LINE_COUNT; line++) {
-      const lineBase = line * CAGE_POINTS_PER_LINE;
-      for (let point = 0; point < CAGE_SEGMENTS_PER_LINE; point++) {
-        this._cageSegmentFrom[cageSegment] = lineBase + point;
-        this._cageSegmentTo[cageSegment] = lineBase + point + 1;
-        cageSegment++;
-      }
-    }
-
-    // ---- Fixed cinematic pools: data arcs, wire packets, and scan plane ----
-    this._dataArcActive = new Uint8Array(DATA_ARC_POOL_SIZE);
-    this._dataArcFrom = new Uint16Array(DATA_ARC_POOL_SIZE);
-    this._dataArcTo = new Uint16Array(DATA_ARC_POOL_SIZE);
-    this._dataArcTone = new Uint8Array(DATA_ARC_POOL_SIZE);
-    this._dataArcStart = new Float64Array(DATA_ARC_POOL_SIZE);
-    this._dataArcDuration = new Float32Array(DATA_ARC_POOL_SIZE);
-    this._dataArcLift = new Float32Array(DATA_ARC_POOL_SIZE);
-    this._dataArcSampleX = new Float32Array(
-      DATA_ARC_POOL_SIZE * (DATA_ARC_TAIL_STEPS + 1)
-    );
-    this._dataArcSampleY = new Float32Array(
-      DATA_ARC_POOL_SIZE * (DATA_ARC_TAIL_STEPS + 1)
-    );
-    this._dataArcSampleDepth = new Float32Array(
-      DATA_ARC_POOL_SIZE * (DATA_ARC_TAIL_STEPS + 1)
-    );
-    this._dataArcPairFrom = new Uint16Array(DATA_ARC_PAIR_COUNT);
-    this._dataArcPairTo = new Uint16Array(DATA_ARC_PAIR_COUNT);
-    for (let pair = 0; pair < DATA_ARC_PAIR_COUNT; pair++) {
-      const from = landDotIndices[
-        (31 + pair * 97) % landDotCount
-      ];
-      let toPosition =
-        (211 + pair * 131) % landDotCount;
-      let to = landDotIndices[toPosition];
-      for (let attempt = 0; attempt < 24; attempt++) {
-        const fromOffset = from * 3;
-        const toOffset = to * 3;
-        const alignment =
-          this._dotBase[fromOffset] * this._dotBase[toOffset] +
-          this._dotBase[fromOffset + 1] * this._dotBase[toOffset + 1] +
-          this._dotBase[fromOffset + 2] * this._dotBase[toOffset + 2];
-        if (alignment > -0.18 && alignment < 0.72) break;
-        toPosition = (toPosition + 137) % landDotCount;
-        to = landDotIndices[toPosition];
-      }
-      this._dataArcPairFrom[pair] = from;
-      this._dataArcPairTo[pair] = to;
-    }
-    this._dataArcSequence = 0;
-    this._nextDataArcAt = 0.18;
-
-    this._wirePulseKind = new Uint8Array(WIRE_PULSE_COUNT);
-    this._wirePulseChain = new Uint8Array(WIRE_PULSE_COUNT);
-    this._wirePulsePosition = new Float32Array(WIRE_PULSE_COUNT);
-    this._wirePulseSpeed = new Float32Array(WIRE_PULSE_COUNT);
-    this._wirePulseDirection = new Int8Array(WIRE_PULSE_COUNT);
-    this._wirePulseWindow = new Float32Array(WIRE_PULSE_COUNT);
-    for (let pulse = 0; pulse < WIRE_PULSE_COUNT; pulse++) {
-      const kind = pulse % 2;
-      this._wirePulseKind[pulse] = kind;
-      this._wirePulseChain[pulse] = kind
-        ? (pulse * 3 + 1) % CAGE_LONGITUDE_COUNT
-        : (pulse * 2 + 1) % CAGE_LATITUDE_COUNT;
-      this._wirePulsePosition[pulse] = hashUnit(pulse + 6203);
-      this._wirePulseSpeed[pulse] =
-        0.12 + hashUnit(pulse + 6301) * 0.1;
-      this._wirePulseDirection[pulse] = pulse % 3 ? 1 : -1;
-      this._wirePulseWindow[pulse] =
-        0.035 + hashUnit(pulse + 6421) * 0.025;
-    }
-
-    this._scanActive = new Uint8Array(1);
-    this._scanStart = new Float64Array(1);
-    this._scanNext = new Float64Array(1);
-    this._scanNext[0] = SCAN_INTERVAL;
-    this._scanLatitude = 0;
-    this._scanRingCos = new Float32Array(SCAN_RING_STEPS);
-    this._scanRingSin = new Float32Array(SCAN_RING_STEPS);
-    this._scanRingX = new Float32Array(SCAN_RING_STEPS);
-    this._scanRingY = new Float32Array(SCAN_RING_STEPS);
-    this._scanRingDepth = new Float32Array(SCAN_RING_STEPS);
-    for (let point = 0; point < SCAN_RING_STEPS; point++) {
-      const angle = (point / SCAN_RING_STEPS) * TAU;
-      this._scanRingCos[point] = Math.cos(angle);
-      this._scanRingSin[point] = Math.sin(angle);
-    }
 
     // ---- Six inclined moon orbits and independent lifecycle slots ----
     this._moonOrbitRadius = new Float32Array(MOON_COUNT);
@@ -898,14 +300,6 @@ export class VoiceOrb {
     this._moonOrbitDepth = new Float32Array(
       MOON_COUNT * MOON_ORBIT_STEPS
     );
-    this._moonTailX = new Float32Array(MOON_COUNT * MOON_TAIL_SAMPLES);
-    this._moonTailY = new Float32Array(MOON_COUNT * MOON_TAIL_SAMPLES);
-    this._moonTailDepth = new Float32Array(
-      MOON_COUNT * MOON_TAIL_SAMPLES
-    );
-    this._moonTailCursor = 0;
-    this._moonTailInitialized = 0;
-    this._nextMoonTailAt = 0;
 
     for (let i = 0; i < MOON_COUNT; i++) {
       const orbitRadius = 1.25 + i * 0.07;
@@ -967,160 +361,31 @@ export class VoiceOrb {
     this.ctx = this.cv.getContext("2d");
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-    // A cached PAL.Hl → transparent sprite supplies the subtle inner glow
-    // without allocating a CanvasGradient every frame.
-    this._coreGlow = document.createElement("canvas");
-    this._coreGlow.width = 192;
-    this._coreGlow.height = 192;
-    const glowCtx = this._coreGlow.getContext("2d");
-    const glow = glowCtx.createRadialGradient(96, 96, 0, 96, 96, 96);
-    glow.addColorStop(0, "rgba(207,233,255,0.58)");
-    glow.addColorStop(0.4, "rgba(59,130,246,0.3)");
-    glow.addColorStop(0.75, "rgba(124,92,255,0.12)");
-    glow.addColorStop(1, "rgba(124,92,255,0)");
-    glowCtx.fillStyle = glow;
-    glowCtx.fillRect(0, 0, 192, 192);
-
-    // ---- Layer 3: plexus network — clustered nodes + kNN web ----
-    const PLEX_N = 220;
-    this._plexBase = new Float32Array(PLEX_N * 3);
-    this._plexSize = new Float32Array(PLEX_N);
-    this._plexSX = new Float32Array(PLEX_N);
-    this._plexSY = new Float32Array(PLEX_N);
-    this._plexDepth = new Float32Array(PLEX_N);
-    {
-      for (let i = 0; i < PLEX_N; i++) {
-        const region = i % 4;
-        const regionOffset = region * 4;
-        const centerLongitude = POPULATION_REGIONS[regionOffset];
-        const centerLatitude = POPULATION_REGIONS[regionOffset + 1];
-        const longitudeSpread = POPULATION_REGIONS[regionOffset + 2];
-        const latitudeSpread = POPULATION_REGIONS[regionOffset + 3];
-        let longitudeDegrees = centerLongitude;
-        let latitudeDegrees = centerLatitude;
-        for (let attempt = 0; attempt < 28; attempt++) {
-          const seed = i * 97 + attempt * 131 + 3109;
-          longitudeDegrees =
-            centerLongitude +
-            (hashUnit(seed) + hashUnit(seed + 17) - 1) * longitudeSpread;
-          latitudeDegrees =
-            centerLatitude +
-            (hashUnit(seed + 31) + hashUnit(seed + 47) - 1) * latitudeSpread;
-          if (
-            earthMaskValueAtGeo(
-              this._earthMask,
-              longitudeDegrees,
-              latitudeDegrees
-            )
-          ) {
-            break;
-          }
-        }
-        const latitude = latitudeDegrees * DEG;
-        const longitude =
-          longitudeDegrees * DEG - EARTH_FRONT_LONGITUDE;
-        const latitudeRadius = Math.cos(latitude);
-        this._plexBase[i * 3] = latitudeRadius * Math.sin(longitude);
-        this._plexBase[i * 3 + 1] = Math.sin(latitude);
-        this._plexBase[i * 3 + 2] = latitudeRadius * Math.cos(longitude);
-        this._plexSize[i] = 0.9 + hashUnit(i * 17 + 23) * 1.55;
-      }
-      // kNN edges: 2-4 nearest neighbors each, deduplicated
-      const edges = new Set();
-      for (let i = 0; i < PLEX_N; i++) {
-        const dists = [];
-        for (let j = 0; j < PLEX_N; j++) {
-          if (j === i) continue;
-          const dx = this._plexBase[i * 3] - this._plexBase[j * 3];
-          const dy = this._plexBase[i * 3 + 1] - this._plexBase[j * 3 + 1];
-          const dz = this._plexBase[i * 3 + 2] - this._plexBase[j * 3 + 2];
-          dists.push([dx * dx + dy * dy + dz * dz, j]);
-        }
-        dists.sort((a, b) => a[0] - b[0]);
-        const k = 2 + Math.floor(hashUnit(i * 19 + 31) * 2);
-        for (let e = 0; e < k; e++) edges.add(i < dists[e][1] ? i * 1000 + dists[e][1] : dists[e][1] * 1000 + i);
-      }
-      this._plexEdges = Int32Array.from(edges);
-      this._plexAdj = Array.from({ length: PLEX_N }, () => []);
-      for (const key of this._plexEdges) {
-        const a = Math.floor(key / 1000), b = key % 1000;
-        this._plexAdj[a].push(b); this._plexAdj[b].push(a);
-      }
-      this._flareNode = -1; this._flareAt = 0; this._nextFlareAt = 2;
-    }
-    // ---- Layer 4: ambient rising particles ----
-    const AMB_N = 26;
-    this._ambPhase = new Float32Array(AMB_N);
-    this._ambAngle = new Float32Array(AMB_N);
-    this._ambSpeed = new Float32Array(AMB_N);
-    for (let i = 0; i < AMB_N; i++) {
-      this._ambPhase[i] = hashUnit(i * 23 + 3);
-      this._ambAngle[i] = hashUnit(i * 29 + 9) * TAU;
-      this._ambSpeed[i] = 0.05 + hashUnit(i * 31 + 13) * 0.05;
+    // State-color gradients are cached once; frame drawing only crossfades and
+    // scales them, preserving the renderer's no-gradient-allocation convention.
+    this._coreHaloSprites = new Array(REACTOR_STATE_KEYS.length);
+    this._coreDiscSprites = new Array(REACTOR_STATE_KEYS.length);
+    this._coreSpriteWeights = new Float32Array(REACTOR_STATE_KEYS.length);
+    this._tickSprites = new Array(REACTOR_STATE_KEYS.length);
+    for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
+      const key = REACTOR_STATE_KEYS[state];
+      this._coreHaloSprites[state] = makeReactorSprite(STATE_COLORS[key].core, 256, true);
+      this._coreDiscSprites[state] = makeReactorSprite(STATE_COLORS[key].core, 256, false);
+      this._tickSprites[state] = makeTickSprite(STATE_COLORS[key].ring, 512);
     }
 
-    // Round-two bloom and atmosphere assets. Every gradient is rasterized once
-    // here; the frame loop only scales cached canvases with drawImage().
-    this._dotGlowSprites = new Array(DOT_TONE_BUCKETS);
-    for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
-      this._dotGlowSprites[tone] = makeGlowSprite(
-        DOT_TONE_PREFIXES[tone],
-        DOT_GLOW_SIZE,
-        0.58
-      );
-    }
-    this._highlightGlow = makeGlowSprite(
-      PAL.Hl,
-      DOT_GLOW_SIZE,
-      0.72
-    );
+    // Cached moon and atmosphere glows; frame drawing only scales sprites.
     this._moonGlowSprites = new Array(MOON_COUNT);
     for (let moon = 0; moon < MOON_COUNT; moon++) {
       this._moonGlowSprites[moon] = makeGlowSprite(
         MOON_PREFIXES[moon],
-        DOT_GLOW_SIZE,
+        32,
         0.76
       );
     }
     this._settleGlowSprites = new Array(2);
-    this._settleGlowSprites[0] = makeGlowSprite(
-      PAL.ERR,
-      DOT_GLOW_SIZE,
-      0.78
-    );
-    this._settleGlowSprites[1] = makeGlowSprite(
-      PAL.OK,
-      DOT_GLOW_SIZE,
-      0.78
-    );
-    this._arcHeadGlow = new Array(2);
-    this._arcHeadGlow[0] = makeGlowSprite(
-      PAL.O,
-      ARC_GLOW_SIZE,
-      0.78
-    );
-    this._arcHeadGlow[1] = makeGlowSprite(
-      PAL.V,
-      ARC_GLOW_SIZE,
-      0.78
-    );
-    this._limbGlow = makeLimbSprite(
-      PAL.O,
-      ATMOSPHERE_SPRITE_SIZE
-    );
-    this._nebulaSprites = new Array(2);
-    this._nebulaSprites[0] = makeNebulaSprite(
-      PAL.V,
-      ATMOSPHERE_SPRITE_SIZE,
-      0
-    );
-    this._nebulaSprites[1] = makeNebulaSprite(
-      PAL.V,
-      ATMOSPHERE_SPRITE_SIZE,
-      1
-    );
-    this._projectorFloor = makeProjectorFloorSprite(PAL.B);
-    this._projectorBeam = makeProjectorBeamSprite(PAL.B);
+    this._settleGlowSprites[0] = makeGlowSprite(PAL.ERR, 32, 0.78);
+    this._settleGlowSprites[1] = makeGlowSprite(PAL.OK, 32, 0.78);
 
     this._mouse = { x: 0, y: 0 };
     this._mx = 0;
@@ -1199,7 +464,6 @@ export class VoiceOrb {
       }
       ctx.restore();
     }
-    this._moonTailInitialized = 0;
   }
 
   setStatus(status) {
@@ -1218,7 +482,6 @@ export class VoiceOrb {
           this._reformStart = time;
           this._reformStrength = this.reduced ? 0 : this._thinkingMix;
         } else if (status === "thinking") {
-          this._cloudYaw = 0;
           this._reformStart = -1;
           this._reformStrength = 0;
           this._reformOvershoot = 0;
@@ -1275,6 +538,9 @@ export class VoiceOrb {
 
     const moon = FAMILY_MOONS[familyIndex];
     if (phase === "start") {
+      // A firing tool call sends a bright highlight along the inner ring.
+      this._sweep.active = 1;
+      this._sweep.t0 = this.reduced ? 0 : this._elapsed;
       if (this._moonSettleTimers[moon]) {
         clearTimeout(this._moonSettleTimers[moon]);
         this._moonSettleTimers[moon] = 0;
@@ -1317,31 +583,6 @@ export class VoiceOrb {
     }
     this._ripples[slot].t0 = time;
     this._ripples[slot].e = Math.max(0, Math.min(1, energy));
-  }
-
-  _launchDataArc(time, violet) {
-    let slot = -1;
-    let oldest = 0;
-    for (let i = 0; i < DATA_ARC_POOL_SIZE; i++) {
-      if (!this._dataArcActive[i]) {
-        slot = i;
-        break;
-      }
-      if (this._dataArcStart[i] < this._dataArcStart[oldest]) oldest = i;
-    }
-    if (slot < 0) slot = oldest;
-
-    const sequence = this._dataArcSequence++;
-    const pair = sequence % DATA_ARC_PAIR_COUNT;
-    this._dataArcActive[slot] = 1;
-    this._dataArcFrom[slot] = this._dataArcPairFrom[pair];
-    this._dataArcTo[slot] = this._dataArcPairTo[pair];
-    this._dataArcTone[slot] = violet ? 1 : 0;
-    this._dataArcStart[slot] = time;
-    this._dataArcDuration[slot] =
-      DATA_ARC_LIFE * (0.92 + hashUnit(sequence + 7013) * 0.16);
-    this._dataArcLift[slot] =
-      0.14 + hashUnit(sequence + 7103) * 0.15;
   }
 
   // ---- Audio plumbing (public behavior preserved) ----
@@ -1414,6 +655,20 @@ export class VoiceOrb {
     return Math.min(1, (sum / this.freq.length / 255) * 1.6);
   }
 
+  _blendPalette(out, key) {
+    const idle = STATE_COLORS.idle[key];
+    const listen = STATE_COLORS.listening[key];
+    const think = STATE_COLORS.thinking[key];
+    const speak = STATE_COLORS.speaking[key];
+    for (let channel = 0; channel < 3; channel++) {
+      let value = idle[channel];
+      value += (listen[channel] - value) * this._listeningMix;
+      value += (think[channel] - value) * this._thinkingMix;
+      value += (speak[channel] - value) * this._speakingMix;
+      out[channel] = value | 0;
+    }
+  }
+
   // ---- Animation/state loop ----
   _loop() {
     if (this._disposed) return;
@@ -1423,64 +678,29 @@ export class VoiceOrb {
     const dt = this.reduced
       ? 0
       : Math.max(0, Math.min(0.05, (now - this._lastFrameAt) / 1000));
+    this._dt = dt;
     this._lastFrameAt = now;
     this._elapsed = (now - this._t0) / 1000;
     const time = this.reduced ? 0 : this._elapsed;
 
     const stateEase = this.reduced ? 1 : 1 - Math.exp(-dt * 7);
     const listeningTarget = this.status === "listening" ? 1 : 0;
-    const thinkingTarget =
-      !this.reduced && this.status === "thinking" ? 1 : 0;
+    const thinkingTarget = this.status === "thinking" ? 1 : 0;
     const speakingTarget = this.status === "speaking" ? 1 : 0;
     this._listeningMix +=
       (listeningTarget - this._listeningMix) * stateEase;
     this._thinkingMix += (thinkingTarget - this._thinkingMix) * stateEase;
     this._speakingMix += (speakingTarget - this._speakingMix) * stateEase;
+    this._blendPalette(this._coreRGB, "core");
+    this._blendPalette(this._ringRGB, "ring");
+    this._activeMix = Math.max(
+      this._listeningMix,
+      Math.max(this._thinkingMix, this._speakingMix)
+    );
 
     if (!this.reduced) {
       this._globeYaw +=
         dt * BASE_SPIN_RATE * (1 + this._listeningMix * 1.5);
-      this._cloudYaw += dt * 0.18 * this._thinkingMix;
-
-      const pulseRate =
-        1 + this._thinkingMix * 0.7 + this._speakingMix * 0.45;
-      for (let pulse = 0; pulse < WIRE_PULSE_COUNT; pulse++) {
-        let position =
-          this._wirePulsePosition[pulse] +
-          this._wirePulseSpeed[pulse] *
-            this._wirePulseDirection[pulse] *
-            dt *
-            pulseRate;
-        if (this._wirePulseKind[pulse] === 0) {
-          if (position < 0) position += 1;
-          if (position >= 1) position -= 1;
-        } else if (position < 0 || position > 1) {
-          position = position < 0 ? -position : 2 - position;
-          this._wirePulseDirection[pulse] *= -1;
-        }
-        this._wirePulsePosition[pulse] = position;
-      }
-
-      if (!this._scanActive[0] && time >= this._scanNext[0]) {
-        this._scanActive[0] = 1;
-        this._scanStart[0] = time;
-        this._scanNext[0] = time + SCAN_INTERVAL;
-      } else if (
-        this._scanActive[0] &&
-        time - this._scanStart[0] >= SCAN_DURATION
-      ) {
-        this._scanActive[0] = 0;
-      }
-
-      for (let arc = 0; arc < DATA_ARC_POOL_SIZE; arc++) {
-        if (
-          this._dataArcActive[arc] &&
-          time - this._dataArcStart[arc] >=
-            this._dataArcDuration[arc]
-        ) {
-          this._dataArcActive[arc] = 0;
-        }
-      }
     }
 
     this._reformOvershoot = 0;
@@ -1567,19 +787,11 @@ export class VoiceOrb {
     this.cur.amp += (raw - this.cur.amp) * ampEase;
     const amp = this.cur.amp;
     window.__artemisAmp = amp;
+    // Breathing envelope: chases amp slowly in both directions so the core
+    // swells and relaxes with the rhythm of speech instead of twitching.
+    this._breathEnv +=
+      (amp - this._breathEnv) * (this.reduced ? 1 : 1 - Math.exp(-dt * 3.2));
 
-    if (!this.reduced && time >= this._nextDataArcAt) {
-      this._launchDataArc(time, this.status === "thinking");
-      const baseInterval =
-        0.25 + hashUnit(this._dataArcSequence + 7307) * 0.25;
-      const stateRate =
-        this.status === "thinking"
-          ? 3
-          : this.status === "speaking"
-            ? 1.65
-            : 1;
-      this._nextDataArcAt = time + baseInterval / stateRate;
-    }
 
     if (
       !this.reduced &&
@@ -1601,7 +813,6 @@ export class VoiceOrb {
       time - this._lastRipple > 0.16;
     if (speakingPeak) {
       this._emitRipple(time, amp);
-      this._launchDataArc(time, false);
       this._lastRipple = time;
     }
     this._prevAmp = amp;
@@ -1673,290 +884,6 @@ export class VoiceOrb {
     const yawSin = Math.sin(yaw);
     const pitchCos = Math.cos(pitch);
     const pitchSin = Math.sin(pitch);
-    this._fYawCos = yawCos; this._fYawSin = yawSin;
-    this._fPitchCos = pitchCos; this._fPitchSin = pitchSin;
-    const swirlYaw = this._cloudYaw;
-    const swirlPitch = Math.sin(this._cloudYaw * 0.65) * 0.12;
-    const swirlYawCos = Math.cos(swirlYaw);
-    const swirlYawSin = Math.sin(swirlYaw);
-    const swirlPitchCos = Math.cos(swirlPitch);
-    const swirlPitchSin = Math.sin(swirlPitch);
-    const voiceStateMix = Math.min(
-      1,
-      this._speakingMix + this._listeningMix
-    );
-    const waveAmount = this.reduced ? 0 : amp * voiceStateMix * 0.12;
-    const scanVisible = !this.reduced && this._scanActive[0] !== 0;
-    if (scanVisible) {
-      const scanProgress = Math.max(
-        0,
-        Math.min(
-          1,
-          (time - this._scanStart[0]) / SCAN_DURATION
-        )
-      );
-      this._scanLatitude = -Math.PI * 0.5 + scanProgress * Math.PI;
-    }
-
-    for (let group = 0; group < DOT_STYLE_GROUPS; group++) {
-      this._dotStyleCounts[group] = 0;
-    }
-    for (let bucket = 0; bucket < 6; bucket++) {
-      this._lightBucketCounts[bucket] = 0;
-    }
-
-    for (let i = 0; i < this._dotCount; i++) {
-      let pulseLight = 0;
-      const wireKind = this._dotWireKind[i];
-      const wireChain = this._dotWireChain[i];
-      const wireParam = this._dotWireParam[i];
-      for (let pulse = 0; pulse < WIRE_PULSE_COUNT; pulse++) {
-        if (
-          this._wirePulseKind[pulse] !== wireKind ||
-          this._wirePulseChain[pulse] !== wireChain
-        ) {
-          continue;
-        }
-        let distance = Math.abs(
-          wireParam - this._wirePulsePosition[pulse]
-        );
-        if (wireKind === 0) distance = Math.min(distance, 1 - distance);
-        const pulseWindow = this._wirePulseWindow[pulse];
-        if (distance < pulseWindow) {
-          let light = 1 - distance / pulseWindow;
-          light = light * light * (3 - 2 * light);
-          if (light > pulseLight) pulseLight = light;
-        }
-      }
-
-      let scanLight = 0;
-      if (scanVisible) {
-        const scanDistance = Math.abs(
-          this._dotLatitude[i] - this._scanLatitude
-        );
-        if (scanDistance < 0.12) {
-          scanLight = 1 - scanDistance / 0.12;
-          scanLight =
-            scanLight * scanLight * (3 - 2 * scanLight);
-        }
-      }
-      const lightBoost = Math.max(pulseLight, scanLight);
-      const lightBucket = Math.min(
-        5,
-        Math.round(lightBoost * 5)
-      );
-      if (lightBucket) {
-        const lightCount = this._lightBucketCounts[lightBucket];
-        this._lightBucketIndices[
-          lightBucket * DOT_COUNT + lightCount
-        ] = i;
-        this._lightBucketCounts[lightBucket] = lightCount + 1;
-      }
-
-      const offset = i * 3;
-      const wave =
-        (1 +
-          Math.sin(this._dotLatitude[i] * 5 - time * 3.1) *
-            waveAmount) *
-        (1 + scanLight * 0.035);
-      const baseX = this._dotBase[offset] * wave;
-      const baseY = this._dotBase[offset + 1] * wave;
-      const baseZ = this._dotBase[offset + 2] * wave;
-
-      const delay = this._dotDelay[i];
-      let dissolve = (this._thinkingMix - delay) / (1 - delay);
-      dissolve = Math.max(0, Math.min(1, dissolve));
-      dissolve = dissolve * dissolve * (3 - 2 * dissolve);
-
-      const targetX = baseX + this._dotScatter[offset];
-      const targetY = baseY + this._dotScatter[offset + 1];
-      const targetZ = baseZ + this._dotScatter[offset + 2];
-      const swirlX = targetX * swirlYawCos + targetZ * swirlYawSin;
-      const swirlZ = -targetX * swirlYawSin + targetZ * swirlYawCos;
-      const swirlY2 = targetY * swirlPitchCos - swirlZ * swirlPitchSin;
-      const swirlZ2 = targetY * swirlPitchSin + swirlZ * swirlPitchCos;
-      const reform =
-        this._reformOvershoot * (1 - dissolve) * (0.75 + delay * 0.4);
-      const scatterMix = dissolve - reform;
-
-      const pointX =
-        (baseX + (swirlX - baseX) * scatterMix) * sphereScale;
-      const pointY =
-        (baseY + (swirlY2 - baseY) * scatterMix) * sphereScale;
-      const pointZ =
-        (baseZ + (swirlZ2 - baseZ) * scatterMix) * sphereScale;
-
-      const cameraX = pointX * yawCos + pointZ * yawSin;
-      const cameraZ = -pointX * yawSin + pointZ * yawCos;
-      const cameraY = pointY * pitchCos - cameraZ * pitchSin;
-      const depth = pointY * pitchSin + cameraZ * pitchCos;
-      const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
-
-      this._dotCameraX[i] = cameraX;
-      this._dotCameraY[i] = cameraY;
-      this._dotScreenX[i] = cameraX * radius * perspective;
-      this._dotScreenY[i] = -cameraY * radius * perspective;
-      this._dotDepth[i] = depth;
-
-      const depthLight = Math.max(
-        0,
-        Math.min(1, (depth + 1.55) / 3.1)
-      );
-      const surface = this._dotSurface[i];
-      const twinkle =
-        1 +
-        this._dotShimmer[i] *
-          Math.sin(time * (surface ? 1.35 : 0.72) + this._dotTwinkle[i]);
-      const baseAlpha = surface
-        ? 0.11 + depthLight * 0.8
-        : 0.025 + depthLight * 0.27;
-      const dotAlpha = Math.min(
-        1,
-        baseAlpha *
-            twinkle *
-            this._dotIntensity[i] *
-            (1 + this._listeningMix * 0.32) +
-          lightBoost * 0.62
-      );
-      const alphaBucket = Math.max(
-        0,
-        Math.min(
-          DOT_ALPHA_BUCKETS - 1,
-          Math.round(dotAlpha * (DOT_ALPHA_BUCKETS - 1))
-        )
-      );
-      const toneBucket = this._dotToneBase[i];
-      this._dotToneBucket[i] = toneBucket;
-      const styleGroup =
-        toneBucket * DOT_ALPHA_BUCKETS + alphaBucket;
-      const styleCount = this._dotStyleCounts[styleGroup];
-      this._dotStyleIndices[
-        styleGroup * DOT_COUNT + styleCount
-      ] = i;
-      this._dotStyleCounts[styleGroup] = styleCount + 1;
-      this._dotRadius[i] = Math.max(
-        surface ? 1.05 : 0.65,
-        Math.min(
-          surface ? 3.45 : 1.55,
-          this._dotBaseSize[i] *
-            (0.9 + depthLight * 0.1) *
-            (0.94 + perspective * 0.06) *
-            (1 + lightBoost * 0.12)
-        )
-      );
-    }
-
-    this._projectCage(
-      radius,
-      sphereScale,
-      yawCos,
-      yawSin,
-      pitchCos,
-      pitchSin
-    );
-
-    if (scanVisible) {
-      const scanCos = Math.cos(this._scanLatitude);
-      const scanY =
-        Math.sin(this._scanLatitude) * sphereScale * 1.035;
-      const scanRadius = scanCos * sphereScale * 1.035;
-      for (let point = 0; point < SCAN_RING_STEPS; point++) {
-        const pointX = this._scanRingCos[point] * scanRadius;
-        const pointZ = this._scanRingSin[point] * scanRadius;
-        const cameraX = pointX * yawCos + pointZ * yawSin;
-        const cameraZ = -pointX * yawSin + pointZ * yawCos;
-        const cameraY = scanY * pitchCos - cameraZ * pitchSin;
-        const depth = scanY * pitchSin + cameraZ * pitchCos;
-        const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
-        this._scanRingX[point] = cameraX * radius * perspective;
-        this._scanRingY[point] = -cameraY * radius * perspective;
-        this._scanRingDepth[point] = depth;
-      }
-    }
-
-    for (let arc = 0; arc < DATA_ARC_POOL_SIZE; arc++) {
-      if (!this._dataArcActive[arc]) continue;
-      const from = this._dataArcFrom[arc];
-      const to = this._dataArcTo[arc];
-      const fromX = this._dotCameraX[from];
-      const fromY = this._dotCameraY[from];
-      const fromZ = this._dotDepth[from];
-      const toX = this._dotCameraX[to];
-      const toY = this._dotCameraY[to];
-      const toZ = this._dotDepth[to];
-      const middleX = (fromX + toX) * 0.5;
-      const middleY = (fromY + toY) * 0.5;
-      const middleZ = (fromZ + toZ) * 0.5;
-      let directionLength = Math.sqrt(
-        middleX * middleX +
-          middleY * middleY +
-          middleZ * middleZ
-      );
-      let directionX = middleX;
-      let directionY = middleY;
-      let directionZ = middleZ;
-      if (directionLength < 0.001) {
-        directionX = fromX;
-        directionY = fromY;
-        directionZ = fromZ;
-        directionLength = Math.max(
-          0.001,
-          Math.sqrt(
-            directionX * directionX +
-              directionY * directionY +
-              directionZ * directionZ
-          )
-        );
-      }
-      directionX /= directionLength;
-      directionY /= directionLength;
-      directionZ /= directionLength;
-      const fromLength = Math.sqrt(
-        fromX * fromX + fromY * fromY + fromZ * fromZ
-      );
-      const toLength = Math.sqrt(
-        toX * toX + toY * toY + toZ * toZ
-      );
-      const crest =
-        (fromLength + toLength) * 0.5 + this._dataArcLift[arc];
-      const controlX = directionX * crest * 2 - middleX;
-      const controlY = directionY * crest * 2 - middleY;
-      const controlZ = directionZ * crest * 2 - middleZ;
-      const progress = Math.max(
-        0,
-        Math.min(
-          1,
-          (time - this._dataArcStart[arc]) /
-            this._dataArcDuration[arc]
-        )
-      );
-      const tailStart = Math.max(0, progress - DATA_ARC_TAIL_SPAN);
-      const sampleBase = arc * (DATA_ARC_TAIL_STEPS + 1);
-      for (let sample = 0; sample <= DATA_ARC_TAIL_STEPS; sample++) {
-        const sampleMix = sample / DATA_ARC_TAIL_STEPS;
-        const u = tailStart + (progress - tailStart) * sampleMix;
-        const inverse = 1 - u;
-        const cameraX =
-          inverse * inverse * fromX +
-          2 * inverse * u * controlX +
-          u * u * toX;
-        const cameraY =
-          inverse * inverse * fromY +
-          2 * inverse * u * controlY +
-          u * u * toY;
-        const depth =
-          inverse * inverse * fromZ +
-          2 * inverse * u * controlZ +
-          u * u * toZ;
-        const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
-        const sampleOffset = sampleBase + sample;
-        this._dataArcSampleX[sampleOffset] =
-          cameraX * radius * perspective;
-        this._dataArcSampleY[sampleOffset] =
-          -cameraY * radius * perspective;
-        this._dataArcSampleDepth[sampleOffset] = depth;
-      }
-    }
 
     for (let i = 0; i < MOON_COUNT; i++) {
       const orbitAngle =
@@ -2044,31 +971,6 @@ export class VoiceOrb {
       }
     }
 
-    if (!this._moonTailInitialized) {
-      this._moonTailCursor = 0;
-      for (let moon = 0; moon < MOON_COUNT; moon++) {
-        const tailBase = moon * MOON_TAIL_SAMPLES;
-        for (let sample = 0; sample < MOON_TAIL_SAMPLES; sample++) {
-          const tailOffset = tailBase + sample;
-          this._moonTailX[tailOffset] = this._moonScreenX[moon];
-          this._moonTailY[tailOffset] = this._moonScreenY[moon];
-          this._moonTailDepth[tailOffset] = this._moonDepth[moon];
-        }
-      }
-      this._moonTailInitialized = 1;
-      this._nextMoonTailAt = time + MOON_TAIL_INTERVAL;
-    } else if (!this.reduced && time >= this._nextMoonTailAt) {
-      this._moonTailCursor =
-        (this._moonTailCursor + 1) % MOON_TAIL_SAMPLES;
-      for (let moon = 0; moon < MOON_COUNT; moon++) {
-        const tailOffset =
-          moon * MOON_TAIL_SAMPLES + this._moonTailCursor;
-        this._moonTailX[tailOffset] = this._moonScreenX[moon];
-        this._moonTailY[tailOffset] = this._moonScreenY[moon];
-        this._moonTailDepth[tailOffset] = this._moonDepth[moon];
-      }
-      this._nextMoonTailAt = time + MOON_TAIL_INTERVAL;
-    }
 
     ctx.save();
     ctx.translate(centerX, centerY);
@@ -2076,30 +978,12 @@ export class VoiceOrb {
     ctx.globalAlpha = hudAlpha;
     ctx.globalCompositeOperation = "lighter";
 
-    this._drawNebula(time, silhouetteRadius);
-    this._drawProjectorBase(time, silhouetteRadius);
-    this._drawLimb(silhouetteRadius);
+    this._drawGimbal(false, time, silhouetteRadius);
     this._drawOrbitPass(false);
-    this._drawMoonTailPass(false);
     this._drawMoonLightPass(false, time, silhouetteRadius);
-    // SOLID BODY: the planet occludes its far side and the room behind it.
-    // A transparent dot-cloud has no shape; a body does.
-    this._drawSolidBody(silhouetteRadius);
 
-    const corePulse = this.reduced ? 1 : 1 + 0.06 * (0.5 + 0.5 * Math.sin(time * (TAU / 5)));
-    const glowSize = silhouetteRadius * 0.64 * corePulse;
-    ctx.globalAlpha =
-      Math.min(
-        0.68,
-        hudAlpha * (0.52 + this._listeningMix * 0.08 + amp * 0.08)
-      );
-    ctx.drawImage(
-      this._coreGlow,
-      -glowSize * 0.5,
-      -glowSize * 0.5,
-      glowSize,
-      glowSize
-    );
+    this._drawCore(time, silhouetteRadius);
+    this._drawInstrumentRings(time, silhouetteRadius);
 
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = hudAlpha;
@@ -2107,19 +991,10 @@ export class VoiceOrb {
 
     ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = hudAlpha;
-    this._drawCagePass(true);
-    this._drawPlexus(time, silhouetteRadius);
-    this._drawAmbientRise(time, silhouetteRadius);
-    this._drawDotGlowPass(true);
-    this._drawDotPass(true);
-    this._drawLightPacketPass(true);
-    this._drawDataArcPass(true);
-    this._drawScanPass(true);
     this._drawHalos(time, silhouetteRadius);
+    this._drawGimbal(true, time, silhouetteRadius);
     this._drawOrbitPass(true);
-    this._drawMoonTailPass(true);
     this._drawMoonLightPass(true, time, silhouetteRadius);
-    this._drawMoonTethers(time, silhouetteRadius);
 
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = hudAlpha;
@@ -2171,104 +1046,234 @@ export class VoiceOrb {
     ctx.restore();
   }
 
-  _projectCage(radius, sphereScale, yawCos, yawSin, pitchCos, pitchSin) {
-    for (let group = 0; group < STYLE_ALPHA_BUCKETS * 2; group++) {
-      this._cageStyleCounts[group] = 0;
-    }
-    for (let point = 0; point < CAGE_POINT_COUNT; point++) {
-      const offset = point * 3;
-      const pointX = this._cageBase[offset] * sphereScale;
-      const pointY = this._cageBase[offset + 1] * sphereScale;
-      const pointZ = this._cageBase[offset + 2] * sphereScale;
-      const cameraX = pointX * yawCos + pointZ * yawSin;
-      const cameraZ = -pointX * yawSin + pointZ * yawCos;
-      const cameraY = pointY * pitchCos - cameraZ * pitchSin;
-      const depth = pointY * pitchSin + cameraZ * pitchCos;
-      const perspective = CAM_DISTANCE / (CAM_DISTANCE - depth);
-      this._cageScreenX[point] = cameraX * radius * perspective;
-      this._cageScreenY[point] = -cameraY * radius * perspective;
-      this._cageDepth[point] = depth;
-    }
-    for (let segment = 0; segment < CAGE_SEGMENT_COUNT; segment++) {
-      const from = this._cageSegmentFrom[segment];
-      const to = this._cageSegmentTo[segment];
-      const depth = (this._cageDepth[from] + this._cageDepth[to]) * 0.5;
-      const front = depth >= 0 ? 1 : 0;
-      const rim = 1 - Math.min(1, Math.abs(depth) / 0.9);
-      const alpha = front ? 0.12 + rim * 0.22 : 0.035 + rim * 0.08;
-      const bucket = Math.max(
-        1,
-        Math.min(
-          STYLE_ALPHA_BUCKETS - 1,
-          Math.round(alpha * (STYLE_ALPHA_BUCKETS - 1))
-        )
+
+  _drawCore(time, R) {
+    const ctx = this.ctx;
+    const [r, g, b] = this._coreRGB;
+    const env = this._breathEnv;
+    // The core carries the life: a deep idle breath (~4s) plus the smoothed
+    // voice envelope swelling it up to +25%. Frozen under reduced motion.
+    const breath = this.reduced ? 0 : 0.06 * Math.sin(time * (TAU / 4));
+    const coreR = R * 0.35 * (1 + breath + env * 0.25);
+
+    const listeningRemainder = 1 - this._listeningMix;
+    const thinkingRemainder = 1 - this._thinkingMix;
+    const speakingRemainder = 1 - this._speakingMix;
+    this._coreSpriteWeights[0] =
+      listeningRemainder * thinkingRemainder * speakingRemainder;
+    this._coreSpriteWeights[1] =
+      this._listeningMix * thinkingRemainder * speakingRemainder;
+    this._coreSpriteWeights[2] = this._thinkingMix * speakingRemainder;
+    this._coreSpriteWeights[3] = this._speakingMix;
+
+    // Outer halo (wide soft bloom), crossfaded through cached state sprites.
+    // Capped so the peak stays a glow, never a white-out.
+    const haloSize = coreR * 4.2;
+    const haloAlpha = Math.min(0.62, 0.42 + env * 0.28);
+    for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
+      const weight = this._coreSpriteWeights[state];
+      if (weight <= 0.002) continue;
+      ctx.globalAlpha = this._sceneAlpha * haloAlpha * weight;
+      ctx.drawImage(
+        this._coreHaloSprites[state],
+        -haloSize * 0.5,
+        -haloSize * 0.5,
+        haloSize,
+        haloSize
       );
-      const group = front * STYLE_ALPHA_BUCKETS + bucket;
-      const count = this._cageStyleCounts[group];
-      this._cageStyleIndices[
-        group * CAGE_SEGMENT_COUNT + count
-      ] = segment;
-      this._cageStyleCounts[group] = count + 1;
     }
+
+    // Inner disc: white-hot center falling to the eased state color. Alpha
+    // breathes with the idle cycle and is capped so structure stays visible.
+    const discSize = coreR * 2;
+    const discBreath = this.reduced ? 0 : 0.06 * Math.sin(time * (TAU / 4));
+    const discAlpha = Math.min(0.88, 0.74 + discBreath + env * 0.1);
+    for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
+      const weight = this._coreSpriteWeights[state];
+      if (weight <= 0.002) continue;
+      ctx.globalAlpha = this._sceneAlpha * discAlpha * weight;
+      ctx.drawImage(
+        this._coreDiscSprites[state],
+        -discSize * 0.5,
+        -discSize * 0.5,
+        discSize,
+        discSize
+      );
+    }
+
+    // Crisp rim: a solid edge at the disc boundary keeps the core reading as
+    // an object even at full speaking brightness — never a shapeless blob.
+    ctx.globalAlpha = this._sceneAlpha;
+    ctx.lineWidth = Math.max(2, R * 0.028);
+    ctx.strokeStyle = `rgba(${r},${g},${b},${(0.75 + env * 0.25).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, coreR, 0, TAU);
+    ctx.stroke();
+
+    // Coil ring: 10 bold winding segments just outside the disc. Fixed length
+    // — no waveform spikes — but they brighten together as her voice swells.
+    // Thinking flicker: subtle alpha wobble, frozen when reduced.
+    const coilInner = coreR * 1.08;
+    const coilOuter = coreR * 1.34;
+    const spin = this.reduced ? 0 : time * 0.05;
+    ctx.lineWidth = Math.max(2.5, R * 0.034);
+    ctx.lineCap = "round";
+    for (let i = 0; i < 10; i++) {
+      const angle = spin + (i / 10) * TAU;
+      const flicker = this.reduced
+        ? 0
+        : this._thinkingMix * 0.25 * Math.sin(time * 7 + i * 2.4);
+      ctx.strokeStyle = `rgba(${r},${g},${b},${(0.6 + env * 0.3 + flicker).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(angle) * coilInner, Math.sin(angle) * coilInner);
+      ctx.lineTo(Math.cos(angle) * coilOuter, Math.sin(angle) * coilOuter);
+      ctx.stroke();
+    }
+    ctx.lineCap = "butt";
   }
 
-  _drawNebula(time, silhouetteRadius) {
-    const ctx = this.ctx;
-    const driftTime = this.reduced ? 0 : time;
-    const tightness = 1 - this._listeningMix * 0.16;
-    const firstWidth = silhouetteRadius * 3.45 * tightness;
-    const firstHeight = silhouetteRadius * 2.35 * tightness;
-    const firstX =
-      Math.sin(driftTime * 0.055 + 0.6) * silhouetteRadius * 0.18;
-    const firstY =
-      Math.cos(driftTime * 0.041 + 1.1) * silhouetteRadius * 0.13;
-    const secondWidth = silhouetteRadius * 2.8 * tightness;
-    const secondHeight = silhouetteRadius * 3.05 * tightness;
-    const secondX =
-      Math.cos(driftTime * 0.047 + 2.2) * silhouetteRadius * 0.2;
-    const secondY =
-      Math.sin(driftTime * 0.063 + 0.3) * silhouetteRadius * 0.15;
 
-    ctx.globalAlpha =
-      this._sceneAlpha * (0.72 - this._listeningMix * 0.08);
-    ctx.drawImage(
-      this._nebulaSprites[0],
-      firstX - firstWidth * 0.5,
-      firstY - firstHeight * 0.5,
-      firstWidth,
-      firstHeight
-    );
-    ctx.globalAlpha =
-      this._sceneAlpha * (0.58 - this._listeningMix * 0.05);
-    ctx.drawImage(
-      this._nebulaSprites[1],
-      secondX - secondWidth * 0.5,
-      secondY - secondHeight * 0.5,
-      secondWidth,
-      secondHeight
-    );
+
+  // Two counter-rotating segmented rings + the tick ring + the tool-call
+  // sweep. Runs after _drawCore, which populates _coreSpriteWeights for the
+  // tick-sprite state crossfade.
+  _drawInstrumentRings(time, R) {
+    const ctx = this.ctx;
+    const [r, g, b] = this._ringRGB;
+    // Organic drive: rotation surges and relaxes on slow offset sine cycles
+    // (never a constant-speed spinner), voice swell adds urgency on top.
+    const speed = 1 + this._activeMix * 2 + this._breathEnv * 0.8;
+    if (!this.reduced) {
+      const t = time;
+      this._ringAngleInner +=
+        this._dt * 0.3 * speed * (0.55 + 0.45 * Math.sin(t * 0.31));
+      this._ringAngleOuter -=
+        this._dt * 0.2 * speed * (0.55 + 0.45 * Math.sin(t * 0.23 + 2.1));
+      this._tickAngle +=
+        this._dt * 0.05 * speed * (0.6 + 0.4 * Math.sin(t * 0.17 + 4.2));
+    }
+    const tickBoost = this._listeningMix * 0.3;
+
+    // Inner ring: 5 segments x 50 deg. Outer ring: 8 segments x 33 deg.
+    // Bold rounded strokes — solid holographic hardware, not wireframe.
+    ctx.lineCap = "round";
+    ctx.strokeStyle = `rgba(${r},${g},${b},${(0.6 + tickBoost).toFixed(3)})`;
+    ctx.lineWidth = Math.max(2.5, R * 0.03);
+    for (let i = 0; i < 5; i++) {
+      const start = this._ringAngleInner + (i / 5) * TAU;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.5, start, start + 50 * DEG);
+      ctx.stroke();
+    }
+    ctx.lineWidth = Math.max(2, R * 0.02);
+    for (let i = 0; i < 8; i++) {
+      const start = this._ringAngleOuter + (i / 8) * TAU;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.68, start, start + 33 * DEG);
+      ctx.stroke();
+    }
+    ctx.lineCap = "butt";
+
+    // Tick ring: cached per-state sprites, crossfaded like the core.
+    const tickSize = R * 2.2;
+    ctx.save();
+    ctx.rotate(this._tickAngle);
+    for (let state = 0; state < REACTOR_STATE_KEYS.length; state++) {
+      const weight = this._coreSpriteWeights[state];
+      if (weight <= 0.002) continue;
+      ctx.globalAlpha = this._sceneAlpha * (0.4 + tickBoost) * weight;
+      ctx.drawImage(
+        this._tickSprites[state],
+        -tickSize * 0.5,
+        -tickSize * 0.5,
+        tickSize,
+        tickSize
+      );
+    }
+    ctx.restore();
     ctx.globalAlpha = this._sceneAlpha;
+
+    // Tool-call sweep travels the inner ring once; thinking keeps a slow
+    // perpetual circulation going between calls.
+    const sweepAge = time - this._sweep.t0;
+    const toolSweep =
+      this._sweep.active && sweepAge < SWEEP_LIFE
+        ? 1 - sweepAge / SWEEP_LIFE
+        : 0;
+    const thinkSweep = this._thinkingMix;
+    if (toolSweep > 0 || thinkSweep > 0.02) {
+      const progress =
+        toolSweep > 0
+          ? sweepAge / SWEEP_LIFE
+          : this.reduced
+            ? 0.3
+            : (time * 0.35) % 1;
+      const alpha = Math.max(toolSweep, thinkSweep * 0.5);
+      ctx.lineWidth = Math.max(3, R * 0.035);
+      ctx.strokeStyle = `rgba(255,255,255,${(alpha * 0.9).toFixed(3)})`;
+      const start = this._ringAngleInner + progress * TAU;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.5, start, start + 24 * DEG);
+      ctx.stroke();
+    }
+    if (this._sweep.active && sweepAge >= SWEEP_LIFE) this._sweep.active = 0;
   }
 
-  _drawLimb(silhouetteRadius) {
+  // Hologram gimbal rings on tilted precessing axes, split into back/front
+  // halves around the core. Angles advance once per frame in the back pass.
+  _drawGimbal(front, time, R) {
     const ctx = this.ctx;
-    const size = silhouetteRadius * 2.46;
-    ctx.globalAlpha =
-      this._sceneAlpha * (0.66 + this._listeningMix * 0.34);
-    ctx.drawImage(
-      this._limbGlow,
-      -size * 0.5,
-      -size * 0.5,
-      size,
-      size
-    );
-    ctx.globalAlpha = this._sceneAlpha;
+    const [r, g, b] = this._ringRGB;
+    ctx.lineWidth = Math.max(2, R * 0.016);
+    for (const gimbal of this._gimbals) {
+      if (!front && !this.reduced) {
+        gimbal.prec += this._dt * gimbal.precSpeed;
+        gimbal.spin += this._dt * gimbal.spinSpeed;
+      }
+      const tiltCos = Math.cos(gimbal.tilt);
+      const tiltSin = Math.sin(gimbal.tilt);
+      const precCos = Math.cos(gimbal.prec);
+      const precSin = Math.sin(gimbal.prec);
+      const radius = gimbal.radius * R;
+      // Hologram shimmer: low-alpha flicker along the stroke, frozen when reduced.
+      const shimmer = this.reduced
+        ? 0
+        : 0.08 * Math.sin(time * 9 + gimbal.tilt * 40);
+      const alpha = (front ? 0.7 : 0.2) + shimmer;
+      ctx.strokeStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+      let penDown = false;
+      ctx.beginPath();
+      for (let s = 0; s <= 64; s++) {
+        const u = gimbal.spin + (s / 64) * TAU;
+        const localX = Math.cos(u) * radius;
+        const localY = Math.sin(u) * radius;
+        const tiltedY = localY * tiltCos;
+        const tiltedZ = localY * tiltSin;
+        const worldX = localX * precCos + tiltedZ * precSin;
+        const worldZ = -localX * precSin + tiltedZ * precCos;
+        const visible = front ? worldZ >= 0 : worldZ < 0;
+        const scale = 1 + worldZ / (radius * 8); // mild perspective
+        if (visible) {
+          const screenX = worldX * scale;
+          const screenY = tiltedY * scale;
+          if (penDown) ctx.lineTo(screenX, screenY);
+          else {
+            ctx.moveTo(screenX, screenY);
+            penDown = true;
+          }
+        } else {
+          penDown = false;
+        }
+      }
+      ctx.stroke();
+    }
   }
 
   _drawOrbitPass(front) {
     const ctx = this.ctx;
-    ctx.globalAlpha = this._sceneAlpha;
-    ctx.lineWidth = 0.65;
+    // Hairline orbit paths — barely-there guides under the HUD markers.
+    ctx.globalAlpha = this._sceneAlpha * 0.4;
+    ctx.lineWidth = 0.5;
     for (let moon = 0; moon < MOON_COUNT; moon++) {
       const base = moon * MOON_ORBIT_STEPS;
       ctx.strokeStyle = MOON_STYLES[moon][1];
@@ -2294,372 +1299,39 @@ export class VoiceOrb {
       }
       ctx.stroke();
     }
-  }
-
-  _drawMoonTailPass(front) {
-    if (this.reduced) return;
-    const ctx = this.ctx;
-    ctx.globalAlpha = this._sceneAlpha;
-    ctx.lineCap = "round";
-    for (let moon = 0; moon < MOON_COUNT; moon++) {
-      const pool = MOON_STYLES[moon];
-      const base = moon * MOON_TAIL_SAMPLES;
-      for (let sample = 1; sample < MOON_TAIL_SAMPLES; sample++) {
-        const previousSlot =
-          (this._moonTailCursor + sample) % MOON_TAIL_SAMPLES;
-        const currentSlot =
-          (this._moonTailCursor + sample + 1) % MOON_TAIL_SAMPLES;
-        const from = base + previousSlot;
-        const to = base + currentSlot;
-        const segmentFront =
-          (this._moonTailDepth[from] + this._moonTailDepth[to]) *
-            0.5 >=
-          0;
-        if (segmentFront !== front) continue;
-        const bucket = front ? sample + 2 : Math.max(1, sample);
-        ctx.strokeStyle = pool[bucket];
-        ctx.lineWidth = 0.55 + sample * 0.16;
-        ctx.beginPath();
-        ctx.moveTo(this._moonTailX[from], this._moonTailY[from]);
-        ctx.lineTo(this._moonTailX[to], this._moonTailY[to]);
-        ctx.stroke();
-      }
-
-      for (let sample = 0; sample < MOON_TAIL_SAMPLES; sample++) {
-        const slot =
-          (this._moonTailCursor + sample + 1) % MOON_TAIL_SAMPLES;
-        const tail = base + slot;
-        if ((this._moonTailDepth[tail] >= 0) !== front) continue;
-        const bucket = front ? sample + 2 : Math.max(1, sample);
-        const tailRadius = 0.45 + sample * 0.14;
-        ctx.fillStyle = pool[bucket];
-        ctx.beginPath();
-        ctx.arc(
-          this._moonTailX[tail],
-          this._moonTailY[tail],
-          tailRadius,
-          0,
-          TAU
-        );
-        ctx.fill();
-      }
-    }
-    ctx.lineCap = "butt";
-  }
-
-  _drawCagePass(front) {
-    const ctx = this.ctx;
-    ctx.globalAlpha =
-      this._sceneAlpha * (1 - this._thinkingMix * 0.78);
-    ctx.lineWidth = front ? 0.62 : 0.46;
-    const groupOffset = front ? STYLE_ALPHA_BUCKETS : 0;
-    for (let bucket = 1; bucket < STYLE_ALPHA_BUCKETS; bucket++) {
-      const group = groupOffset + bucket;
-      const count = this._cageStyleCounts[group];
-      if (!count) continue;
-      ctx.strokeStyle = B_STYLES[bucket];
-      ctx.beginPath();
-      const groupBase = group * CAGE_SEGMENT_COUNT;
-      for (let item = 0; item < count; item++) {
-        const segment = this._cageStyleIndices[groupBase + item];
-        const from = this._cageSegmentFrom[segment];
-        const to = this._cageSegmentTo[segment];
-        ctx.moveTo(this._cageScreenX[from], this._cageScreenY[from]);
-        ctx.lineTo(this._cageScreenX[to], this._cageScreenY[to]);
-      }
-      ctx.stroke();
-    }
     ctx.globalAlpha = this._sceneAlpha;
   }
 
-  _drawDotGlowPass(front) {
-    const ctx = this.ctx;
-    for (let alpha = 8; alpha < DOT_ALPHA_BUCKETS; alpha++) {
-      ctx.globalAlpha =
-        this._sceneAlpha * (alpha === 9 ? 0.5 : 0.3);
-      for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
-        const sprite = this._dotGlowSprites[tone];
-        const group = tone * DOT_ALPHA_BUCKETS + alpha;
-        const groupBase = group * DOT_COUNT;
-        const groupCount = this._dotStyleCounts[group];
-        for (let item = 0; item < groupCount; item++) {
-          const i = this._dotStyleIndices[groupBase + item];
-          if ((this._dotDepth[i] >= 0) !== front) continue;
-          const size = this._dotRadius[i] * 8;
-          ctx.drawImage(
-            sprite,
-            this._dotScreenX[i] - size * 0.5,
-            this._dotScreenY[i] - size * 0.5,
-            size,
-            size
-          );
-        }
-      }
-    }
 
-    ctx.globalAlpha = this._sceneAlpha * 0.46;
-    for (let bucket = 4; bucket <= 5; bucket++) {
-      const bucketBase = bucket * DOT_COUNT;
-      const bucketCount = this._lightBucketCounts[bucket];
-      for (let item = 0; item < bucketCount; item++) {
-        const i = this._lightBucketIndices[bucketBase + item];
-        if ((this._dotDepth[i] >= 0) !== front) continue;
-        const size = this._dotRadius[i] * 9;
-        ctx.drawImage(
-          this._highlightGlow,
-          this._dotScreenX[i] - size * 0.5,
-          this._dotScreenY[i] - size * 0.5,
-          size,
-          size
-        );
-      }
-    }
-    ctx.globalAlpha = this._sceneAlpha;
-  }
-
-  _drawDotPass(front) {
-    const ctx = this.ctx;
-    ctx.globalAlpha = this._sceneAlpha;
-    for (let tone = 0; tone < DOT_TONE_BUCKETS; tone++) {
-      for (let alpha = 1; alpha < DOT_ALPHA_BUCKETS; alpha++) {
-        let hasDots = false;
-        const group = tone * DOT_ALPHA_BUCKETS + alpha;
-        const groupBase = group * DOT_COUNT;
-        const groupCount = this._dotStyleCounts[group];
-        ctx.beginPath();
-        for (let item = 0; item < groupCount; item++) {
-          const i = this._dotStyleIndices[groupBase + item];
-          if ((this._dotDepth[i] >= 0) !== front) continue;
-          const x = this._dotScreenX[i];
-          const y = this._dotScreenY[i];
-          const radius = this._dotRadius[i];
-          ctx.moveTo(x + radius, y);
-          ctx.arc(x, y, radius, 0, TAU);
-          hasDots = true;
-        }
-        if (hasDots) {
-          ctx.fillStyle = DOT_STYLES[tone * DOT_ALPHA_BUCKETS + alpha];
-          ctx.fill();
-        }
-      }
-    }
-  }
-
-  _drawLightPacketPass(front) {
-    const ctx = this.ctx;
-    ctx.globalAlpha = this._sceneAlpha;
-    for (let bucket = 1; bucket <= 5; bucket++) {
-      let hasLight = false;
-      const bucketBase = bucket * DOT_COUNT;
-      const bucketCount = this._lightBucketCounts[bucket];
-      ctx.fillStyle = HL_STYLES[6 + bucket];
-      ctx.beginPath();
-      for (let item = 0; item < bucketCount; item++) {
-        const i = this._lightBucketIndices[bucketBase + item];
-        if ((this._dotDepth[i] >= 0) !== front) continue;
-        const radius =
-          this._dotRadius[i] * (0.3 + bucket * 0.065);
-        const x = this._dotScreenX[i];
-        const y = this._dotScreenY[i];
-        ctx.moveTo(x + radius, y);
-        ctx.arc(x, y, radius, 0, TAU);
-        hasLight = true;
-      }
-      if (hasLight) ctx.fill();
-    }
-  }
-
-  _drawDataArcPass(front) {
-    const ctx = this.ctx;
-    ctx.globalAlpha = this._sceneAlpha;
-    ctx.lineCap = "round";
-    const forceViolet = this.status === "thinking";
-    for (let tone = 0; tone < 2; tone++) {
-      const pool = tone ? V_STYLES : O_STYLES;
-      for (let step = 1; step <= DATA_ARC_TAIL_STEPS; step++) {
-        const strength = step / DATA_ARC_TAIL_STEPS;
-        const alpha = (0.08 + strength * 0.5) * (front ? 1 : 0.43);
-        const bucket = Math.max(
-          1,
-          Math.min(
-            STYLE_ALPHA_BUCKETS - 1,
-            Math.round(alpha * (STYLE_ALPHA_BUCKETS - 1))
-          )
-        );
-        let hasSegments = false;
-        ctx.strokeStyle = pool[bucket];
-        ctx.lineWidth = 0.55 + strength * 0.8;
-        ctx.beginPath();
-        for (let arc = 0; arc < DATA_ARC_POOL_SIZE; arc++) {
-          if (
-            !this._dataArcActive[arc] ||
-            (forceViolet ? 1 : this._dataArcTone[arc]) !== tone
-          ) {
-            continue;
-          }
-          const base = arc * (DATA_ARC_TAIL_STEPS + 1);
-          const from = base + step - 1;
-          const to = from + 1;
-          const segmentFront =
-            (this._dataArcSampleDepth[from] +
-              this._dataArcSampleDepth[to]) *
-              0.5 >=
-            0;
-          if (segmentFront !== front) continue;
-          ctx.moveTo(
-            this._dataArcSampleX[from],
-            this._dataArcSampleY[from]
-          );
-          ctx.lineTo(
-            this._dataArcSampleX[to],
-            this._dataArcSampleY[to]
-          );
-          hasSegments = true;
-        }
-        if (hasSegments) ctx.stroke();
-      }
-    }
-
-    for (let arc = 0; arc < DATA_ARC_POOL_SIZE; arc++) {
-      if (!this._dataArcActive[arc]) continue;
-      const head =
-        arc * (DATA_ARC_TAIL_STEPS + 1) + DATA_ARC_TAIL_STEPS;
-      if ((this._dataArcSampleDepth[head] >= 0) !== front) continue;
-      const tone = forceViolet ? 1 : this._dataArcTone[arc];
-      const pool = tone ? V_STYLES : O_STYLES;
-      const x = this._dataArcSampleX[head];
-      const y = this._dataArcSampleY[head];
-      const glowSize = front ? 18 : 14;
-      ctx.globalAlpha = this._sceneAlpha * (front ? 0.9 : 0.4);
-      ctx.drawImage(
-        this._arcHeadGlow[tone],
-        x - glowSize * 0.5,
-        y - glowSize * 0.5,
-        glowSize,
-        glowSize
-      );
-      ctx.globalAlpha = this._sceneAlpha;
-      ctx.fillStyle = pool[front ? 15 : 8];
-      ctx.beginPath();
-      ctx.arc(x, y, front ? 1.35 : 1, 0, TAU);
-      ctx.fill();
-    }
-    ctx.lineCap = "butt";
-    ctx.globalAlpha = this._sceneAlpha;
-  }
-
-  _drawScanPass(front) {
-    if (this.reduced || !this._scanActive[0]) return;
-    const ctx = this.ctx;
-    let hasSegments = false;
-    ctx.globalAlpha = this._sceneAlpha;
-    ctx.beginPath();
-    for (let point = 0; point < SCAN_RING_STEPS; point++) {
-      const next = (point + 1) % SCAN_RING_STEPS;
-      const segmentFront =
-        (this._scanRingDepth[point] + this._scanRingDepth[next]) *
-          0.5 >=
-        0;
-      if (segmentFront !== front) continue;
-      ctx.moveTo(this._scanRingX[point], this._scanRingY[point]);
-      ctx.lineTo(this._scanRingX[next], this._scanRingY[next]);
-      hasSegments = true;
-    }
-    if (!hasSegments) return;
-
-    ctx.lineCap = "round";
-    ctx.strokeStyle = O_STYLES[front ? 4 : 2];
-    ctx.shadowColor = O_STYLES[front ? 9 : 5];
-    ctx.shadowBlur = front ? 7 : 4;
-    ctx.lineWidth = front ? 3.2 : 2.4;
-    ctx.stroke();
-    ctx.strokeStyle = HL_STYLES[front ? 14 : 7];
-    ctx.lineWidth = front ? 0.85 : 0.65;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.lineCap = "butt";
-  }
 
   _drawMoonLightPass(front, time, silhouetteRadius) {
     for (let i = 0; i < MOON_COUNT; i++) {
       if ((this._moonDepth[i] >= 0) !== front) continue;
-      if (this._moonRuns[i]) {
-        this._drawFilament(i, time, silhouetteRadius);
-      }
       this._drawMoonLight(i, time);
     }
   }
 
-  _drawFilament(index, time, silhouetteRadius) {
-    const ctx = this.ctx;
-    const x = this._moonScreenX[index];
-    const y = this._moonScreenY[index];
-    const length = Math.sqrt(x * x + y * y);
-    if (length < 1) return;
 
-    const endX = (x / length) * silhouetteRadius * 0.96;
-    const endY = (y / length) * silhouetteRadius * 0.96;
-    const normalX = -y / length;
-    const normalY = x / length;
-    const curl =
-      Math.sin(time * 0.9 + index * 1.7) * silhouetteRadius * 0.045;
-    const middleX = (x + endX) * 0.5 + normalX * curl;
-    const middleY = (y + endY) * 0.5 + normalY * curl;
-    const control1X = x * 0.72 + endX * 0.28 + normalX * curl * 1.2;
-    const control1Y = y * 0.72 + endY * 0.28 + normalY * curl * 1.2;
-    const control2X = x * 0.28 + endX * 0.72 - normalX * curl * 0.45;
-    const control2Y = y * 0.28 + endY * 0.72 - normalY * curl * 0.45;
-    const pool = MOON_STYLES[index];
-    const activity = this._moonActivityMix[index];
-    const styleBucket = Math.max(
-      7,
-      Math.min(
-        STYLE_ALPHA_BUCKETS - 1,
-        Math.round((0.5 + activity * 0.5) * (STYLE_ALPHA_BUCKETS - 1))
-      )
-    );
-
-    ctx.setLineDash(FILAMENT_DASH);
-    ctx.lineDashOffset = -time * 6 - index * 3;
-    ctx.lineCap = "round";
-    ctx.shadowColor = pool[12];
-    ctx.shadowBlur = 8 + activity * 6;
-    ctx.strokeStyle = pool[5];
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.quadraticCurveTo(control1X, control1Y, middleX, middleY);
-    ctx.quadraticCurveTo(control2X, control2Y, endX, endY);
-    ctx.stroke();
-    ctx.strokeStyle = pool[styleBucket];
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    ctx.lineCap = "butt";
-    ctx.setLineDash(SOLID_LINE);
-    ctx.lineDashOffset = 0;
-  }
-
+  // HUD marker: a diamond inside corner brackets. Gold while the moon's task
+  // runs (with a slow blink), state cyan otherwise; settle flash keeps the
+  // ok/err glow for completion feedback.
   _drawMoonLight(index, time) {
     const ctx = this.ctx;
     const x = this._moonScreenX[index];
     const y = this._moonScreenY[index];
-    const perspective = this._moonScale[index];
     const activity = this._moonActivityMix[index];
-    const pool = MOON_STYLES[index];
     const settle = this._moonSettleMix[index];
-    const flashPool = this._moonSettleOk[index] ? OK_STYLES : ERR_STYLES;
-    const drawPool = settle > 0 ? flashPool : pool;
-    const alphaBucket = this._moonAlphaBucket[index];
-    const radius = this._moonVisualRadius[index];
+    const alpha = this._moonAlphaBucket[index] / (STYLE_ALPHA_BUCKETS - 1);
+    const s = this._moonVisualRadius[index];
+    const active = this._moonRuns[index] > 0;
 
-    const glowSize = radius * 8;
+    const glowSize = s * 8;
     const glowSprite =
       settle > 0
         ? this._settleGlowSprites[this._moonSettleOk[index]]
         : this._moonGlowSprites[index];
     ctx.globalAlpha =
-      this._sceneAlpha * (0.42 + activity * 0.32 + settle * 0.24);
+      this._sceneAlpha * (0.3 + activity * 0.3 + settle * 0.24);
     ctx.drawImage(
       glowSprite,
       x - glowSize * 0.5,
@@ -2668,42 +1340,32 @@ export class VoiceOrb {
       glowSize
     );
     ctx.globalAlpha = this._sceneAlpha;
-    ctx.fillStyle = drawPool[alphaBucket];
-    ctx.shadowColor = drawPool[Math.max(8, alphaBucket)];
-    ctx.shadowBlur = (4 + activity * 9 + settle * 8) * perspective;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, TAU);
-    ctx.fill();
-    ctx.shadowBlur = 0;
 
-    if (this._moonRuns[index]) {
-      const ringRadius =
-        radius + 3.5 + Math.sin(time * 3.2 + index) * 0.7;
-      const spin = time * 3.4 + index * 0.77;
-      ctx.strokeStyle = pool[15];
-      ctx.shadowColor = pool[12];
-      ctx.shadowBlur = 6 + activity * 5;
-      ctx.lineWidth = 1;
-      ctx.lineCap = "round";
+    const gold = STATE_COLORS.thinking.ring;
+    const rgb = active ? gold : this._coreRGB;
+    const blink =
+      active && !this.reduced ? 0.7 + 0.3 * Math.sin(time * 3 + index) : 1;
+    ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(alpha * blink).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.moveTo(x, y - s);
+    ctx.lineTo(x + s, y);
+    ctx.lineTo(x, y + s);
+    ctx.lineTo(x - s, y);
+    ctx.closePath();
+    ctx.fill();
+
+    const bracket = s * 1.9;
+    const arm = s * 0.7;
+    ctx.lineWidth = active ? 1.6 : 1;
+    ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${(alpha * (active ? 0.9 : 0.5)).toFixed(3)})`;
+    for (let side = -1; side <= 1; side += 2) {
+      const tip = x + side * bracket;
+      const back = tip - side * arm * 0.6;
       ctx.beginPath();
-      ctx.moveTo(
-        x + Math.cos(spin) * ringRadius,
-        y + Math.sin(spin) * ringRadius
-      );
-      ctx.arc(x, y, ringRadius, spin, spin + 1.15);
-      ctx.moveTo(
-        x + Math.cos(spin + 2.08) * ringRadius,
-        y + Math.sin(spin + 2.08) * ringRadius
-      );
-      ctx.arc(x, y, ringRadius, spin + 2.08, spin + 3.2);
-      ctx.moveTo(
-        x + Math.cos(spin + 4.16) * ringRadius,
-        y + Math.sin(spin + 4.16) * ringRadius
-      );
-      ctx.arc(x, y, ringRadius, spin + 4.16, spin + 5.3);
+      ctx.moveTo(back, y - arm);
+      ctx.lineTo(tip, y);
+      ctx.lineTo(back, y + arm);
       ctx.stroke();
-      ctx.lineCap = "butt";
-      ctx.shadowBlur = 0;
     }
   }
 
@@ -2724,7 +1386,9 @@ export class VoiceOrb {
     const flashPool = this._moonSettleOk[index] ? OK_STYLES : ERR_STYLES;
     const drawPool = settle > 0 ? flashPool : pool;
     const radius = this._moonVisualRadius[index];
-    const labelAlpha = Math.min(1, 0.5 + activity * 0.5 + settle * 0.3);
+    // Dimmer than the marker — labels are secondary HUD chrome.
+    const labelAlpha =
+      Math.min(1, 0.5 + activity * 0.5 + settle * 0.3) * 0.75;
     const labelBucket = Math.max(
       1,
       Math.min(
@@ -2749,194 +1413,6 @@ export class VoiceOrb {
     ctx.shadowBlur = 0;
   }
 
-
-  // Idle tethers: every labeled node stays visibly attached to the sphere —
-  // a 1px curved line plus a small bright pulse traveling node→sphere every
-  // 4-6s, staggered per node so the sky never beats in unison.
-
-  // Layer 3: the plexus — clustered node web with propagating flares.
-  _drawPlexus(time, R) {
-    const ctx = this.ctx;
-    const yc = this._fYawCos, ys = this._fYawSin, pc = this._fPitchCos, ps = this._fPitchSin;
-    const N = this._plexSize.length;
-    for (let i = 0; i < N; i++) {
-      const rad = 1.005 + hashUnit(i * 37 + 53) * 0.055; // shell floats, juts at the limb
-      const x = this._plexBase[i * 3] * rad, y = this._plexBase[i * 3 + 1] * rad, z = this._plexBase[i * 3 + 2] * rad;
-      const cx = x * yc + z * ys, cz = -x * ys + z * yc;
-      const cy = y * pc - cz * ps, depth = y * ps + cz * pc;
-      const persp = CAM_DISTANCE / (CAM_DISTANCE - depth);
-      this._plexSX[i] = cx * R * persp;
-      this._plexSY[i] = -cy * R * persp;
-      this._plexDepth[i] = depth;
-    }
-    // flare scheduling: one random node every 2-4s, 300ms propagation
-    if (!this.reduced && time >= this._nextFlareAt) {
-      this._flareNode = Math.floor(hashUnit(Math.floor(time * 7) + 917) * N);
-      this._flareAt = time;
-      this._nextFlareAt = time + 2 + hashUnit(Math.floor(time * 13) + 311) * 2;
-    }
-    const flareK = this._flareNode >= 0 ? Math.max(0, 1 - (time - this._flareAt) / 0.3) : 0;
-    ctx.lineWidth = 1;
-    for (let edge = 0; edge < this._plexEdges.length; edge++) {
-      const key = this._plexEdges[edge];
-      const a = Math.floor(key / 1000), b = key % 1000;
-      const d = (this._plexDepth[a] + this._plexDepth[b]) / 2;
-      if (d < -0.24) continue; // fragments visible slightly past the rim
-      const k = Math.min(1, (d + 0.24) / 0.34);
-      let alpha = 0.14 + 0.42 * k;
-      if (flareK > 0 && (a === this._flareNode || b === this._flareNode)) alpha = Math.min(0.82, alpha + flareK * 0.44);
-      const alphaBucket = Math.max(
-        1,
-        Math.min(
-          STYLE_ALPHA_BUCKETS - 1,
-          Math.round(alpha * (STYLE_ALPHA_BUCKETS - 1))
-        )
-      );
-      ctx.strokeStyle = B_STYLES[alphaBucket];
-      ctx.beginPath();
-      ctx.moveTo(this._plexSX[a], this._plexSY[a]);
-      ctx.lineTo(this._plexSX[b], this._plexSY[b]);
-      ctx.stroke();
-    }
-    for (let i = 0; i < N; i++) {
-      const d = this._plexDepth[i];
-      if (d < -0.24) continue;
-      const k = Math.min(1, (d + 0.24) / 0.34);
-      const size = this._plexSize[i] * (0.7 + 0.3 * k);
-      let alpha = 0.26 + 0.55 * k;
-      if (flareK > 0 && (i === this._flareNode || this._plexAdj[this._flareNode].includes(i)))
-        alpha = Math.min(1, alpha + flareK);
-      if (size > 1.8) {
-        const g = size * 5.4;
-        ctx.globalAlpha = this._sceneAlpha * alpha * 0.36;
-        ctx.drawImage(this._highlightGlow, this._plexSX[i] - g / 2, this._plexSY[i] - g / 2, g, g);
-        ctx.globalAlpha = this._sceneAlpha;
-      }
-      const alphaBucket = Math.max(
-        1,
-        Math.min(
-          STYLE_ALPHA_BUCKETS - 1,
-          Math.round(alpha * (STYLE_ALPHA_BUCKETS - 1))
-        )
-      );
-      ctx.fillStyle = HL_STYLES[alphaBucket];
-      ctx.beginPath(); ctx.arc(this._plexSX[i], this._plexSY[i], size * 0.75, 0, TAU); ctx.fill();
-    }
-  }
-
-  // Layer 4: ambient particles rising from the base ring, despawning above.
-  _drawAmbientRise(time, R) {
-    if (this.reduced) return;
-    const ctx = this.ctx;
-    for (let i = 0; i < this._ambPhase.length; i++) {
-      const k = (this._ambPhase[i] + time * this._ambSpeed[i]) % 1;
-      const y = R * 1.05 - k * R * 2.3;
-      const sway = Math.sin(time * 0.6 + i) * R * 0.08;
-      const x = Math.cos(this._ambAngle[i]) * R * (0.55 + 0.35 * Math.sin(i)) + sway;
-      const fade = Math.sin(k * Math.PI);
-      const alphaBucket = Math.max(
-        1,
-        Math.min(
-          STYLE_ALPHA_BUCKETS - 1,
-          Math.round(0.3 * fade * (STYLE_ALPHA_BUCKETS - 1))
-        )
-      );
-      ctx.fillStyle = B_STYLES[alphaBucket];
-      ctx.beginPath(); ctx.arc(x, y, 1.4, 0, TAU); ctx.fill();
-    }
-  }
-
-  // The projector: floor glow, three concentric rings, and the light beam.
-  _drawProjectorBase(time, R) {
-    const ctx = this.ctx;
-    const baseY = R * 1.14;
-    const pulse = this.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(time * (TAU / 5) + Math.PI);
-    ctx.globalAlpha = this._sceneAlpha;
-    ctx.drawImage(
-      this._projectorFloor,
-      -R * 1.1,
-      baseY - R * 0.3,
-      R * 2.2,
-      R * 0.6
-    );
-    // three rings, brightest inner, inner one pulsing off the core's beat
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = B_STYLES[Math.round((0.6 + 0.25 * pulse) * 15)];
-    ctx.beginPath();
-    ctx.ellipse(0, baseY, R * 0.72, R * 0.1728, 0, 0, TAU);
-    ctx.stroke();
-    ctx.strokeStyle = B_STYLES[5];
-    ctx.beginPath();
-    ctx.ellipse(0, baseY, R * 0.96, R * 0.2304, 0, 0, TAU);
-    ctx.stroke();
-    ctx.strokeStyle = B_STYLES[3];
-    ctx.beginPath();
-    ctx.ellipse(0, baseY, R * 1.2, R * 0.288, 0, 0, TAU);
-    ctx.stroke();
-    // vertical beam: cached gradient from base ring to globe underside
-    ctx.drawImage(
-      this._projectorBeam,
-      -R * 0.62,
-      R * 0.55,
-      R * 1.24,
-      baseY - R * 0.55
-    );
-  }
-
-
-  // Opaque planet body: dark navy disc with spherical edge shading, then a
-  // crisp glowing rim and a soft atmosphere annulus. Drawn source-over so it
-  // occludes back-hemisphere content and the room behind the globe.
-  _drawSolidBody(R) {
-    const ctx = this.ctx;
-    ctx.globalCompositeOperation = "source-over";
-    const body = ctx.createRadialGradient(-R * 0.25, -R * 0.3, R * 0.1, 0, 0, R);
-    body.addColorStop(0, "rgba(16,34,58,0.99)");
-    body.addColorStop(0.62, "rgba(9,20,38,0.99)");
-    body.addColorStop(0.92, "rgba(5,12,26,0.99)");
-    body.addColorStop(1, "rgba(10,26,46,0.99)");
-    ctx.fillStyle = body;
-    ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.strokeStyle = "rgba(120,220,255,0.28)";
-    ctx.lineWidth = 1.5;
-    ctx.shadowColor = "rgba(34,211,238,0.9)"; ctx.shadowBlur = 12;
-    ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.stroke();
-    ctx.shadowBlur = 0;
-    const atmo = ctx.createRadialGradient(0, 0, R * 0.97, 0, 0, R * 1.12);
-    atmo.addColorStop(0, "rgba(34,211,238,0.12)");
-    atmo.addColorStop(1, "rgba(34,211,238,0)");
-    ctx.fillStyle = atmo;
-    ctx.beginPath(); ctx.arc(0, 0, R * 1.12, 0, TAU); ctx.fill();
-  }
-
-  _drawMoonTethers(time, silhouetteRadius) {
-    const ctx = this.ctx;
-    ctx.globalCompositeOperation = "lighter";
-    ctx.lineWidth = 1;
-    for (let i = 0; i < MOON_COUNT; i++) {
-      const mx = this._moonScreenX[i], my = this._moonScreenY[i];
-      const len = Math.hypot(mx, my) || 1;
-      if (len <= silhouetteRadius * 1.02) continue;
-      const ex = (mx / len) * silhouetteRadius, ey = (my / len) * silhouetteRadius;
-      const midx = (mx + ex) / 2 - (my - ey) * 0.12;
-      const midy = (my + ey) / 2 + (mx - ex) * 0.12;
-      ctx.strokeStyle = "rgba(34,211,238,0.3)";
-      ctx.beginPath(); ctx.moveTo(mx, my); ctx.quadraticCurveTo(midx, midy, ex, ey); ctx.stroke();
-      if (!this.reduced) {
-        const period = 4 + (i % 3);
-        const phase = ((time / period) + i * 0.618) % 1;
-        const t1 = phase, u = 1 - t1;
-        const px = u * u * mx + 2 * u * t1 * midx + t1 * t1 * ex;
-        const py = u * u * my + 2 * u * t1 * midy + t1 * t1 * ey;
-        ctx.fillStyle = "rgba(214,248,255,0.9)";
-        ctx.shadowColor = "rgba(34,211,238,0.9)"; ctx.shadowBlur = 8;
-        ctx.beginPath(); ctx.arc(px, py, 1.6, 0, TAU); ctx.fill();
-        ctx.shadowBlur = 0;
-      }
-    }
-    ctx.globalCompositeOperation = "source-over";
-  }
 
   _drawHalos(time, silhouetteRadius) {
     const ctx = this.ctx;
