@@ -52,6 +52,10 @@ import {
   classifyIntent
 } from "./toolRegistry.js";
 import { mayStreamNarration, failureLine } from "./public/ttsPolicy.js";
+
+// Does a post-precheck-recovery reply read as a request for missing input?
+// Interrogatives or need/provide verbs qualify; bare completion claims don't.
+const ASKING_SHAPE = /\?|\b(what|which|who|whose|need|needs|missing|provide|give me|tell me|share|don't have|do not have)\b/i;
 import { fakeToolResult } from "./fakeTools.js";
 import {
   MEETING_MAX_TRANSCRIPT_CHARS,
@@ -1871,6 +1875,18 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
 
     // No tool call this round.
     if (isAction && !state.requiredActionSatisfied) {
+      // A precheck bounced the tool and its guidance was fed back — the
+      // model's reply is now a legitimate ask for missing input ("what's
+      // the number?" / "I need her number"), not narration of an action
+      // that never ran. Require the asking shape: a bare claim still falls
+      // through to the honest failure line, so "sent it!" can't sneak out.
+      if (state.precheckRecovered) {
+        console.log(`[turn ${state.id}] post-recovery reply: ${JSON.stringify((contentBuf || "").slice(0, 140))}`);
+      }
+      if (state.precheckRecovered && contentBuf && ASKING_SHAPE.test(contentBuf)) {
+        onText(contentBuf);
+        return finishTurn({ askedForInput: true });
+      }
       // Everything above was narration about an action that never happened —
       // it was never spoken, and it is dropped here rather than flushed.
       const repaired = await backstopToolRound(convo, sources, clientActions, state, toolOpts);
@@ -1972,6 +1988,14 @@ async function callNvidia(messages, tone, opts = {}) {
 
     const replyText = (msg.content || "").trim();
     if (isAction && !state.requiredActionSatisfied) {
+      // Post-precheck-recovery, an ask-shaped reply is the legitimate
+      // request for missing input — speak it. Anything else is still dropped.
+      if (state.precheckRecovered) {
+        console.log(`[turn ${state.id}] post-recovery reply: ${JSON.stringify(replyText.slice(0, 140))}`);
+      }
+      if (state.precheckRecovered && replyText && ASKING_SHAPE.test(replyText)) {
+        return finishTurn(replyText, { askedForInput: true });
+      }
       // drop the narration; it describes something that never happened
       const repaired = await backstopToolRound(convo, sources, clientActions, state, toolOpts);
       return finishTurn(repaired || failureLine(state.intent.family), { repaired: !!repaired });
