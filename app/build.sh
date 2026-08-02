@@ -29,9 +29,20 @@ swiftc -O \
 
 # Ad-hoc signature: enough for the microphone prompt to appear. It changes on
 # every build, so macOS may re-ask for mic access after a rebuild.
-codesign --force --sign - --identifier com.artemis.desktop "$APP" >/dev/null 2>&1 || {
-  echo "warning: codesign failed; the microphone prompt may not appear" >&2
-}
+# A STABLE identity keeps macOS permission grants (Accessibility, Input
+# Monitoring, microphone) valid across rebuilds. Ad-hoc signing changes the
+# code hash every build and silently invalidates them all.
+SIGN_ID="FlowClone Dev"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+  codesign --force --sign "$SIGN_ID" --identifier com.artemis.desktop "$APP" || {
+    echo "warning: identity signing failed; falling back to ad-hoc" >&2
+    codesign --force --sign - --identifier com.artemis.desktop "$APP" >/dev/null 2>&1 || true
+  }
+else
+  codesign --force --sign - --identifier com.artemis.desktop "$APP" >/dev/null 2>&1 || {
+    echo "warning: codesign failed; the microphone prompt may not appear" >&2
+  }
+fi
 
 echo "built $APP"
 

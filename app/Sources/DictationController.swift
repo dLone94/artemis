@@ -1,7 +1,9 @@
 import AppKit
+import ApplicationServices
 import AVFoundation
 import CoreGraphics
 import Foundation
+import IOKit.hid
 
 /// Owns the system-wide hold-to-talk loop. UI state stays on the main thread;
 /// audio and HTTP state are handed to one serial queue so PCM chunks cannot be
@@ -62,6 +64,7 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
     private weak var menuItem: NSMenuItem?
     private var isEnabled: Bool
     private var clipboardGeneration = 0
+    private var loggedFirstFn = false
 
     // networkQueue-only state. There is at most one dictation lifecycle at a
     // time; callbacks also carry the generation so late responses are inert.
@@ -172,6 +175,20 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
     private func installMonitors() {
         guard globalFlagsMonitor == nil, globalEscapeMonitor == nil, localMonitor == nil else { return }
 
+        // Global key/flag observation is gated by Input Monitoring on modern
+        // macOS — Accessibility alone is NOT enough, and without it the
+        // monitors below install fine and then receive nothing, ever. Ask
+        // explicitly: the request registers Artemis in the Settings pane and
+        // pops the system prompt instead of failing into silence. State is
+        // NSLogged so `log show --predicate 'process == "Artemis"'` shows it.
+        let listenAccess = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
+        NSLog("[dictation] installing monitors — inputMonitoring=%d accessibilityTrusted=%d",
+              listenAccess.rawValue, AXIsProcessTrusted() ? 1 : 0)
+        if listenAccess != kIOHIDAccessTypeGranted {
+            _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+            panel.showNotice("allow Input Monitoring for dictation")
+        }
+
         globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleFlagsChanged(event)
         }
@@ -217,6 +234,10 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
         // Other modifier changes also produce flagsChanged; keyCode 63 is the
         // physical fn key and prevents those events from perturbing the hold.
         guard isEnabled, event.keyCode == 63 else { return }
+        if !loggedFirstFn {
+            loggedFirstFn = true
+            NSLog("[dictation] fn key observed — event flow confirmed")
+        }
         let isDown = event.modifierFlags.contains(.function)
         if isDown, !fnIsDown {
             fnIsDown = true
@@ -797,7 +818,25 @@ private final class DictationPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     func showListening(near point: NSPoint) {
+        resize(width: 132)
         present("listening", near: point, pulse: true)
+    }
+
+    /// Center-screen advisory ("allow Input Monitoring…") — wider than the
+    /// dictation pill, self-dismissing, and just as unable to steal focus.
+    func showNotice(_ text: String) {
+        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
+        resize(width: 280)
+        present(text, near: NSPoint(x: screen.midX - 140, y: screen.midY), pulse: false)
+        dismiss(after: 5)
+    }
+
+    private func resize(width: CGFloat) {
+        var frame = self.frame
+        frame.size.width = width
+        setFrame(frame, display: false)
+        contentView?.frame = NSRect(x: 0, y: 0, width: width, height: 28)
+        label.frame = NSRect(x: 29, y: 5, width: width - 37, height: 18)
     }
 
     func showFinalizing() {
