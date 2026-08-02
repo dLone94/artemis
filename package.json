@@ -7,7 +7,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "export ARTEMIS_DISABLE_UI_AUTOMATION=1 && node test/untrusted.test.mjs && node test/confirm-gate.test.mjs && node test/whatsapp.test.mjs && node test/finance.test.mjs && node test/messages.test.mjs && node test/registry.test.mjs && node test/wakeProfile.test.mjs && node test/boot-smoke.test.mjs && node test/reliability.test.mjs && node test/telemetry.test.mjs && node test/toolevents.test.mjs && node test/precheck-recovery.test.mjs && node test/email-delete.test.mjs && node test/brief.test.mjs && node test/followup.test.mjs && node test/followups.test.mjs && node test/money.test.mjs && node test/radar.test.mjs && node test/meeting.test.mjs && node eval/run.mjs --selftest",
+    "test": "export ARTEMIS_DISABLE_UI_AUTOMATION=1 && node test/untrusted.test.mjs && node test/confirm-gate.test.mjs && node test/whatsapp.test.mjs && node test/finance.test.mjs && node test/messages.test.mjs && node test/registry.test.mjs && node test/wakeProfile.test.mjs && node test/boot-smoke.test.mjs && node test/reliability.test.mjs && node test/telemetry.test.mjs && node test/toolevents.test.mjs && node test/precheck-recovery.test.mjs && node test/email-delete.test.mjs && node test/brief.test.mjs && node test/followup.test.mjs && node test/followups.test.mjs && node test/money.test.mjs && node test/radar.test.mjs && node test/meeting.test.mjs && node test/stt-params.test.mjs && node eval/run.mjs --selftest",
     "eval": "node eval/run.mjs",
     "eval:selftest": "node eval/run.mjs --selftest"
   }

@@ -270,3 +270,23 @@ npm test: 19/19 PASS. Dead-code sweep clean (no EARTH/_dot/plexus/nebula/Cage/li
 Screenshots: artifacts/orb-final-{idle,listening,thinking,speaking}.png — idle/listening cyan,
 thinking gold, speaking white-hot; gimbal + rings + HUD moons render in all four.
 Awaiting human diff sign-off before commit.
+
+## Act 3 — Build (Dictate Mode v1, 2026-08-02)
+
+### Round 1 — Codex build (thread 019fc326-166f-7863-b2ee-63853e27e071)
+Codex (gpt-5.6-sol, ultra) implemented all three plan tasks over ~3h:
+server encoding passthrough (pure deepgramLivePath helper + allowlist 400),
+DictationController.swift (870 lines: fn hold monitor, AVAudioEngine→16k PCM,
+chunked HTTP streaming, SSE assembly, pasteboard-swap ⌘V insertion with
+guarded restore, non-activating HUD panel), AppDelegate wiring, mic usage
+string, stt-params test added to the suite. Run stalled ~20min in final
+report generation after an internal standards-review subagent; killed after
+work was verified complete on disk. No commits made (as instructed).
+
+### Claude's verdict
+Full diff read. Quality high: generation-guarded async lifecycle, clipboard
+restore gated on changeCount AND content, CGPreflightPostEventAccess before
+synthesizing ⌘V with honest "⌘V to paste" fallback, panel can't become key.
+Deviation (approved): auth cookie sent even on loopback to cover
+ARTEMIS_HOST-exposed listeners. Proofs re-run by Claude: app/build.sh
+compiles (one deprecation warning), npm test 19/19 green.

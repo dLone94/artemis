@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private let config: ArtemisConfig
     private let bridge = BrowserBridge()
     private var server: ServerController!
+    private var dictationController: DictationController?
     private var window: NSWindow!
     private var webView: WKWebView!
 
@@ -26,6 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         } catch {
             presentStartupFailure(error)
             return
+        }
+        // Compat-check is intentionally limited to its browser capability
+        // probe: no dictation monitors, menu, or native microphone access.
+        if mode != .compatCheck {
+            let controller = DictationController(config: config)
+            controller.installMenuItem()
+            dictationController = controller
         }
         buildWindow()
         webView.load(URLRequest(url: url))
@@ -86,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ note: Notification) {
+        dictationController?.shutdown()
         server?.stop()   // no-op unless we started it
     }
 

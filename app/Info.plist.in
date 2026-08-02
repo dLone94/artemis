@@ -13,7 +13,7 @@
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Artemis listens for the wake word and your spoken commands on this device.</string>
+  <string>Artemis uses the microphone for wake-word commands and hold-to-talk dictation.</string>
   <key>ArtemisRoot</key><string>__ARTEMIS_ROOT__</string>
 </dict>
 </plist>

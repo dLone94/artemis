@@ -2282,7 +2282,20 @@ function liveEmit(s, obj) {
   }
 }
 
-function startLiveSession() {
+export function deepgramLivePath(opts = {}) {
+  const q = new URLSearchParams({
+    model: STT_MODEL,
+    interim_results: "true",
+    smart_format: "true",
+    punctuate: "true"
+  });
+  if (opts.encoding != null) q.append("encoding", String(opts.encoding));
+  if (opts.sampleRate != null) q.append("sample_rate", String(opts.sampleRate));
+  if (opts.channels != null) q.append("channels", String(opts.channels));
+  return "/v1/listen?" + q;
+}
+
+function startLiveSession(opts = {}) {
   if (!deepgramApiKey) return null;
   if (liveSessions.size >= MAX_LIVE_SESSIONS) liveCleanup();
   if (liveSessions.size >= MAX_LIVE_SESSIONS) return null;
@@ -2293,14 +2306,8 @@ function startLiveSession() {
   // browser starts POSTing audio immediately, so without this the start of the
   // first utterance was silently dropped.
   const s = { ws: null, sse: null, pending: [], audioQ: [], open: false, attached: false, lastSeen: now, startedAt: now, done: false, _ka: 0 };
-  const q = new URLSearchParams({
-    model: STT_MODEL,
-    interim_results: "true",
-    smart_format: "true",
-    punctuate: "true"
-  });
   s.ws = wsConnect(
-    { host: "api.deepgram.com", path: "/v1/listen?" + q, headers: { Authorization: `Token ${deepgramApiKey}` } },
+    { host: "api.deepgram.com", path: deepgramLivePath(opts), headers: { Authorization: `Token ${deepgramApiKey}` } },
     {
       onOpen() {
         s.open = true;
@@ -2667,7 +2674,17 @@ async function handleRequest(req, res) {
 
   // --- live STT relay: start / chunk / events(SSE) / stop ---
   if (url.pathname === "/api/stt/live/start" && req.method === "POST") {
-    const sid = startLiveSession();
+    const encoding = url.searchParams.get("encoding");
+    if (encoding !== null && !["linear16", "opus", "flac"].includes(encoding)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "unsupported live STT encoding" }));
+      return;
+    }
+    const sid = startLiveSession({
+      encoding,
+      sampleRate: url.searchParams.get("sample_rate"),
+      channels: url.searchParams.get("channels")
+    });
     if (!sid) {
       res.writeHead(503, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "live STT unavailable" }));
