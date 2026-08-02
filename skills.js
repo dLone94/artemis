@@ -19,6 +19,7 @@ import {
 } from "./gmail.js";
 import { stripSentinels, wrapUntrusted } from "./untrusted.js";
 import { normalizePhone, composeUrl, openLocally, sendComposed, whatsappInstalled } from "./whatsapp.js";
+import { lookupContact, resolveRelation } from "./macContacts.js";
 import { fxRate, worldBankIndicator, usYieldCurve, formatFigure } from "./finance.js";
 import { unreadReport } from "./macMessages.js";
 import { MONEY_SCHOOL_CURRICULUM } from "./moneySchool.js";
@@ -81,8 +82,27 @@ async function mutate(name, dflt, fn) {
   }
 }
 async function resolveContact(alias) {
+  const key = (alias || "").toLowerCase().trim();
   const c = await readJson("contacts.json", {});
-  return c[(alias || "").toLowerCase().trim()] || null;
+  if (c[key]) return c[key];
+  // Fallback: the user's real macOS address book. A relationship word
+  // ("wife") first resolves to a name via the me-card's related names, then
+  // the name is looked up; anything found is cached under the alias the user
+  // actually spoke, so Contacts is consulted at most once per person. Any
+  // failure (permission denied, no match) falls through to asking the user.
+  try {
+    const relatedName = await resolveRelation(key);
+    const found = await lookupContact(relatedName || key);
+    if (found && normalizePhone(found.phone)) {
+      const entry = { name: found.name, phone: found.phone, email: "" };
+      c[key] = entry;
+      await writeJson("contacts.json", c);
+      return entry;
+    }
+  } catch (e) {
+    // no Contacts access or lookup error — the ask-for-number flow covers it
+  }
+  return null;
 }
 // Persisted action log — every executed action, for review/undo.
 async function appendAction(entry) {

@@ -274,3 +274,29 @@ console.log("PASS ✅  whatsapp: right recipient, encoded body, and an honest su
   assert.ok(/press enter/i.test(draft.summary), "fallback tells the user to finish it");
   console.log("  ✓ send_message: 'sent' only when the keystroke ran; honest draft otherwise");
 }
+
+// ---- macOS Contacts fallback -------------------------------------------------
+// The lookup only ever runs with an injected runner in tests (and the env
+// kill-switch blocks the real osascript regardless). What matters: parsing,
+// relationship mapping, and silent-null on every failure mode.
+{
+  const { lookupContact, resolveRelation } = await import("../macContacts.js");
+
+  const hit = await lookupContact("Maria", {
+    run: (file, args, o, cb) => cb(null, "Maria Topalova\n+359 88 888 1234\n")
+  });
+  assert.deepEqual(hit, { name: "Maria Topalova", phone: "+359 88 888 1234" });
+
+  assert.equal(await lookupContact("Maria", { run: (f, a, o, cb) => cb(null, "") }), null, "no match → null");
+  assert.equal(await lookupContact("Maria", { run: (f, a, o, cb) => cb(new Error("denied")) }), null, "no permission → null");
+  assert.equal(await lookupContact("M", { run: () => { throw new Error("should not run"); } }), null, "too-short query never queries");
+
+  let asked = null;
+  const spouse = await resolveRelation("wife", {
+    run: (f, args, o, cb) => { asked = args[2]; cb(null, "Maria Topalova\n"); }
+  });
+  assert.equal(spouse, "Maria Topalova");
+  assert.equal(asked, "spouse", "'wife' queries the spouse label");
+  assert.equal(await resolveRelation("plumber", { run: () => { throw new Error("no"); } }), null, "unknown relations never query");
+  console.log("  ✓ Contacts fallback parses hits, maps 'wife'→spouse, and fails to null");
+}
