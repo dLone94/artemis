@@ -34,3 +34,12 @@ codesign --force --sign - --identifier com.artemis.desktop "$APP" >/dev/null 2>&
 }
 
 echo "built $APP"
+
+# Ad-hoc signing means every rebuild changes the app's code hash, and macOS
+# silently invalidates Accessibility/microphone grants keyed to the old hash
+# (the checkbox still LOOKS on). Until the app has a stable signing identity,
+# say it out loud after every build:
+echo ""
+echo "⚠ rebuild note: if hold-fn dictation or WhatsApp sends stop working,"
+echo "  re-trust the app: System Settings → Privacy & Security → Accessibility →"
+echo "  remove Artemis (−) and re-add it (+), then reopen Artemis."
