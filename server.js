@@ -2422,6 +2422,10 @@ async function completeMeetingModel({ system, user }, signal) {
 // simple per-IP rate limit for /api/chat
 const chatHits = new Map();
 function rateLimited(ip) {
+  // Evaluation mode fires a synthetic burst of turns by design; throttling it
+  // silently zeroes every case after the budget and reads as a model failure.
+  // FAKE_TOOLS is already the loudly-announced not-production switch.
+  if (FAKE_TOOLS) return false;
   const now = Date.now();
   const windowMs = 60_000;
   const max = 20;
