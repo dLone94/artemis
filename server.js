@@ -311,6 +311,7 @@ const LLM_PROVIDER = (process.env.LLM_PROVIDER ||
 // answers with a streamed tool call in ~300ms against these exact schemas,
 // where NVIDIA ranged from 2s to not-at-all on identical requests.
 const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || "llama-3.1-8b-instant";
+const BRAIN_STREAM_TIMEOUT_MS = Number(process.env.ARTEMIS_BRAIN_TIMEOUT_MS) || 35000;
 const NVIDIA_BRAIN = { name: "nvidia:" + NVIDIA_MODEL, base: NVIDIA_BASE, key: nvidiaApiKey, model: NVIDIA_MODEL };
 
 // A chain, tried in order, rather than one brain and one spare.
@@ -390,7 +391,10 @@ function benchBrain(brain, res) {
   console.warn("[brain] " + brain.name + " rate limited — using " + next.name + " for the next minute");
   return true;
 }
-const isRateLimit = (e) => /HTTP 429/.test(String(e && e.message));
+// 413 counts too: Groq free-tier TPM caps are per model, and a small model
+// rejecting the request as too large can never serve it — benching it and
+// moving down the chain is the only move that saves the turn.
+const isRateLimit = (e) => /HTTP (429|413)/.test(String(e && e.message));
 
 // The provider already tells us what is left on every response; reading the
 // headers costs nothing and makes the remaining daily budget visible, which
@@ -1775,11 +1779,16 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       },
       // 60s was far too long to leave someone waiting in silence. An honest
       // "I couldn't do that" at 35s beats a correct answer at 65s that they
-      // already assumed had failed.
-      35000,
+      // already assumed had failed. Local/offline brains legitimately need a
+      // longer leash (multi-round confirmation flows die at local speeds), so
+      // the ceiling is configurable per deployment rather than per model.
+      BRAIN_STREAM_TIMEOUT_MS,
       signal
     );
-    if (res.status === 429 && benchBrain(brain, res)) {
+    // Walk the chain past every throttled (429) or too-small (413) model.
+    // benchBrain returns false when nothing is left, which ends the loop and
+    // lets the status fall through to the honest error below.
+    while ((res.status === 429 || res.status === 413) && benchBrain(brain, res)) {
       brain = currentBrain();
       res = await fetchWithTimeout(
         brain.base + "/chat/completions",
@@ -1788,7 +1797,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
           headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
           body: JSON.stringify(Object.assign({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true }, brain.extra || {}))
         },
-        35000,
+        BRAIN_STREAM_TIMEOUT_MS,
         signal
       );
     }
@@ -2306,10 +2315,12 @@ function startLiveSession(opts = {}) {
   // browser starts POSTing audio immediately, so without this the start of the
   // first utterance was silently dropped.
   const s = { ws: null, sse: null, pending: [], audioQ: [], open: false, attached: false, lastSeen: now, startedAt: now, done: false, _ka: 0 };
+  console.log(`[stt-live] ${sid} started (encoding=${opts.encoding || "default"} rate=${opts.sampleRate || "-"})`);
   s.ws = wsConnect(
     { host: "api.deepgram.com", path: deepgramLivePath(opts), headers: { Authorization: `Token ${deepgramApiKey}` } },
     {
       onOpen() {
+        console.log(`[stt-live] ${sid} deepgram ws open (${s.audioQ.length} chunks queued)`);
         s.open = true;
         for (const chunk of s.audioQ) { try { s.ws.send(chunk); } catch (e) {} }
         s.audioQ = [];
@@ -2320,19 +2331,26 @@ function startLiveSession(opts = {}) {
         if (typeof msg !== "string") return;
         let m;
         try { m = JSON.parse(msg); } catch (e) { return; }
-        if (m.type !== "Results") return;
+        if (m.type !== "Results") {
+          // Metadata carries duration = seconds of audio Deepgram counted;
+          // it's the one line that separates "no audio arrived" from "audio
+          // arrived but transcribed to nothing" when dictation goes quiet.
+          console.log(`[stt-live] ${sid} deepgram sent ${m.type || "?"}${m.duration != null ? ` (duration=${m.duration}s)` : ""}`);
+          return;
+        }
         const alt = m.channel && m.channel.alternatives && m.channel.alternatives[0];
         if (!alt) return;
         liveEmit(s, { t: alt.transcript || "", final: !!m.is_final, speechFinal: !!m.speech_final });
       },
       onClose() {
+        console.log(`[stt-live] ${sid} deepgram ws closed`);
         if (s._ka) { clearInterval(s._ka); s._ka = 0; }
         liveEmit(s, { done: true });
         s.done = true;
         if (s.sse) { try { s.sse.end(); } catch (e) {} }
       },
       onError(err) {
-        console.error("live STT ws error:", err.message);
+        console.error(`[stt-live] ${sid} deepgram ws error:`, err.message);
       }
     }
   );
