@@ -37,7 +37,7 @@ const NATIVE_DEFS = [
 //              mutate/mutation (writes state; mutation is the current spelling)
 //   requires — capability flag that must be true for this tool to be offered
 //   external — the effect leaves this machine and can't be undone (always confirmed)
-//   confirm  — "always" for an action that must never execute without a spoken yes
+//   confirm  — "always" or "never" when a tool overrides the default policy
 //   forceFamilies — routing keys that may force-select the tool; defaults to family
 const META = {
   web_search:      { family: "web",      effect: "read",   requires: "search" },
@@ -61,6 +61,9 @@ const META = {
   },
   open_url:        { family: "navigate", effect: "client" },
   play_media:      { family: "media",    effect: "client" },
+  search_notes:    { family: "vault",    effect: "read",     requires: "vault", forceFamilies: ["vault_read"] },
+  read_note:       { family: "vault",    effect: "read",     requires: "vault", forceFamilies: ["vault_read"] },
+  save_note:       { family: "vault",    effect: "mutation", requires: "vault", confirm: "never" },
   check_email:     { family: "email",    effect: "read",   requires: "gmail",
     // also offered on delete turns: "check my email and delete them" must be
     // able to list first, then delete from that listing
@@ -114,6 +117,8 @@ export const ACTIONABLE_FAMILIES = new Set([
   "school",
   "map",
   "map_update",
+  "vault",
+  "vault_read",
   "meeting",
   "navigate",
   "media",
@@ -246,6 +251,10 @@ const FAMILY_PATTERNS = {
   school: MONEY_SCHOOL_PATTERN,
   map:
     /\b(?:my\s+money\s+map|money\s+map|(?:show|build|make|give)\s+me\s+(?:my\s+)?(?:money\s+map|investment\s+plan)|build\s+my\s+(?:money\s+map|investment\s+plan|plan)|my\s+investment\s+plan)\b|^\s*(?:an?\s+)?investment\s+plan\s*[?!.]*$/i,
+  vault:
+    /\b(?:save|capture|append|write|put|add)\b[^.?!]{0,80}\b(?:obsidian|vault|daily\s+note)\b|\b(?:obsidian|vault|daily\s+note)\b[^.?!]{0,80}\b(?:save|capture|append|write|put|add)\b/i,
+  vault_read:
+    /\b(?:search|find|read|show|check)\b[^.?!]{0,80}\b(?:obsidian|vault|notes?)\b|\b(?:obsidian|vault)\b[^.?!]{0,80}\b(?:search|find|read|show|check|say|about)\b|\bwhat\s+do\s+(?:my|the)\s+notes?\s+say\b/i,
   navigate: /\b(open|pull\s+up|show\s+me|take\s+me\s+to|navigate\s+to|launch|bring\s+up|go\s+to|visit)\b/i,
   media:    /\b(play|put\s+on|queue\s+up|youtube|spotify|some\s+music|a\s+song|the\s+video)\b/i,
   messages: /\b(any(?:\s+(?:new|unread))?\s+(?:whatsapp\s+)?messages?|unread\s+(?:whatsapp\s+)?messages?|new\s+whatsapp\s+messages?|check\s+(?:my\s+)?whatsapp|any\s+whatsapp|did\s+anyone\s+message\s+me)\b/i,
@@ -454,6 +463,7 @@ export function validateToolCall(name, rawArgs, caps = {}) {
 export function needsConfirmation(name, { tainted = false } = {}, caps = {}) {
   const tool = toolByName(name, caps);
   if (!tool) return false;
+  if (tool.confirm === "never") return false;
   if (tool.alwaysConfirm) return true;
   return (tool.effect === "mutate" || tool.effect === "mutation") && tainted;
 }

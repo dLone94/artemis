@@ -82,6 +82,7 @@ import {
   MEETING_MAX_TRANSCRIPT_CHARS,
   saveMeetingTranscript
 } from "./meeting.js";
+import { cappedGraph, vaultAvailable, writeMeetingNote } from "./obsidianVault.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -245,7 +246,7 @@ const LOGIN_PAGE =
 // --- usage counters (so you can see free-tier headroom) ---------------------
 // A tiny per-day tally of real requests/chars per provider, persisted to
 // .data/usage.json. Purely informational; never blocks anything.
-const usage = { day: "", llm: 0, stt: 0, search: 0, ttsChars: { deepgram: 0, elevenlabs: 0, edge: 0 } };
+const usage = { day: "", llm: 0, stt: 0, search: 0, ttsChars: { deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 } };
 function usageToday() { return new Date().toISOString().slice(0, 10); }
 let usageDirty = false;
 (function loadUsage() {
@@ -255,10 +256,14 @@ let usageDirty = false;
     else usage.day = usageToday();
   } catch (e) { usage.day = usageToday(); }
 })();
+usage.ttsChars = Object.assign(
+  { deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 },
+  usage.ttsChars || {}
+);
 function bumpUsage(kind, n = 1) {
   if (usage.day !== usageToday()) { // new day → reset
     usage.day = usageToday(); usage.llm = usage.stt = usage.search = 0;
-    usage.ttsChars = { deepgram: 0, elevenlabs: 0, edge: 0 };
+    usage.ttsChars = { deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 };
   }
   if (kind.startsWith("tts:")) usage.ttsChars[kind.slice(4)] = (usage.ttsChars[kind.slice(4)] || 0) + n;
   else usage[kind] = (usage[kind] || 0) + n;
@@ -330,18 +335,6 @@ const NVIDIA_BRAIN = { name: "nvidia:" + NVIDIA_MODEL, base: NVIDIA_BASE, key: n
 // key. All entries below passed the streaming-tool-call probe on 2026-07-28
 // (the exact capability that disqualified NVIDIA's gpt-oss hosting).
 // Order: quality first, small models last.
-const GROQ_CHAIN_MODELS = (process.env.GROQ_CHAIN ||
-  [
-    GROQ_MODEL,
-    "openai/gpt-oss-120b",
-    "qwen/qwen3.6-27b",
-    "openai/gpt-oss-20b",
-    GROQ_FALLBACK_MODEL
-  ].join(","))
-  .split(",")
-  .map((m) => m.trim())
-  .filter((m, i, a) => m && a.indexOf(m) === i);
-
 // gpt-oss models are reasoning models: without this flag they put the whole
 // answer in a reasoning channel our stream loop never reads (she would say
 // NOTHING), and with it they answer in ~250ms like everything else.
@@ -349,10 +342,66 @@ function brainExtras(model) {
   return /gpt-oss/.test(model) ? { reasoning_effort: "low" } : {};
 }
 
-const BRAIN_CHAIN = (LLM_PROVIDER === "groq" && groqApiKey
-  ? GROQ_CHAIN_MODELS.map((m) => ({ name: "groq:" + m, base: GROQ_BASE, key: groqApiKey, model: m, extra: brainExtras(m) }))
-  : []
-).concat(nvidiaApiKey && LLM_PROVIDER !== "groq" ? [NVIDIA_BRAIN] : []);
+function brainRequestExtras(brain) {
+  return brain.name.startsWith("ollama:")
+    ? Object.assign({}, brain.extra || {}, { reasoning_effort: "none" })
+    : brain.extra || {};
+}
+
+export function buildBrainChain(env = {}) {
+  const nvidiaKey = env.NVIDIA_API_KEY || "";
+  const nvidiaBase = env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
+  const nvidiaModel = env.NVIDIA_MODEL || "qwen/qwen3-next-80b-a3b-instruct";
+  const groqKey = env.GROQ_API_KEY || "";
+  const groqBase = env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+  const groqModel = env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  const groqFallback = env.GROQ_FALLBACK_MODEL || "llama-3.1-8b-instant";
+  const provider = String(
+    env.LLM_PROVIDER || (groqKey ? "groq" : nvidiaKey ? "nvidia" : "anthropic")
+  ).toLowerCase();
+  const groqModels = String(env.GROQ_CHAIN || [
+    groqModel,
+    "openai/gpt-oss-120b",
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-20b",
+    groqFallback
+  ].join(","))
+    .split(",")
+    .map((model) => model.trim())
+    .filter((model, index, models) => model && models.indexOf(model) === index);
+
+  const chain = provider === "groq" && groqKey
+    ? groqModels.map((model) => ({
+        name: "groq:" + model,
+        base: groqBase,
+        key: groqKey,
+        model,
+        extra: brainExtras(model)
+      }))
+    : [];
+  if (nvidiaKey && provider !== "groq") {
+    chain.push({
+      name: "nvidia:" + nvidiaModel,
+      base: nvidiaBase,
+      key: nvidiaKey,
+      model: nvidiaModel
+    });
+  }
+
+  const ollamaModel = String(env.OLLAMA_BRAIN_MODEL || "").trim();
+  if (ollamaModel) {
+    chain.push({
+      name: "ollama:" + ollamaModel,
+      base: env.OLLAMA_BASE_URL || "http://127.0.0.1:11434/v1",
+      key: "ollama",
+      model: ollamaModel,
+      timeoutMs: Number(env.ARTEMIS_LOCAL_BRAIN_TIMEOUT_MS) || 90000
+    });
+  }
+  return chain;
+}
+
+const BRAIN_CHAIN = buildBrainChain(process.env);
 
 const BRAIN = BRAIN_CHAIN[0] || NVIDIA_BRAIN;
 
@@ -391,6 +440,38 @@ function benchBrain(brain, res) {
   console.warn("[brain] " + brain.name + " rate limited — using " + next.name + " for the next minute");
   return true;
 }
+function networkErrorCode(error) {
+  return String(
+    (error && error.code) ||
+    (error && error.cause && (error.cause.code || error.cause.message)) ||
+    ""
+  );
+}
+function isNetworkError(error) {
+  const message = String(error && error.message || "");
+  if (/aborted|cancelled|timed out/i.test(message)) return false;
+  return /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNRESET|EAI_AGAIN|bad port/i.test(
+    networkErrorCode(error)
+  ) || (error && error.name === "TypeError" && /fetch failed/i.test(message));
+}
+function benchNetworkBrain(brain, error) {
+  const now = Date.now();
+  const next = BRAIN_CHAIN.find((candidate) =>
+    candidate !== brain && (brainCooldown.get(candidate.name) || 0) <= now
+  );
+  if (!next) {
+    console.warn("[brain] " + brain.name + " network unavailable — no fallback remains");
+    return false;
+  }
+  brainCooldown.set(brain.name, now + 60000);
+  const code = networkErrorCode(error);
+  console.warn(
+    "[brain] " + brain.name + " network unavailable" +
+    (code ? " (" + code + ")" : "") +
+    " — using " + next.name + " for the next minute"
+  );
+  return true;
+}
 // 413 counts too: Groq free-tier TPM caps are per model, and a small model
 // rejecting the request as too large can never serve it — benching it and
 // moving down the chain is the only move that saves the turn.
@@ -410,7 +491,11 @@ function recordBudget(res) {
   } catch (e) {}
 }
 /** Is an OpenAI-compatible brain (Groq or NVIDIA) configured and selected? */
-const openAiCompatActive = () => Boolean(BRAIN.key) && (LLM_PROVIDER === "groq" || LLM_PROVIDER === "nvidia");
+const openAiCompatActive = () => Boolean(BRAIN.key) && (
+  LLM_PROVIDER === "groq" ||
+  LLM_PROVIDER === "nvidia" ||
+  BRAIN.name.startsWith("ollama:")
+);
 // Web search (NVIDIA has no built-in search — bring a key for live answers).
 const tavilyKey = process.env.TAVILY_API_KEY || "";
 const braveKey = process.env.BRAVE_API_KEY || "";
@@ -428,6 +513,31 @@ const elevenLabsKey = process.env.ELEVENLABS_API_KEY || "";
 const elevenVoiceId = process.env.ELEVENLABS_VOICE_ID || "";
 const elevenModel = process.env.ELEVENLABS_MODEL || "eleven_turbo_v2_5"; // low-latency, good for voice
 const elevenEnabled = Boolean(elevenLabsKey && elevenVoiceId);
+
+// MiniMax TTS (optional). The frozen integration contract keeps GroupId in
+// the request URL and requires it alongside the API key.
+const minimaxApiKey = process.env.MINIMAX_API_KEY || "";
+const minimaxGroupId = process.env.MINIMAX_GROUP_ID || "";
+const minimaxVoiceId = process.env.MINIMAX_VOICE_ID || "female-shaonv";
+const minimaxModel = process.env.MINIMAX_MODEL || "speech-2.6-turbo";
+const minimaxEnabled = Boolean(minimaxApiKey && minimaxGroupId);
+const configuredTtsProvider = (process.env.ARTEMIS_TTS_PROVIDER || "").trim().toLowerCase();
+
+export function resolveTtsProvider(requested) {
+  const explicit = String(requested || "").trim().toLowerCase();
+  if (explicit === "edge" || explicit === "deepgram") return explicit;
+  if (explicit === "elevenlabs" && elevenEnabled) return "elevenlabs";
+  if (explicit === "minimax" && minimaxEnabled) return "minimax";
+
+  if (configuredTtsProvider === "edge" || configuredTtsProvider === "deepgram") {
+    return configuredTtsProvider;
+  }
+  if (configuredTtsProvider === "elevenlabs" && elevenEnabled) return "elevenlabs";
+  if (configuredTtsProvider === "minimax" && minimaxEnabled) return "minimax";
+  if (elevenEnabled) return "elevenlabs";
+  if (minimaxEnabled) return "minimax";
+  return "deepgram";
+}
 
 const ARTEMIS_SYSTEM_PROMPT =
   "You are Artemis — a sharp, warm presence with a personality of your own, not a " +
@@ -809,6 +919,59 @@ async function ttsElevenLabs(text, voiceId) {
   }
 }
 
+async function minimaxTTS(text) {
+  if (!minimaxEnabled) return null;
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.minimax.io/v1/t2a_v2?GroupId=${encodeURIComponent(minimaxGroupId)}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + minimaxApiKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: minimaxModel,
+          text,
+          voice_setting: { voice_id: minimaxVoiceId },
+          audio_setting: { format: "mp3", sample_rate: 32000 }
+        })
+      },
+      15000
+    );
+    if (!res.ok) {
+      let why = "";
+      try { why = (await res.text()).slice(0, 240); } catch (error) {}
+      console.error(`MiniMax TTS failed HTTP ${res.status} — falling back to Deepgram. ${why}`);
+      return null;
+    }
+    const payload = await res.json();
+    if (
+      payload &&
+      payload.base_resp &&
+      Number(payload.base_resp.status_code) !== 0
+    ) {
+      console.error("MiniMax TTS API error — falling back to Deepgram:", payload.base_resp.status_msg || payload.base_resp.status_code);
+      return null;
+    }
+    const audio = payload && payload.data && payload.data.audio;
+    if (
+      typeof audio !== "string" ||
+      !audio.length ||
+      audio.length % 2 !== 0 ||
+      !/^[0-9a-f]+$/i.test(audio)
+    ) {
+      console.error("MiniMax TTS returned no valid audio — falling back to Deepgram.");
+      return null;
+    }
+    const buffer = Buffer.from(audio, "hex");
+    return buffer.length ? buffer : null;
+  } catch (error) {
+    console.error("MiniMax TTS error — falling back to Deepgram:", error.message);
+    return null;
+  }
+}
+
 async function ttsDeepgram(text, voice) {
   if (!deepgramApiKey) return null;
   const v = VOICE_RE.test(voice || "") ? voice : ASSISTANT_VOICE;
@@ -972,12 +1135,15 @@ async function streamFirstResponse(convo, system, tools, model, onText) {
 
 // Claude with web access: built-in web_search (server-side) + custom SSRF-guarded
 // fetch_page (executed here). Runs an agentic loop until a final text reply.
-async function callClaude(messages, tone) {
+async function callClaude(messages, tone, opts = {}) {
+  const caps = opts.caps || currentCaps();
+  const onToolStart = typeof opts.onToolStart === "function" ? opts.onToolStart : () => {};
+  const onToolEnd = typeof opts.onToolEnd === "function" ? opts.onToolEnd : () => {};
   const system = ARTEMIS_SYSTEM_PROMPT + (TONE[tone] || "");
   const tools = [
     WEB_SEARCH_TOOL,
     FETCH_PAGE_TOOL,
-    ...skillToolDefs({ includeDirect: false })
+    ...skillToolDefs({ includeDirect: false }).filter((tool) => toolByName(tool.name, caps))
   ];
   const convo = messages.map((m) => ({ role: m.role, content: m.content }));
   const sources = [];
@@ -1035,7 +1201,7 @@ async function callClaude(messages, tone) {
         const skill = getSkill(b.name);
         return skill && (
           skill.requiresConfirmation ||
-          needsConfirmation(b.name, { tainted: readUntrusted }, currentCaps())
+          needsConfirmation(b.name, { tainted: readUntrusted }, caps)
         );
       });
       if (confirm) {
@@ -1092,21 +1258,23 @@ async function callClaude(messages, tone) {
           toolResults.push({ type: "tool_result", tool_use_id: block.id, content, is_error: isError });
         } else if (isSkill(block.name)) {
           // only non-confirm skills reach here (confirm ones returned above)
-          const meta = toolByName(block.name, currentCaps());
-          if (meta && meta.directOnly) {
+          const meta = toolByName(block.name, caps);
+          if (!meta || meta.directOnly) {
             toolResults.push({
               type: "tool_result",
               tool_use_id: block.id,
               content:
-                "Tool call rejected: this skill is available only through code-owned direct dispatch.",
+                "Tool call rejected: this skill is unavailable or only available through code-owned direct dispatch.",
               is_error: true
             });
             continue;
           }
+          onToolStart(block.name);
           try {
             if (UNTRUSTED_SKILLS.has(block.name)) readUntrusted = true;
             if (MAIL_UNTRUSTED_SKILLS.has(block.name)) mailUntrusted = true;
             const r = await getSkill(block.name).execute(block.input || {}, skillCtx);
+            if (block.name === "save_note" && r.ok !== false) invalidateVaultGraphCache();
             // Reminder reads/cancels are tainted only when the executed result
             // actually contains meeting-derived prose.
             if (r.untrusted === true) {
@@ -1117,8 +1285,10 @@ async function callClaude(messages, tone) {
             if (r.openUrl) clientActions.push({ type: "open", url: r.openUrl, label: r.label || "" });
       if (r.panel) clientActions.push({ type: "panel", card: r.panel }); // cockpit context card
             await skillCtx.appendAction({ skill: block.name, params: block.input || {}, result: { ok: r.ok, summary: r.summary } });
+            onToolEnd(block.name, r.ok !== false);
             toolResults.push({ type: "tool_result", tool_use_id: block.id, content: r.content || r.summary || JSON.stringify(r) });
           } catch (e) {
+            onToolEnd(block.name, false);
             toolResults.push({ type: "tool_result", tool_use_id: block.id, content: "Skill failed: " + e.message, is_error: true });
           }
         }
@@ -1187,7 +1357,7 @@ async function webSearch(query, n = 5) {
 
 // What Artemis can do right now — drives which tools are even offered.
 function currentCaps() {
-  return { search: webSearchEnabled, gmail: gmailConfigured() };
+  return { search: webSearchEnabled, gmail: gmailConfigured(), vault: vaultAvailable() };
 }
 
 // The research skill needs web search, but skills.js cannot import it from here
@@ -1228,6 +1398,10 @@ let lastUnreadMail = null;
 let cachedFx = null;
 let cachedFxAt = 0;
 const lastBudget = {};
+let vaultGraphCache = { at: 0, data: { nodes: [], edges: [] } };
+function invalidateVaultGraphCache() {
+  vaultGraphCache = { at: 0, data: { nodes: [], edges: [] } };
+}
 
 // Evaluation mode: run the real loop, execute nothing. Used to benchmark a
 // model's tool use against adversarial prompts without those prompts reaching a
@@ -1322,6 +1496,7 @@ async function runNvidiaTool(name, rawArgs, sources, clientActions, state, opts 
         onMailUntrusted();
       }
       const r = await getSkill(name).execute(args, skillCtx);
+      if (name === "save_note" && r.ok !== false) invalidateVaultGraphCache();
       if (signal && signal.aborted) return { ok: false, content: "Turn cancelled." };
       // Some skills have data-dependent provenance (for example ordinary
       // reminders versus reminders sourced from a meeting). Apply that taint
@@ -1386,16 +1561,16 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     if (signal && signal.aborted) throw new Error("cancelled");
+    const brain = currentBrain();
     try {
-      const brain = currentBrain();
       const res = await fetchWithTimeout(
         brain.base + "/chat/completions",
         {
           method: "POST",
           headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-          body: JSON.stringify(Object.assign({ model: brain.model }, brain.extra || {}, body))
+          body: JSON.stringify(Object.assign({ model: brain.model }, brainRequestExtras(brain), body))
         },
-        ms,
+        brain.timeoutMs || ms,
         signal
       );
       recordBudget(res);
@@ -1411,11 +1586,15 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
       lastErr = e;
       // Rate limited: switch brains for the rest of this process rather than
       // burning the user's turn. The answer still comes, from the slower one.
-      if (isRateLimit(e) && benchBrain(currentBrain(), e.res)) continue;
+      if (isRateLimit(e) && benchBrain(brain, e.res)) continue;
+      if (isNetworkError(e) && benchNetworkBrain(brain, e)) {
+        i -= 1; // network failover should not spend one of the model retry attempts
+        continue;
+      }
       // A real HTTP error (bad key, bad model) will fail identically on retry —
       // only a timeout is worth a second attempt.
       if (!/timed out/i.test(String(e.message)) || i === attempts - 1) throw e;
-      console.warn("[nvidia] attempt " + (i + 1) + " timed out after " + ms + "ms, retrying once");
+      console.warn("[nvidia] attempt " + (i + 1) + " timed out after " + (brain.timeoutMs || ms) + "ms, retrying once");
     }
   }
   throw lastErr;
@@ -1510,7 +1689,7 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
 // its modules in memory, so the only honest way to know what is running is to
 // have the running process say so. The app compares this against disk and
 // refuses to attach to a server that is behind.
-const CODE_FILES = ["server.js", "meeting.js", "skills.js", "gmail.js", "toolRegistry.js", "whatsapp.js", "finance.js", "macMessages.js", "untrusted.js"];
+const CODE_FILES = ["server.js", "meeting.js", "skills.js", "gmail.js", "toolRegistry.js", "whatsapp.js", "finance.js", "macMessages.js", "untrusted.js", "obsidianVault.js"];
 const PROCESS_STARTED_MS = Date.now();
 
 // Static HTML stamps must change when browser code changes, without folding
@@ -1770,40 +1949,41 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
     }
 
     let brain = currentBrain();
-    let res = await fetchWithTimeout(
-      brain.base + "/chat/completions",
-      {
-        method: "POST",
-        headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-        body: JSON.stringify(Object.assign({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true }, brain.extra || {}))
-      },
-      // 60s was far too long to leave someone waiting in silence. An honest
-      // "I couldn't do that" at 35s beats a correct answer at 65s that they
-      // already assumed had failed. Local/offline brains legitimately need a
-      // longer leash (multi-round confirmation flows die at local speeds), so
-      // the ceiling is configurable per deployment rather than per model.
-      BRAIN_STREAM_TIMEOUT_MS,
-      signal
-    );
-    // Walk the chain past every throttled (429) or too-small (413) model.
-    // benchBrain returns false when nothing is left, which ends the loop and
-    // lets the status fall through to the honest error below.
-    while ((res.status === 429 || res.status === 413) && benchBrain(brain, res)) {
-      brain = currentBrain();
-      res = await fetchWithTimeout(
-        brain.base + "/chat/completions",
-        {
-          method: "POST",
-          headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-          body: JSON.stringify(Object.assign({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true }, brain.extra || {}))
-        },
-        BRAIN_STREAM_TIMEOUT_MS,
-        signal
-      );
+    let res;
+    // Walk the chain past throttled, too-small, and unreachable brains. Cloud
+    // entries keep the short conversational ceiling; local models bring their
+    // own longer timeout.
+    while (true) {
+      try {
+        res = await fetchWithTimeout(
+          brain.base + "/chat/completions",
+          {
+            method: "POST",
+            headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
+            body: JSON.stringify(Object.assign({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true }, brainRequestExtras(brain)))
+          },
+          brain.timeoutMs || BRAIN_STREAM_TIMEOUT_MS,
+          signal
+        );
+      } catch (error) {
+        if (isNetworkError(error) && benchNetworkBrain(brain, error)) {
+          brain = currentBrain();
+          continue;
+        }
+        throw error;
+      }
+      if ((res.status === 429 || res.status === 413) && benchBrain(brain, res)) {
+        brain = currentBrain();
+        continue;
+      }
+      break;
     }
     if (!res.ok) {
       const body = await res.text();
       throw new Error("brain HTTP " + res.status + " (" + brain.name + "): " + body.slice(0, 300));
+    }
+    if (brain.name.startsWith("ollama:")) {
+      console.log("[brain] " + brain.name + " answering");
     }
 
     const reader = res.body.getReader();
@@ -2377,13 +2557,15 @@ async function composeBriefing() {
   const sr = await webSearch("top world news headlines today", 6);
   if (sr.error || !sr.results || !sr.results.length) return "";
   const headlines = sr.results.map((r, i) => `${i + 1}. ${r.title} — ${(r.content || "").slice(0, 160)}`).join("\n");
+  const brain = currentBrain();
   const res = await fetchWithTimeout(
-    BRAIN.base + "/chat/completions",
+    brain.base + "/chat/completions",
     {
       method: "POST",
-      headers: { Authorization: "Bearer " + BRAIN.key, "Content-Type": "application/json" },
+      headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: BRAIN.model,
+        model: brain.model,
+        ...brainRequestExtras(brain),
         messages: [
           {
             role: "system",
@@ -2399,7 +2581,7 @@ async function composeBriefing() {
         temperature: 0.4
       })
     },
-    25000
+    brain.timeoutMs || 25000
   );
   if (!res.ok) throw new Error("briefing LLM HTTP " + res.status);
   const data = await res.json();
@@ -2592,6 +2774,30 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (url.pathname === "/api/vault/graph" && req.method === "GET") {
+    let data = { nodes: [], edges: [] };
+    try {
+      const now = Date.now();
+      if (now - vaultGraphCache.at < 60000) {
+        data = vaultGraphCache.data;
+      } else if (vaultAvailable()) {
+        data = cappedGraph();
+        vaultGraphCache = { at: now, data };
+      } else {
+        vaultGraphCache = { at: now, data };
+      }
+    } catch (error) {
+      console.error("[vault] graph failed:", error.message);
+      vaultGraphCache = { at: Date.now(), data };
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store"
+    });
+    res.end(JSON.stringify(data));
+    return;
+  }
+
   // --- one-time Gmail authorization (loopback OAuth; see gmail.js) ---
   if (url.pathname === "/auth/google") {
     if (!gmailAuthReady()) {
@@ -2665,6 +2871,22 @@ async function handleRequest(req, res) {
           pendingAction = { confirmId, name: "set_meeting_reminders" };
         } else {
           reply = `${result.reply} ${precheck.summary || "I couldn't prepare the reminder confirmation."}`;
+        }
+      }
+
+      if (vaultAvailable()) {
+        try {
+          writeMeetingNote({
+            title: "Meeting notes",
+            summary: result.note.structured
+              ? result.note.structured.summary
+              : "Raw meeting transcript.",
+            transcript: body.transcript,
+            reminders: result.reminderItems
+          });
+          invalidateVaultGraphCache();
+        } catch (error) {
+          console.error("[vault] meeting note failed:", error.message);
         }
       }
 
@@ -2938,10 +3160,12 @@ async function handleRequest(req, res) {
         chatEnabled: Boolean(anthropicApiKey) || openAiCompatActive(),
         llmProvider: openAiCompatActive() ? BRAIN.name : Boolean(anthropicApiKey) ? "anthropic" : "none",
         llmModel: openAiCompatActive() ? BRAIN.model : ANTHROPIC_MODEL,
-        voiceEnabled: Boolean(deepgramApiKey) || elevenEnabled,
+        voiceEnabled: Boolean(deepgramApiKey) || elevenEnabled || minimaxEnabled,
         sttEnabled: Boolean(deepgramApiKey),
         elevenEnabled: elevenEnabled,
-        ttsProvider: elevenEnabled ? "elevenlabs" : Boolean(deepgramApiKey) ? "deepgram" : "none",
+        ttsProvider: Boolean(deepgramApiKey) || elevenEnabled || minimaxEnabled
+          ? resolveTtsProvider("")
+          : "none",
         // Anthropic has built-in search; NVIDIA needs Tavily/Brave for live web answers.
         webEnabled: openAiCompatActive() ? webSearchEnabled : Boolean(anthropicApiKey),
         gmailEnabled: gmailConfigured(),
@@ -2997,7 +3221,7 @@ async function handleRequest(req, res) {
         res.writeHead(503, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
           error:
-            "No LLM key set — add GROQ_API_KEY, NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env"
+            "No brain configured — add GROQ_API_KEY, NVIDIA_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BRAIN_MODEL to .env"
         }));
         return;
       }
@@ -3136,6 +3360,7 @@ async function handleRequest(req, res) {
       }
       const skill = getSkill(pending.name);
       const r = await skill.execute(pending.params, skillCtx);
+      if (pending.name === "save_note" && r.ok !== false) invalidateVaultGraphCache();
       const nudgeResponse =
         pending.name === "nudge_email" ? confirmedNudgeResponse(r) : null;
       const clientActions = nudgeResponse ? nudgeResponse.clientActions : [];
@@ -3186,7 +3411,7 @@ async function handleRequest(req, res) {
       res.writeHead(503, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         error:
-          "No LLM key set — add GROQ_API_KEY, NVIDIA_API_KEY or ANTHROPIC_API_KEY to .env"
+          "No brain configured — add GROQ_API_KEY, NVIDIA_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BRAIN_MODEL to .env"
       }));
       return;
     }
@@ -3304,7 +3529,7 @@ async function handleRequest(req, res) {
           if (gotText) send("reset", {});
           send("token", { t: meta.reply });
         }
-        send("done", { sources: meta.sources, model: NVIDIA_MODEL, pendingAction: meta.pendingAction, clientActions: meta.clientActions, toolsUsed: meta.toolsUsed, intent: meta.intent, mailUntrusted: meta.mailUntrusted });
+        send("done", { sources: meta.sources, model: currentBrain().model, pendingAction: meta.pendingAction, clientActions: meta.clientActions, toolsUsed: meta.toolsUsed, intent: meta.intent, mailUntrusted: meta.mailUntrusted });
         try { res.end(); } catch (e) {}
         return;
       }
@@ -3314,7 +3539,11 @@ async function handleRequest(req, res) {
         (TONE[tone] || "") +
         "\n\nWhen you need a tool, call it immediately without narrating first (no 'let me check').";
       const convo = messages.map((m) => ({ role: m.role, content: m.content }));
-      const model = pickModel(messages);
+      const caps = currentCaps();
+      const intent = classifyIntent(lastUserText(messages), caps, messages);
+      const model = intent.intent === "executable_action"
+        ? ANTHROPIC_MODEL
+        : pickModel(messages);
       const historicMailTaint = historyHasMailTaint(messages);
       if (historicMailTaint) send("mail_taint", { mailUntrusted: true });
       // Fast path: simple commands -> Haiku with NO tools (lowest time-to-first-token).
@@ -3323,7 +3552,9 @@ async function handleRequest(req, res) {
         ? [
             WEB_SEARCH_TOOL,
             FETCH_PAGE_TOOL,
-            ...skillToolDefs({ includeDirect: false })
+            ...skillToolDefs({ includeDirect: false }).filter((tool) =>
+              toolByName(tool.name, caps)
+            )
           ]
             .filter((tool) => !blockedAfterMailRead(tool.name, historicMailTaint))
         : undefined;
@@ -3335,7 +3566,18 @@ async function handleRequest(req, res) {
       if (stop === "tool_use" || stop === "pause_turn") {
         // needs the custom fetch_page loop — drop partial, run the robust path
         send("reset", {});
-        const result = await callClaude(messages, tone);
+        const sendToolEvent = (name, phase, ok) => {
+          const tool = toolByName(name, caps);
+          if (!tool) return;
+          const data = { name, family: tool.family, phase };
+          if (phase === "end") data.ok = !!ok;
+          send("tool", data);
+        };
+        const result = await callClaude(messages, tone, {
+          caps,
+          onToolStart: (name) => sendToolEvent(name, "start"),
+          onToolEnd: (name, ok) => sendToolEvent(name, "end", ok)
+        });
         if (result.mailUntrusted) send("mail_taint", { mailUntrusted: true });
         send("token", { t: result.reply });
         send("done", { sources: result.sources, model, pendingAction: result.pendingAction, clientActions: result.clientActions, mailUntrusted: result.mailUntrusted });
@@ -3408,7 +3650,7 @@ async function handleRequest(req, res) {
   // Streaming TTS (GET): pipe audio chunks to the client as they generate so the
   // browser can start playing the first frames ~0.5s in instead of waiting ~1.3s.
   if (url.pathname === "/api/tts" && req.method === "GET") {
-    if (!deepgramApiKey && !elevenEnabled) {
+    if (!deepgramApiKey && !elevenEnabled && !minimaxEnabled) {
       res.writeHead(503).end();
       return;
     }
@@ -3417,7 +3659,7 @@ async function handleRequest(req, res) {
       res.writeHead(400).end();
       return;
     }
-    const provider = (url.searchParams.get("provider") || "").toLowerCase() || (elevenEnabled ? "elevenlabs" : "deepgram");
+    const provider = resolveTtsProvider(url.searchParams.get("provider"));
     try {
       // Edge neural voices (free, human-sounding): synthesized server-side via
       // the zero-dep WS client. Non-streaming (whole clip at once) — sentence
@@ -3444,6 +3686,37 @@ async function handleRequest(req, res) {
           res.writeHead(502).end();
           return;
         }
+      }
+
+      if (provider === "minimax") {
+        const audio = await minimaxTTS(text);
+        if (audio) {
+          bumpUsage("tts:minimax", text.length);
+          res.writeHead(200, {
+            "Content-Type": "audio/mpeg",
+            "X-TTS-Provider": "minimax",
+            "Cache-Control": "no-store"
+          });
+          res.end(audio);
+          return;
+        }
+        const fallback = await deepgramTTSResponse(
+          text,
+          url.searchParams.get("voice")
+        );
+        if (fallback && fallback.ok) {
+          bumpUsage("tts:deepgram", text.length);
+          res.writeHead(200, {
+            "Content-Type": "audio/mpeg",
+            "X-TTS-Provider": "deepgram-fallback",
+            "Cache-Control": "no-store"
+          });
+          const buffer = Buffer.from(await fallback.arrayBuffer());
+          res.end(buffer);
+          return;
+        }
+        res.writeHead(502).end();
+        return;
       }
 
       let upstream = null;
@@ -3497,7 +3770,7 @@ async function handleRequest(req, res) {
 
   // Text-to-speech (Claude reply -> spoken audio): ElevenLabs (preferred) or Deepgram
   if (url.pathname === "/api/tts" && req.method === "POST") {
-    if (!deepgramApiKey && !elevenEnabled) {
+    if (!deepgramApiKey && !elevenEnabled && !minimaxEnabled) {
       res.writeHead(503).end();
       return;
     }
@@ -3508,22 +3781,39 @@ async function handleRequest(req, res) {
         res.writeHead(400).end();
         return;
       }
-      const provider = (body.provider || "").toLowerCase() || (elevenEnabled ? "elevenlabs" : "deepgram");
+      const provider = resolveTtsProvider(body.provider);
       let buf = null;
       let usedProvider = "deepgram";
+      let usageProvider = "deepgram";
+      let wantedMinimax = false;
       if (provider === "elevenlabs" && elevenEnabled) {
         const vid =
           typeof body.voice === "string" && /^[A-Za-z0-9]{16,40}$/.test(body.voice)
             ? body.voice
             : elevenVoiceId;
         buf = await ttsElevenLabs(text, vid);
-        if (buf) usedProvider = "elevenlabs";
+        if (buf) {
+          usedProvider = "elevenlabs";
+          usageProvider = "elevenlabs";
+        }
+      } else if (provider === "minimax" && minimaxEnabled) {
+        wantedMinimax = true;
+        buf = await minimaxTTS(text);
+        if (buf) {
+          usedProvider = "minimax";
+          usageProvider = "minimax";
+        }
       }
-      if (!buf) buf = await ttsDeepgram(text, body.voice); // fallback / Deepgram path
+      if (!buf) {
+        buf = await ttsDeepgram(text, body.voice); // fallback / Deepgram path
+        usedProvider = wantedMinimax ? "deepgram-fallback" : "deepgram";
+        usageProvider = "deepgram";
+      }
       if (!buf) {
         res.writeHead(502).end();
         return;
       }
+      bumpUsage("tts:" + usageProvider, text.length);
       res.writeHead(200, { "Content-Type": "audio/mpeg", "X-TTS-Provider": usedProvider });
       res.end(buf);
     } catch (error) {

@@ -37,6 +37,13 @@ const MOON_SETTLE_TIME = 0.6;
 const MOON_ORBIT_STEPS = 48;
 const MOON_TAIL_SAMPLES = 5;
 const MOON_TAIL_INTERVAL = 0.1;
+const CONSTELLATION_REFRESH_MS = 5 * 60 * 1000;
+const CONSTELLATION_DRIFT_RATE = TAU / 90;
+const CONSTELLATION_SHELLS = Object.freeze([
+  { tiltCos: Math.cos(0.34), tiltSin: Math.sin(0.34), rx: 1.3, ry: 0.48, phase: 0.15 },
+  { tiltCos: Math.cos(-0.72), tiltSin: Math.sin(-0.72), rx: 1.5, ry: 0.64, phase: 1.35 },
+  { tiltCos: Math.cos(1.08), tiltSin: Math.sin(1.08), rx: 1.68, ry: 0.4, phase: 2.55 }
+]);
 const DOT_GLOW_SIZE = 32;
 const ARC_GLOW_SIZE = 48;
 const ATMOSPHERE_SPRITE_SIZE = 256;
@@ -295,6 +302,20 @@ export class VoiceOrb {
     this._reformOvershoot = 0;
     this._lastFrameAt = 0;
     this._elapsed = 0;
+
+    // Vault knowledge graph. Geometry is rebuilt only when the server graph
+    // changes; the frame loop updates the fixed typed arrays in place.
+    this._constellationCount = 0;
+    this._constellationEdges = [];
+    this._constellationShell = new Uint8Array(0);
+    this._constellationPhase = new Float32Array(0);
+    this._constellationRadius = new Float32Array(0);
+    this._constellationScreenX = new Float32Array(0);
+    this._constellationScreenY = new Float32Array(0);
+    this._constellationDepth = new Float32Array(0);
+    this._constellationAbort = null;
+    this._constellationGeneration = 0;
+    this._constellationTimer = 0;
 
     // ---- Particle wireframe: 700 latitude dots + 704 longitude dots ----
     this._dotBase = new Float32Array(DOT_COUNT * 3);
@@ -750,6 +771,11 @@ export class VoiceOrb {
     this._t0 = performance.now();
     this._lastFrameAt = this._t0;
     this._loop();
+    this._refreshConstellation();
+    this._constellationTimer = setInterval(
+      () => this._refreshConstellation(),
+      CONSTELLATION_REFRESH_MS
+    );
   }
 
   resize() {
@@ -862,6 +888,13 @@ export class VoiceOrb {
 
   toolEvent(data = {}) {
     if (!data || typeof data !== "object") return;
+    if (
+      data.name === "save_note" &&
+      data.phase === "end" &&
+      data.ok === true
+    ) {
+      this._refreshConstellation();
+    }
     const phase =
       data.phase === "start" || data.phase === "end" ? data.phase : "";
     if (!phase || typeof data.family !== "string") return;
@@ -905,6 +938,83 @@ export class VoiceOrb {
     }
 
     if (this.reduced) this._loop();
+  }
+
+  async _refreshConstellation() {
+    if (this._disposed) return;
+    const generation = ++this._constellationGeneration;
+    if (this._constellationAbort) this._constellationAbort.abort();
+    const controller = new AbortController();
+    this._constellationAbort = controller;
+    try {
+      const response = await fetch("/api/vault/graph", {
+        credentials: "same-origin",
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error("vault graph HTTP " + response.status);
+      const graph = await response.json();
+      if (this._disposed || generation !== this._constellationGeneration) return;
+      this._setConstellationGraph(graph);
+      if (this.reduced) this._loop();
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      if (this._disposed || generation !== this._constellationGeneration) return;
+      this._setConstellationGraph({ nodes: [], edges: [] });
+      if (this.reduced) this._loop();
+    } finally {
+      if (generation === this._constellationGeneration) {
+        this._constellationAbort = null;
+      }
+    }
+  }
+
+  _setConstellationGraph(graph) {
+    const nodes = Array.isArray(graph && graph.nodes)
+      ? graph.nodes.slice(0, 60)
+      : [];
+    const count = nodes.length;
+    const shellCounts = new Uint8Array(CONSTELLATION_SHELLS.length);
+    for (let index = 0; index < count; index++) {
+      shellCounts[index % CONSTELLATION_SHELLS.length]++;
+    }
+    const shellSlots = new Uint8Array(CONSTELLATION_SHELLS.length);
+    const maxDegree = nodes.reduce(
+      (max, node) => Math.max(max, Number(node && node.degree) || 0),
+      0
+    );
+
+    this._constellationCount = count;
+    this._constellationShell = new Uint8Array(count);
+    this._constellationPhase = new Float32Array(count);
+    this._constellationRadius = new Float32Array(count);
+    this._constellationScreenX = new Float32Array(count);
+    this._constellationScreenY = new Float32Array(count);
+    this._constellationDepth = new Float32Array(count);
+    for (let index = 0; index < count; index++) {
+      const shell = index % CONSTELLATION_SHELLS.length;
+      const slot = shellSlots[shell]++;
+      const degree = Math.max(0, Number(nodes[index] && nodes[index].degree) || 0);
+      this._constellationShell[index] = shell;
+      this._constellationPhase[index] =
+        CONSTELLATION_SHELLS[shell].phase +
+        (slot / Math.max(1, shellCounts[shell])) * TAU;
+      this._constellationRadius[index] =
+        1.2 + (maxDegree ? degree / maxDegree : 0) * 1.3;
+    }
+
+    this._constellationEdges = (Array.isArray(graph && graph.edges)
+      ? graph.edges
+      : [])
+      .filter((edge) =>
+        Array.isArray(edge) &&
+        Number.isInteger(edge[0]) &&
+        Number.isInteger(edge[1]) &&
+        edge[0] >= 0 &&
+        edge[1] >= 0 &&
+        edge[0] < count &&
+        edge[1] < count
+      )
+      .map((edge) => [edge[0], edge[1]]);
   }
 
   _emitRipple(time, energy) {
@@ -1291,6 +1401,7 @@ export class VoiceOrb {
     const swirlYawSin = Math.sin(swirlYaw);
     const swirlPitchCos = Math.cos(swirlPitch);
     const swirlPitchSin = Math.sin(swirlPitch);
+    this._updateConstellation(time, silhouetteRadius);
     const voiceStateMix = Math.min(
       1,
       this._speakingMix + this._listeningMix
@@ -1683,6 +1794,7 @@ export class VoiceOrb {
     ctx.globalAlpha = hudAlpha;
     ctx.globalCompositeOperation = "lighter";
 
+    this._drawConstellationPass(false);
     this._drawNebula(time, silhouetteRadius);
     this._drawProjectorBase(time, silhouetteRadius);
     this._drawLimb(silhouetteRadius);
@@ -1772,6 +1884,7 @@ export class VoiceOrb {
 
     ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = hudAlpha;
+    this._drawConstellationPass(true);
     this._drawWirePass(true);
     this._drawLatLongWires(silhouetteRadius);
     this._drawPlexus(time, silhouetteRadius);
@@ -1835,6 +1948,71 @@ export class VoiceOrb {
     }
     ctx.shadowBlur = 0;
     ctx.restore();
+  }
+
+  _updateConstellation(time, silhouetteRadius) {
+    const drift = (this.reduced ? 0 : time) * CONSTELLATION_DRIFT_RATE;
+    const breathingScale = 1 + this._breathEnv * 0.08;
+    for (let index = 0; index < this._constellationCount; index++) {
+      const shell = CONSTELLATION_SHELLS[this._constellationShell[index]];
+      const angle = this._constellationPhase[index] + drift;
+      const angleCos = Math.cos(angle);
+      const angleSin = Math.sin(angle);
+      const ellipseX =
+        angleCos * silhouetteRadius * shell.rx * breathingScale;
+      const ellipseY =
+        angleSin * silhouetteRadius * shell.ry * breathingScale;
+      this._constellationScreenX[index] =
+        shell.tiltCos * ellipseX - shell.tiltSin * ellipseY;
+      this._constellationScreenY[index] =
+        shell.tiltSin * ellipseX + shell.tiltCos * ellipseY;
+      this._constellationDepth[index] = angleSin;
+    }
+  }
+
+  _drawConstellationPass(front) {
+    if (!this._constellationCount) return;
+    const ctx = this.ctx;
+    ctx.globalAlpha = this._sceneAlpha;
+
+    if (front && this._constellationEdges.length) {
+      let hasEdges = false;
+      ctx.strokeStyle = PAL.O + "0.08)";
+      ctx.lineWidth = 0.65;
+      ctx.beginPath();
+      for (const [from, to] of this._constellationEdges) {
+        if (
+          this._constellationDepth[from] <= 0 ||
+          this._constellationDepth[to] <= 0
+        ) {
+          continue;
+        }
+        ctx.moveTo(
+          this._constellationScreenX[from],
+          this._constellationScreenY[from]
+        );
+        ctx.lineTo(
+          this._constellationScreenX[to],
+          this._constellationScreenY[to]
+        );
+        hasEdges = true;
+      }
+      if (hasEdges) ctx.stroke();
+    }
+
+    let hasDots = false;
+    ctx.fillStyle = PAL.B + "0.35)";
+    ctx.beginPath();
+    for (let index = 0; index < this._constellationCount; index++) {
+      if ((this._constellationDepth[index] > 0) !== front) continue;
+      const x = this._constellationScreenX[index];
+      const y = this._constellationScreenY[index];
+      const radius = this._constellationRadius[index];
+      ctx.moveTo(x + radius, y);
+      ctx.arc(x, y, radius, 0, TAU);
+      hasDots = true;
+    }
+    if (hasDots) ctx.fill();
   }
 
   _drawNebula(time, silhouetteRadius) {
@@ -2623,6 +2801,14 @@ export class VoiceOrb {
   dispose() {
     this._disposed = true;
     cancelAnimationFrame(this._raf);
+    if (this._constellationTimer) {
+      clearInterval(this._constellationTimer);
+      this._constellationTimer = 0;
+    }
+    if (this._constellationAbort) {
+      this._constellationAbort.abort();
+      this._constellationAbort = null;
+    }
     window.removeEventListener("resize", this._onResize);
     window.removeEventListener("pointermove", this._onMouse);
     window.removeEventListener("scroll", this._onScroll);

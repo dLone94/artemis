@@ -1,292 +1,39 @@
-# Plan Review Log: Fix narrate-don't-execute bug + custom "Hey Artemis" wake word
-Act 1 (grill) complete — plan locked with the user. MAX_ROUNDS=5.
+# PLAN-REVIEW-LOG — Vault + Constellation + MiniMax TTS + Offline Brain
 
-Reviewer model: config pinned `gpt-5.6-sol` was NOT supported on the ChatGPT account (400); overrode to `gpt-5.6-terra` (verified working via probe). Also cleared a stale `~/.codex/models_cache.json` (missing `supports_reasoning_summaries` field, incompatible with codex-cli 0.144.1).
+## Act 3 — Build
 
-## Round 1 — Codex (INCOMPLETE — usage limit)
-Codex began the review (read-only, ~22 file-reading steps) and emitted two partial findings, then the turn FAILED with: "You've hit your usage limit. Upgrade to Plus to continue using Codex … try again at Aug 23rd, 2026." No `VERDICT:` line was reached.
+### Round 1 — Codex build (thread 019fe2b3-a6a7-7042-8bd0-3f57f0b6587f, gpt-5.6-sol/ultra)
 
-Partial findings salvaged from the stream before it died:
-1. **Plan targets only one of two NVIDIA loops** — it patched the streaming `streamNvidia` path but not the non-streaming `callNvidia`/`callBrain` fallback; the bug would survive there.
-2. **The forced-tool retry can fire after streaming has already spoken the failed narration** — user hears "I'm on it", then also hears the real result (double-speak) or hears a wrong answer.
+Implemented all four PLAN.md tasks in one pass. Files: `obsidianVault.js` (new,
+468 lines), `skills.js` (+134), `toolRegistry.js` (+12), `untrusted.js` (+2
+taint entries), `server.js` (+450/−83), `public/voiceOrb.js` (+186),
+`package.json` (test script), three new test files (510 lines). Codex-reported
+deviations: no browser available for the screenshot proof; vault has 31
+graph-visible notes (not 36); MiniMax current docs omit `?GroupId=` but the
+frozen spec's contract was kept.
 
-### Claude's response
-Both findings judged valid and incorporated into `PLAN.md`:
-- Part 1 step 5 now mandates extracting the intent/force/backstop logic into a shared helper applied to **both** NVIDIA loops, with a test for the non-streaming path.
-- Part 1 step 4 now requires **suppressing narration TTS on actionable intents until the turn resolves** (buffer text; speak only the post-tool result or, for genuine chat, flush normally) — eliminating the double-speak / spoken-failure window.
-- Added risks: buffering latency tradeoff; and an explicit note that Act 2 did NOT complete a full adversarial pass (wake-word training feasibility + model-eval remain unreviewed by Codex).
+### Claude's verdict — APPROVED (no fix rounds needed)
 
-**Status after R1: Act 2 blocked by account usage limit; user chose self-review, then asked to retry Codex. Retried by RESUMING the same thread with model override `-m gpt-5.6-terra` — succeeded.**
+- Full diff read. Quality above expectation. Highlights beyond spec:
+  symlink-aware path confinement (realpath of nearest existing ancestor);
+  `wx` create-only writes everywhere; usage.json migration backfill for the
+  new `minimax` counter; `reasoning_effort: "none"` on the ollama tier
+  (kills the local reasoning-channel trap at the source); network-error
+  benching (`ECONNREFUSED` etc.) so an unreachable cloud brain fails over
+  instead of killing the turn — with the retry counter not consumed.
+- Two changes outside the plan's file list, both judged necessary and kept:
+  `untrusted.js` (vault reads must taint), `package.json` (test wiring).
+  One behavioral change flagged and accepted: Anthropic-path action turns now
+  route to the tool-capable model instead of the no-tools fast path — without
+  it, "note this down" could never fire `save_note` on that path.
+- Proofs (run by Claude, not trusted from the report): new tests 15/15;
+  full `npm test` + 19/19 eval selftest green; live `/api/vault/graph`
+  against the real vault returns 31 nodes / 132 edges, degree-sorted and
+  capped correctly.
+- Visual proof: headless capture only caught the boot screen; constellation
+  review deferred to the user on the live app (relaunched on this build).
+- MiniMax remains untested against the real API (no credentials in env yet) —
+  the provider is inert without `MINIMAX_API_KEY`+`MINIMAX_GROUP_ID` and its
+  request/fallback contract is mock-tested.
 
-## Round 2 — Codex (resume, COMPLETE) — VERDICT: REVISE
-Codex finished the review it couldn't complete in R1. Verified anchors and found substantial issues. Key findings:
-- **Root cause A (new):** `main.js:604` client-side ~1.2s timer speaks "On it"/"Let me check" independent of the backend — server fixes alone don't stop the false claim.
-- **Backstop bug:** forced retry executes tools but never appends tool-call/result nor requests a post-tool completion → email/search results silently discarded.
-- **Anchor corrections:** `callBrain` does not exist (1213 is `callLLM`); non-streaming has its own trigger (1154) + prompt assembly (1142); the 1790 Anthropic instruction is NOT dead (active when NVIDIA off); shared base prompt at 264. Confirmed correct: streamNvidia 1031, openish 1042, ACTION_PROMISE_RE 976-978, callNvidia 1141.
-- **Safety:** generic `tool_choice:required` can fire wrong tool / unconfirmed mutators; "calendar" intent has no backing tool.
-- **Robustness:** no AbortSignal/cancellation; one-retry under-specified vs multiple tool calls; fallback replays false-success prose; no test seam (`NVIDIA_BASE` hardcoded); no observability; client `handleOpenIntent` bypasses server policy.
-- **Wake word:** my "3.14 no wheels" premise wrong; real blocker is openWakeWord's legacy TF/torchaudio pins + CUDA/CPU-not-MPS; shape-match ≠ contract equivalence (mel norm, backbone version, score orientation, ONNX ops); 9/10 + ≤1/hr bar statistically weak (needs offline ROC scorer); Part 4 phrase locations corrected to main.js 1070/1095/1116; ship hashed model manifest + rollback.
-- **Part 2:** needs gold labels, repeated trials, red-team/prompt-injection corpus, wrong-tool/side-effect as release blockers.
-
-### Claude's response — revised PLAN.md
-Accepted nearly all findings. Rewrote: Part 0 (dedicated branch/worktree, don't grab-bag the audit commit); Part 1 now has 9 steps incl. kill the client filler + non-verbal pending (step 2), policy in shared base prompt 264 applied to both providers (3), registry-derived allowlisted forcing dropping calendar (4), backstop as a real tool round appending call+result+post-tool completion (5), mutator arg-validation via confirm-gate (6), execution budget + honest failure (7), AbortSignal (8), injectable endpoint + expanded tests (9), lightweight local observability (10). Part 2 given real eval criteria + red-team corpus (11). Part 3 leads with a pinned install/export **feasibility spike** (12), diverse data + CPU/remote budget (13), deployment-contract equivalence via Python-vs-browser fixture scoring (14), offline ROC validation (15). Part 4: hashed manifest, feature-flag rollback, corrected phrase anchors (16).
-**Right-sized (not adopted verbatim):** full production telemetry → local structured logging only (single-user app).
-
-## Round 3 — Codex (resume, COMPLETE) — VERDICT: REVISE
-No longer finding *wrong* things — demanding tighter implementation specs and forcing 3 architectural decisions left as "either/or". Material findings incorporated:
-- Streaming still could speak pre-repair narration (flush at 1131 before repair at 1133) → buffer ALL first-response tokens on executable turns until a valid tool call or final failure; discard on repair.
-- "Both providers" was prompt-text only → **decision: scope the reliability guarantee to the NVIDIA path**; Anthropic legacy (shared prompt only).
-- Client can't suppress filler without the server's decision → **`intent_pending` SSE event**, client silent when unknown; route `handleOpenIntent` through shared policy.
-- Recall-biased forcing acts on unresolved references → **three-way intent** (chat / needs_clarification / executable_action); force only executable.
-- No enforceable registry → **single `availableTools()`** driving advertised tools, capability, intent map, filtering, arg validation, auth (native tools inline in nvidiaTools 917; skills.js 428 static).
-- `runNvidiaTool` (937) records before validation; mutators unconfirmed → validate-before-record, effect/confirmation metadata, confirm-gate.
-- A valid tool call ≠ fulfilled action (error strings) → track **`requiredActionSatisfied`** separately.
-- `fetchWithTimeout` (340) overwrites signal → request-scoped controller composed with timeout.
-- `enqueueTts` (491) browser-only → extract pure TTS-policy module for tests.
-- Part 0 needs explicit file allowlist + clean `git diff --cached`.
-- Part 2 must be hermetic (fake tools + synthetic fixtures), versioned rubric, log effective config hash, canary = local opt-in flag.
-- Wake: versioned **`wakeProfile`** (startLocalWake ignores cfg); immutable bundles + atomic manifest + corrupt-asset rollback + verified-Jarvis-before-browser-fallback; event-level FAR + UCB gate; more phrase sites (main.js 1727/1728, .env.example 61); remote-training pivot = data-governance gate → local-only spike, explicit approval before any remote/audio transfer.
-
-### Claude's response — revised PLAN.md (implementation-ready)
-Made all three decisions (scope→NVIDIA; route handleOpenIntent through shared policy; local-only spike) and folded in the architectural backbone: `availableTools()` registry, `intent_pending` SSE, three-way intent, buffer-until-resolved, `requiredActionSatisfied`, validate-before-record, AbortSignal composition, pure TTS-policy module, `wakeProfile` + hashed bundles + rollback, hermetic Part 2. 
-
-**Arbiter judgment:** R1→R3 moved from structural bugs → deep implementation specs. The hard design decisions are now settled; remaining Codex asks are increasingly implementation-detail that TDD surfaces naturally. Pausing the loop at R3 (of MAX 5) to return to the user rather than spend more limited Codex quota chasing spec-completeness. Not faking APPROVED — this is a deliberate arbiter call to ship-review.
-
-## Act 3 — Build (2026-07-26)
-
-Codex built; Claude specified and verified. Thread `019f9b1f-378b-79d1-a695-2c50a46f014d`.
-
-### Round 1 — Codex build
-Implemented `docs/superpowers/specs/2026-07-26-whatsapp-unread-design.md` in full:
-`macMessages.js`, `check_messages`, registry `messages` family, untrusted
-wrapping, `test/messages.test.mjs`. Reported `npm test` fully green, no deviations.
-
-### Claude's verdict — REJECTED
-The report was accurate and the feature was broken. Every shell command sits
-behind an injected runner, so the suite passed while `recentNotifications()`
-failed on every input. Measured against the real Notification Centre DB:
-`.backup` produced a 3,551,232-byte file that plain sqlite3 could not reopen
-(`unable to open database file (14)`); `VACUUM INTO` produced 1,138,688 bytes
-and queried fine. The `plutil` extraction had therefore never executed at all.
-Dock badge reading was correct throughout, and honest degradation held — it
-reported "count available, details unreadable" rather than "no messages".
-
-### Round 2 — Codex fix
-Switched the snapshot to `VACUUM INTO`, verified the plist extraction against
-real rows, and added a live-system integration test that skips cleanly without
-Full Disk Access and asserts the privacy boundary on the real database.
-
-### Claude's verdict — ACCEPTED
-Verified independently, not from the report: 7 Mail rows and 1 Viber row parse
-with sender/preview/date; WhatsApp correctly reports 0; distinct bundle ids
-return distinct results. Full suite 9/9, including
-`live Notification Centre snapshot parsed 7 filtered row(s); 28 other-app
-row(s) stayed private`. One deviation from the spec (`VACUUM INTO` rather than a
-plain copy) is an improvement over what was specified.
-
-Lesson recorded: a test suite that stubs every side effect proves the logic and
-nothing about the integration. Real-system checks that skip cleanly are worth
-their weight.
-
-## Act 3 — Build (HUD completion, 2026-07-27)
-
-### Round 1 — Codex build (thread 019fa491-6cca-7892-a887-65e87ddaee98, gpt-5.6-sol)
-Implemented the spec's open items: full amber→cyan sweep with orbShared.PAL as
-the single source of truth; tool orb (SSE `tool` event, additive onToolStart/
-onToolEnd callbacks in the streaming loop); density styling; telemetry and
-tool-events test suites wired into npm test.
-
-### Claude's verdict
-Diff read in full. server.js changes are additive as required — no-op default
-callback, end event gated on state.calls advancing, family attached server-side
-from the registry. Orb diffs are colour-only. Client tool ring is race-safe and
-visibility-aware. Sweep grep clean. Two out-of-spec scaffolding files
-(PRODUCT.md, .impeccable/) from Codex's UI plugin were removed. Proof re-run by
-Claude: 11 suites + 19/19 eval, all green. PASSED — one round, no fixes needed.
-
-### Round 2 — Codex build: arc-reactor orb (single file, voiceOrb.js)
-Replaced the soft sphere with the user-chosen arc-reactor core: hard bright
-disc + reticle, four precomputed segmented bands (two counter-rotating),
-72-tick scale, thinking scanner, eased state mixes, frame-rate-independent
-phases. Outer 3D rings/satellites and the public API untouched.
-
-### Claude's verdict
-Diff read in full: helper signatures match orbShared exports; no per-frame
-allocations (bands precomputed at module scope); old equalizer/wireframe
-globe removed with the blob as intended; one sensible deviation — the old
-always-on flat scanner was removed in favour of the thinking-only scanner,
-which matches the spec's state table better than keeping both. Proof re-run:
-node --check clean, 11 suites + 19/19 eval green. Verified visually in the
-app. PASSED — one round.
-
-### Round 3 — Codex resume: continuous-motion pass (voiceOrb.js only)
-All 8 Rev-3 motion systems: velocity-wave engines per band (band 2 reverses),
-morphing segment endpoints, comet heads with trails, always-on radar +
-thinking counter-sweep, 72-tick marquee, rotating hex reticle + plasma core,
-idle sonar pings, eased state modulation + shockwaves. Ripples moved to a
-fixed pool; central stroke calls DOWN vs Rev 2 (~89 vs ~116).
-
-### Claude's verdict
-Diff audited: all pools/typed arrays allocated in the constructor, hot loop
-allocation-free; public API surface unchanged; node --check clean; 11 suites
-+ 19/19 eval green. Motion empirically confirmed: orb-region hashes of three
-frames 1.5 s apart all differ. Awaiting user verdict on the look before
-commit.
-
-### Round 4 — Codex build: The Artemis System (full hero redesign)
-1,404-dot two-tone particle globe (7 lat / 11 long wires, 28 s tilted spin,
-twinkle, halo pool), voice surface waves, thinking dissolve/reform, six
-agent moons with idle orbits and tool-event-driven ignite/tether/settle.
-Reactor and legacy rings/satellites removed. main.js: one forwarding line.
-
-### Claude's verdict
-main.js diff is exactly the one authorized line; orbShared adds V + moon
-tones only; API surface intact with additive toolEvent() carrying full
-input guards; hot loop allocation-free (verified by scan). Proof re-run:
-both syntax checks + 11 suites + 19/19 eval green. Motion confirmed by
-frame differencing. Visual verified in-app: globe + 6 labelled moons
-(FINANCE gold, MESSAGES green, MEMORY ice, MEDIA lavender) all present.
-Awaiting user verdict before commit.
-
-### Round 5 — Codex build: delete_email (trash-only, confirm-always)
-gmail.modify scope + trashMessage (403→needsReauth), numbered-list-only
-deletion with named confirmation, per-email honest results, registry
-mutation entry, 6-case suite. Bonus: selection pinned at confirm time
-(TOCTOU guard — list changes between confirm and yes → refuse and re-ask).
-
-### Claude's verdict
-Banned APIs verified absent (no batchDelete, no DELETE method); trash
-endpoint only; scope comment honest; confirm:"always" in registry; suite +
-full chain green (12 suites + 19/19 eval). PASSED — one round.
-
-### Round 6 — Codex build: daily_brief (Chief-of-Staff brief)
-/api/brief with parallel 4s-bounded sources and honest omissions,
-daily_brief skill + briefing intent routing, once-per-day offer riding the
-existing briefing card, 5-case suite. Three reported deviations, all
-reasonable: offer ties to the boot gesture; sender-cap honesty ("at least
-10"); brief length bounded by the news summary's existing 70-word cap.
-
-### Claude's verdict
-13 suites + 19/19 eval green on my re-run. Live endpoint verified: 4
-ordered sections, sourced+dated FX figure, cold news cache → honest
-clause. PASSED — one round.
-
-### Round 7 — Codex build: conversation mode (wake once, keep talking)
-waitForSpeechMs additive VAD deadline (2-line engine change), pure
-isClosingPhrase + persisted toggle seam, shared dispatchUtterance, guarded
-generation-tracked follow-up loop, dock toggle, pure-logic suite.
-
-### Claude's verdict
-wakeLocal diff verified minimal/additive; matcher whole-utterance only;
-follow-up loop guards (wake/hidden/busy/toggle/generation) traced; 16
-suites + 19/19 eval green on my re-run. PASSED — one round.
-
-### Round 8 — Codex review-then-build: follow-up tracker + nudge_email
-Codex's pre-build audit corrected my spec on real issues: gmail.modify
-technically permits send (boundary = no send/draft code path, test-enforced),
-compose-URL exfiltration closed (model supplies only list+number; recipient
-from strict headers only, fail-closed parsing), /api/confirm previously
-DROPPED client actions (fixed narrowly), routing split followups vs
-followups_nudge below email_delete priority.
-
-### Claude's verdict
-Re-ran proofs: 16 suites + 19/19 eval. Spot-checks: no send/draft endpoint
-(the 2 grep hits are comments/negative assertions), tainted-open guard holds,
-confirm flow passes clientActions through dropTaintedOpens. PASSED.
-
-### Round 9 — Codex review-then-build: Money School + Money Map
-Pre-build audit again earned its keep: split always-confirmed
-update_money_map out of money_map (registry confirm is tool-wide), moved
-map math to BigInt canonical-integer arithmetic (no float money), made
-Stage-3 an honest capped sidecar (killed my uncomputable "amount left"
-claim), advisor framing enforced in CODE on every path, and no product
-names/promises anywhere in the curriculum.
-
-### Claude's verdict
-17 suites + 19/19 eval green on my re-run. Spot-checks: zero
-tickers/brands in the curriculum, advisor line present in code, routing
-correct for school/map/map_update including definition-shaped questions.
-PASSED — one round.
-
-### Round 10 — Codex review-then-build: opportunity_radar + update_radar_themes
-Pre-build audit hardened the spec substantially: scraped text (titles,
-snippets, hostnames, numbers) fully excluded from speech/persistence —
-findings use code-owned wording with opaque source ordinals; run/replay
-derived from registry patterns and dispatched before any LLM; theme
-confirmation upgraded to a prepared→approved→consumed capability flow;
-staleness distinguishes missing vs corrupt state; atomic mutation with
-revision snapshots.
-
-### Claude's verdict
-18 suites + 19/19 eval green on my re-run. PASSED — one round.
-
-### Round 11 — Codex review-then-build: meeting_capture
-Audit produced a full interleaving table (wake/follow-up/TTS/mic-tap/
-visibility/deadline vs capture) and the build implements ownership
-generations across the voice pipeline; engine diff is a generation-guarded
-mic lifecycle (closes an open-mic leak race), no new audio plumbing.
-
-### Claude's verdict
-19 suites + 19/19 eval green on my re-run; engine diff read (81 lines,
-all lifecycle guards); no model-visible recording tool; audio never
-persisted. PASSED — one round.
-
-### Round 12 — Triple-check (Claude solo: Codex quota exhausted until Aug 5)
-Codex's joint pass died on its ChatGPT usage limit, so the cross-skill
-audit ran Claude-side: routing probe 20/20 utterances → expected families
-(incl. ambiguous/negative cases); confirm gate verified single-use with
-5-min expiry and prepared→approved capability handshake (consumePending,
-skills.js:4238) — one pending's yes structurally cannot fire another;
-untrusted wrap sites present on all mail/web/transcript seams (untrusted
-suite green); shared .data stores go through the mutation seam; voice
-pipeline post-meeting verified via followup+meeting suites. Floor: 19
-suites + 19/19 eval. VERDICT: PASS. A Codex re-audit is worth running
-when quota resets.
-
-## Act 3 — Build (Reactor Core orb, 2026-08-01)
-
-### Round 1 — Codex build (thread 019fbc3f-558b-7f83-959a-8f32d1591dc2)
-Codex (gpt-5.6-sol, ultra) implemented Tasks 1-4 of docs/superpowers/plans/2026-08-01-reactor-orb.md:
-screenshot harness + __voiceOrb handle, Earth-era strip (2996 → ~1324 lines), STATE_COLORS palette
-engine with per-state cached reactor sprites, _drawCore with crossfaded halo/disc + coil ring.
-Process was killed mid-Task-5; no final report emitted. Tree left uncommitted as instructed.
-
-### Claude's verdict
-Tasks 1-4 verified: syntax clean, npm test 19/19 green, code follows house conventions
-(sprite caching, no frame-loop allocation, reduced-motion gates). Takeover invoked per skill
-rule rather than resuming the killed run.
-
-### Round 2 — Claude takeover (Tasks 5-7)
-Implemented _drawInstrumentRings (5+8 segmented rings, per-state tick sprites crossfaded via
-_coreSpriteWeights, tool-call sweep wired from toolEvent start phase), _drawGimbal (two tilted
-precessing rings, back/front passes, hologram shimmer), moon HUD restyle (bracket-diamond
-markers, gold-while-running + blink, hairline orbits at 40% alpha, dimmed labels). Deleted
-_drawLimb/makeLimbSprite/ATMOSPHERE_SPRITE_SIZE. Deviation from plan: tick sprites built once
-in constructor at fixed 512px (scaled at draw) instead of rebuilt per resize — simpler and
-matches the makeReactorSprite convention.
-
-### Proof
-npm test: 19/19 PASS. Dead-code sweep clean (no EARTH/_dot/plexus/nebula/Cage/limb refs).
-Screenshots: artifacts/orb-final-{idle,listening,thinking,speaking}.png — idle/listening cyan,
-thinking gold, speaking white-hot; gimbal + rings + HUD moons render in all four.
 Awaiting human diff sign-off before commit.
-
-## Act 3 — Build (Dictate Mode v1, 2026-08-02)
-
-### Round 1 — Codex build (thread 019fc326-166f-7863-b2ee-63853e27e071)
-Codex (gpt-5.6-sol, ultra) implemented all three plan tasks over ~3h:
-server encoding passthrough (pure deepgramLivePath helper + allowlist 400),
-DictationController.swift (870 lines: fn hold monitor, AVAudioEngine→16k PCM,
-chunked HTTP streaming, SSE assembly, pasteboard-swap ⌘V insertion with
-guarded restore, non-activating HUD panel), AppDelegate wiring, mic usage
-string, stt-params test added to the suite. Run stalled ~20min in final
-report generation after an internal standards-review subagent; killed after
-work was verified complete on disk. No commits made (as instructed).
-
-### Claude's verdict
-Full diff read. Quality high: generation-guarded async lifecycle, clipboard
-restore gated on changeCount AND content, CGPreflightPostEventAccess before
-synthesizing ⌘V with honest "⌘V to paste" fallback, panel can't become key.
-Deviation (approved): auth cookie sent even on loopback to cover
-ARTEMIS_HOST-exposed listeners. Proofs re-run by Claude: app/build.sh
-compiles (one deprecation warning), npm test 19/19 green.

@@ -32,7 +32,9 @@ export const MAIL_UNTRUSTED_SKILLS = new Set([
   "daily_brief",
   "read_email",
   "check_messages",
-  "meeting_notes"
+  "meeting_notes",
+  "search_notes",
+  "read_note"
 ]);
 
 // Skills whose output feeds text controlled by somebody outside this process
