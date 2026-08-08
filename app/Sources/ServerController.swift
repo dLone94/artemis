@@ -67,10 +67,17 @@ final class ServerController {
             // files on disk look right — which made "it's fixed now" wrong twice
             // in one session. The server reports when it started and how new its
             // files were; if it predates them, treat it as unusable.
-            if let code = json["code"] as? [String: Any],
-               let started = code["startedMs"] as? Double,
-               let newest = code["newestFileMs"] as? Double,
-               started < newest {
+            guard let code = json["code"] as? [String: Any],
+                  let started = code["startedMs"] as? Double,
+                  let newest = code["newestFileMs"] as? Double else {
+                // No version handshake at all: the server predates the
+                // handshake itself, so it is running old code by definition.
+                // Attaching anyway made dictation stream raw PCM to a server
+                // that ignored the encoding parameters — silent empty result.
+                result = .stale
+                return
+            }
+            if started < newest {
                 result = .stale
                 return
             }
