@@ -33,11 +33,17 @@ import {
 } from "./moneyLedger.js";
 import {
   STARTER_TEMPLATE,
+  addExtraSet,
+  advanceExercise,
   applySet,
   applyTemplateEdit,
   canonicalExercise,
   consistency,
+  finishSession,
+  noteSetLogged,
   normalizeGymLog,
+  sessionState,
+  startSession,
   progress,
   spokenKg,
   validateSet
@@ -2828,6 +2834,7 @@ async function executeLedgerUpdate(params, ctx) {
 
 const confirmedGymSets = new WeakMap();
 const confirmedTemplateEdits = new WeakMap();
+const confirmedWorkoutFinishes = new WeakMap();
 
 function gymFailure(summary, content = summary) {
   return { ok: false, summary, content };
@@ -2936,7 +2943,10 @@ async function executeGymSet(params, ctx) {
   }
 
   const updated = applySet(log, validation, now.toISOString());
-  await ctx.writeJson("gym-log.json", updated);
+  // A live session rides the same document: a matching set starts the rest
+  // window and advances the exercise once targets are met. No session, no-op.
+  const withSession = noteSetLogged(updated, validation.set.exerciseSlug, now.toISOString());
+  await ctx.writeJson("gym-log.json", withSession);
   const set = validation.set;
   const summary =
     `Recorded ${set.exerciseName}, ${spokenKg(set.weightGrams)}, ` +
@@ -4046,6 +4056,157 @@ const SKILLS = [
     },
     async execute(params, ctx = skillCtx) {
       return executeTemplateEdit(params, ctx);
+    }
+  },
+  {
+    name: "gym_session",
+    description:
+      "Drive the live workout session: start, next, skip, add_set, or status. " +
+      "Direct-dispatch only — the server derives the action from the user's phrase.",
+    requiresConfirmation: false,
+    paramSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["start", "next", "skip", "add_set", "status"],
+          description: "The code-derived session action."
+        }
+      },
+      required: ["action"],
+      additionalProperties: false
+    },
+    async execute(params, ctx = skillCtx) {
+      const action = params && params.action;
+      if (!["start", "next", "skip", "add_set", "status"].includes(action)) {
+        return { ok: false, summary: "That isn't a live-workout action." };
+      }
+      const log = normalizeGymLog(await ctx.readJson("gym-log.json", null));
+      const now = gymClock(ctx);
+      const nowIso = now.toISOString();
+
+      const speakPosition = (state) => {
+        if (!state) return "no workout running — say start workout";
+        if (state.done) return "That was the last exercise — say finish workout when you're ready.";
+        const ex = state.exercise;
+        let line =
+          `${ex.name}, set ${state.setsLoggedThisExercise + 1} of ${ex.targetSets}, ` +
+          `${ex.targetReps} reps`;
+        if (state.lastTime) {
+          line += `. Last time: ${spokenKg(state.lastTime.weightGrams)} for ${state.lastTime.reps}`;
+        }
+        if (state.upNext) line += `. Up next: ${state.upNext.name}`;
+        return line + ".";
+      };
+
+      if (action === "start") {
+        const started = startSession(log, undefined, nowIso);
+        if (started.ok === false) return { ok: false, summary: started.message };
+        await ctx.writeJson("gym-log.json", started);
+        const state = sessionState(started, nowIso);
+        return {
+          ok: true,
+          summary: `Workout started — ${speakPosition(state)}`,
+          panel: { title: "WORKOUT · LIVE", lines: [state.exercise.name] }
+        };
+      }
+      if (action === "status") {
+        const state = sessionState(log, nowIso);
+        if (!state) return { ok: false, summary: "no workout running — say start workout" };
+        if (state.restRemainingSeconds !== null && !state.done) {
+          return {
+            ok: true,
+            summary:
+              `${state.restRemainingSeconds} seconds of rest left, then ` +
+              `${state.exercise.name.toLowerCase()} set ${state.setsLoggedThisExercise + 1}.`
+          };
+        }
+        return { ok: true, summary: speakPosition(state) };
+      }
+      if (action === "add_set") {
+        const updated = addExtraSet(log);
+        if (updated.ok === false) return { ok: false, summary: updated.message };
+        await ctx.writeJson("gym-log.json", updated);
+        const state = sessionState(updated, nowIso);
+        return {
+          ok: true,
+          summary:
+            `One more ${state.exercise.name.toLowerCase()} set — ` +
+            `${state.exercise.targetSets} total now.`
+        };
+      }
+      // next and skip share semantics; the word choice is the user's.
+      const advanced = advanceExercise(log, { skip: action === "skip" });
+      if (advanced.ok === false) return { ok: false, summary: advanced.message };
+      await ctx.writeJson("gym-log.json", advanced);
+      const state = sessionState(advanced, nowIso);
+      return {
+        ok: true,
+        summary: state.done
+          ? "That was the last exercise — say finish workout when you're ready."
+          : `Next: ${speakPosition(state)}`
+      };
+    }
+  },
+  {
+    name: "finish_workout",
+    description:
+      "Close the live workout session. Always confirmed with the exercise count, " +
+      "set count, and duration before anything is written.",
+    requiresConfirmation: true,
+    paramSchema: {
+      type: "object",
+      properties: {
+        raw_answer: {
+          type: "string",
+          minLength: 1,
+          maxLength: 500,
+          description: "The user's original spoken finish request."
+        }
+      },
+      required: ["raw_answer"],
+      additionalProperties: false
+    },
+    confirmPrompt(params) {
+      const snapshot =
+        params && typeof params === "object" ? confirmedWorkoutFinishes.get(params) : null;
+      if (!snapshot) return "Finish the workout?";
+      const s = snapshot.summary;
+      return (
+        `Finish workout — ${s.exercises} exercise${s.exercises === 1 ? "" : "s"}, ` +
+        `${s.sets} set${s.sets === 1 ? "" : "s"}, ${s.minutes} minutes?`
+      );
+    },
+    async precheck(params, ctx = skillCtx) {
+      const log = normalizeGymLog(await ctx.readJson("gym-log.json", null));
+      const nowIso = gymClock(ctx).toISOString();
+      const finished = finishSession(log, nowIso);
+      if (finished.ok === false) return { ok: false, message: finished.message };
+      confirmedWorkoutFinishes.set(params, {
+        revision: log.revision,
+        summary: finished.summary
+      });
+      return { ok: true };
+    },
+    async execute(params, ctx = skillCtx) {
+      const snapshot =
+        params && typeof params === "object" ? confirmedWorkoutFinishes.get(params) : null;
+      const log = normalizeGymLog(await ctx.readJson("gym-log.json", null));
+      if (!snapshot || log.revision !== snapshot.revision) {
+        return gymFailure("The gym log changed before you confirmed, so nothing changed.");
+      }
+      const nowIso = gymClock(ctx).toISOString();
+      const finished = finishSession(log, nowIso);
+      if (finished.ok === false) return { ok: false, summary: finished.message };
+      await ctx.writeJson("gym-log.json", finished.log);
+      const s = finished.summary;
+      return {
+        ok: true,
+        summary:
+          `Workout finished — ${s.exercises} exercise${s.exercises === 1 ? "" : "s"}, ` +
+          `${s.sets} set${s.sets === 1 ? "" : "s"} in ${s.minutes} minutes. Well done.`,
+        panel: { title: "WORKOUT · DONE", lines: [`${s.sets} sets · ${s.minutes} min`] }
+      };
     }
   },
   {

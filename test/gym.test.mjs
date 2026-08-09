@@ -543,9 +543,11 @@ test("gym phrases route to one exact tool without catching safety conversations"
     assert.equal(classifyIntent(phrase, {}).intent, "chat", phrase);
   }
 
+  // gym_session is direct-dispatch-only and must stay OUT of provider defs;
+  // finish_workout is a normal confirm-gated tool and must appear.
   assert.deepEqual(
     toolDefsForFamily({}, "gym").map((definition) => definition.function.name),
-    ["log_set", "gym_status", "update_template"]
+    ["log_set", "gym_status", "update_template", "finish_workout"]
   );
   assert.deepEqual(
     {
@@ -664,4 +666,82 @@ test("skip, last-exercise refusal, and the confirmed finish summary are exact", 
   const noSession = finishSession(gymFixture(), T0);
   assert.equal(noSession.ok, false);
   assert.match(noSession.message, /no workout running/);
+});
+
+const { gymSessionActionForText } = await import("../toolRegistry.js");
+
+test("session verbs derive code-owned actions and route as direct-dispatch gym_session", () => {
+  for (const [phrase, action] of [
+    ["start my workout", "start"],
+    ["let's train", "start"],
+    ["next exercise", "next"],
+    ["skip this one", "skip"],
+    ["add another set", "add_set"],
+    ["how long left", "status"],
+    ["where are we", "status"]
+  ]) {
+    assert.equal(gymSessionActionForText(phrase), action, phrase);
+    const intent = classifyIntent(phrase, {});
+    assert.deepEqual(intent.expected, ["gym_session"], phrase);
+    assert.equal(intent.gymSessionAction, action, phrase);
+  }
+  assert.equal(gymSessionActionForText("skip it"), null, "bare 'skip it' stays conversational");
+  assert.deepEqual(classifyIntent("finish the workout", {}).expected, ["finish_workout"]);
+  assert.equal(classifyIntent("I skipped dessert", {}).intent, "chat");
+});
+
+test("gym_session speaks positions, refuses without a session, and finish confirms with counts", async () => {
+  const files = new Map();
+  const clock = { value: Date.parse("2026-08-10T17:00:00.000Z") };
+  const ctx = {
+    readJson: async (name, fallback) => files.has(name) ? structuredClone(files.get(name)) : fallback,
+    writeJson: async (name, value) => { files.set(name, structuredClone(value)); },
+    appendAction: async () => {},
+    now: () => new Date(clock.value)
+  };
+  const session = getSkill("gym_session");
+
+  const noSession = await session.execute({ action: "status" }, ctx);
+  assert.equal(noSession.ok, false);
+  assert.match(noSession.summary, /no workout running — say start workout/);
+
+  const started = await session.execute({ action: "start" }, ctx);
+  assert.equal(started.ok, true);
+  assert.match(started.summary, /Workout started — Squat, set 1 of 3, 8 reps/);
+
+  // A confirmed log_set drives the session: rest window + counts move.
+  const logSet = getSkill("log_set");
+  const params = {
+    exercise: "squat", weight_value: "80", unit: "kg", reps: 8,
+    raw_answer: "squat eighty kilos eight reps"
+  };
+  await precheckSkill("log_set", params, ctx);
+  const saved = await logSet.execute(params, ctx);
+  assert.equal(saved.ok, true);
+  clock.value += 30 * 1000;
+  const resting = await session.execute({ action: "status" }, ctx);
+  assert.match(resting.summary, /60 seconds of rest left, then squat set 2\./);
+
+  const extra = await session.execute({ action: "add_set" }, ctx);
+  assert.match(extra.summary, /One more squat set — 4 total now\./);
+
+  const skipped = await session.execute({ action: "skip" }, ctx);
+  assert.match(skipped.summary, /Next: Bench press, set 1 of 3/);
+
+  const finish = getSkill("finish_workout");
+  const finishParams = { raw_answer: "finish workout" };
+  clock.value += 40 * 60 * 1000;
+  const pre = await precheckSkill("finish_workout", finishParams, ctx);
+  assert.equal(pre.ok, true);
+  assert.match(
+    confirmPromptFor("finish_workout", finishParams),
+    /Finish workout — 1 exercise, 1 set, 40 minutes\?/
+  );
+  const done = await finish.execute(finishParams, ctx);
+  assert.equal(done.ok, true);
+  assert.match(done.summary, /Workout finished — 1 exercise, 1 set in 40 minutes/);
+  assert.equal(files.get("gym-log.json").session, undefined, "session cleared after finish");
+
+  const statusAfter = await session.execute({ action: "status" }, ctx);
+  assert.equal(statusAfter.ok, false, "no session after finishing");
 });

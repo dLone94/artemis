@@ -83,6 +83,7 @@ import {
   saveMeetingTranscript
 } from "./meeting.js";
 import { cappedGraph, vaultAvailable, writeMeetingNote } from "./obsidianVault.js";
+import { normalizeGymLog, sessionState } from "./gymLog.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -1710,7 +1711,7 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
 // its modules in memory, so the only honest way to know what is running is to
 // have the running process say so. The app compares this against disk and
 // refuses to attach to a server that is behind.
-const CODE_FILES = ["server.js", "meeting.js", "skills.js", "gmail.js", "toolRegistry.js", "whatsapp.js", "finance.js", "macMessages.js", "untrusted.js", "obsidianVault.js"];
+const CODE_FILES = ["server.js", "meeting.js", "skills.js", "gmail.js", "toolRegistry.js", "whatsapp.js", "finance.js", "macMessages.js", "untrusted.js", "obsidianVault.js", "moneyLedger.js", "gymLog.js"];
 const PROCESS_STARTED_MS = Date.now();
 
 // Static HTML stamps must change when browser code changes, without folding
@@ -2281,6 +2282,58 @@ function opportunityRadarIntent(messages) {
   return intent;
 }
 
+// Live-workout verbs are deterministic bookkeeping: the phrase already chose
+// the action (registry-derived), so the turn skips the model entirely — at
+// the squat rack, "next exercise" answering in 30ms instead of 3s is the
+// difference between a coach and a chatbot.
+function gymSessionIntent(messages) {
+  const intent = classifyIntent(lastUserText(messages), currentCaps(), messages);
+  if (
+    intent.intent !== "executable_action" ||
+    intent.family !== "gym" ||
+    !intent.expected.includes("gym_session") ||
+    !["start", "next", "skip", "add_set", "status"].includes(intent.gymSessionAction)
+  ) {
+    return null;
+  }
+  return intent;
+}
+
+async function dispatchGymSession(messages, opts = {}) {
+  const intent = opts.intent || gymSessionIntent(messages);
+  if (!intent) return null;
+  const skill = getSkill("gym_session");
+  if (!skill) return null;
+  const params = { action: intent.gymSessionAction };
+  let result;
+  if (FAKE_TOOLS) {
+    const synthetic = fakeToolResult("gym_session", params);
+    result = { ok: synthetic.ok, summary: synthetic.content };
+  } else {
+    result = await skill.execute(params, skillCtx);
+    try {
+      await skillCtx.appendAction({
+        skill: "gym_session",
+        params,
+        result: { ok: result.ok, summary: result.summary }
+      });
+    } catch (error) {
+      console.error("gym session action log error:", error.message);
+    }
+  }
+  const clientActions = [];
+  if (result.panel) clientActions.push({ type: "panel", card: result.panel });
+  return {
+    ok: result.ok !== false,
+    reply: result.summary,
+    sources: [],
+    clientActions,
+    toolsUsed: ["gym_session"],
+    intent: intent.intent,
+    mailUntrusted: false
+  };
+}
+
 async function dispatchOpportunityRadar(messages, opts = {}) {
   const intent = opts.intent || opportunityRadarIntent(messages);
   if (!intent) return null;
@@ -2796,6 +2849,25 @@ async function handleRequest(req, res) {
     }
     res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
     res.end(LOGIN_PAGE);
+    return;
+  }
+
+  if (url.pathname === "/gym" && req.method === "GET") {
+    res.writeHead(302, { Location: "/gym.html" });
+    res.end();
+    return;
+  }
+
+  if (url.pathname === "/api/gym/session" && req.method === "GET") {
+    let state = null;
+    try {
+      const log = normalizeGymLog(await skillCtx.readJson("gym-log.json", null));
+      state = sessionState(log, new Date().toISOString());
+    } catch (error) {
+      console.error("[gym] session read failed:", error.message);
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(state || {}));
     return;
   }
 
@@ -3432,6 +3504,32 @@ async function handleRequest(req, res) {
     }
     const radarIntent = opportunityRadarIntent(messages);
     const notesIntent = meetingNotesIntent(messages);
+    const gymIntent = gymSessionIntent(messages);
+    if (gymIntent) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const send = (ev, data) => {
+        try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
+      };
+      send("intent_pending", { intent: gymIntent.intent, family: "gym" });
+      send("tool", { name: "gym_session", family: "gym", phase: "start" });
+      const directGym = await dispatchGymSession(messages, { intent: gymIntent });
+      send("tool", { name: "gym_session", family: "gym", phase: "end", ok: directGym.ok });
+      send("token", { t: directGym.reply });
+      send("done", {
+        sources: [],
+        model: "local-code",
+        clientActions: directGym.clientActions,
+        toolsUsed: directGym.toolsUsed,
+        intent: directGym.intent,
+        mailUntrusted: false
+      });
+      try { res.end(); } catch (e) {}
+      return;
+    }
     if (!radarIntent && !notesIntent && !anthropicApiKey && !nvidiaActive) {
       res.writeHead(503, { "Content-Type": "application/json" });
       res.end(JSON.stringify({

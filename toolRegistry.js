@@ -64,6 +64,10 @@ const META = {
   log_set:         { family: "gym",      effect: "mutation", confirm: "always" },
   gym_status:      { family: "gym",      effect: "read" },
   update_template: { family: "gym",      effect: "mutation", confirm: "always" },
+  // Session verbs are frictionless bookkeeping (never a stored set) and
+  // direct-dispatch-only: the server derives the action from the phrase.
+  gym_session:     { family: "gym",      effect: "mutation", directOnly: true },
+  finish_workout:  { family: "gym",      effect: "mutation", confirm: "always" },
   open_url:        { family: "navigate", effect: "client" },
   play_media:      { family: "media",    effect: "client" },
   search_notes:    { family: "vault",    effect: "read",     requires: "vault", forceFamilies: ["vault_read"] },
@@ -332,8 +336,46 @@ const GYM_TEMPLATE_PATTERN = new RegExp(
     String.raw`\s*$`,
   "i"
 );
+// Live-session verbs are code-owned like the radar's run/replay: the phrase
+// decides the action, the model never picks. Every pattern is anchored and
+// gym-scoped or session-scoped so bare conversation ("skip it") stays chat —
+// and the skill's own no-session precheck backstops anything that slips by.
+const GYM_SESSION_START_PATTERN =
+  /^\s*(?:please\s+)?(?:start|begin)\s+(?:(?:my|the|a)\s+)?workout\b|^\s*let'?s\s+train\b/i;
+const GYM_SESSION_NEXT_PATTERN =
+  /^\s*next\s+exercise\b|^\s*done\s+with\s+(?:this|that|these)\s*(?:one|exercise)?\b/i;
+const GYM_SESSION_SKIP_PATTERN =
+  /^\s*skip\s+(?:(?:this|that|the)\s+)?(?:one|exercise)\b/i;
+const GYM_SESSION_ADD_PATTERN =
+  /^\s*add\s+(?:another|an\s+extra|one\s+more)\s+set\b/i;
+const GYM_SESSION_STATUS_PATTERN =
+  /^\s*how\s+long\s+left\b|^\s*how\s+much\s+(?:rest|longer)\b|^\s*where\s+are\s+we\b/i;
+const GYM_FINISH_PATTERN =
+  /^\s*(?:please\s+)?(?:finish|end)\s+(?:(?:the|my)\s+)?workout\b|^\s*we'?re\s+done\s+(?:training|working\s+out)\b/i;
+const GYM_SESSION_PATTERN = new RegExp(
+  [
+    GYM_SESSION_START_PATTERN,
+    GYM_SESSION_NEXT_PATTERN,
+    GYM_SESSION_SKIP_PATTERN,
+    GYM_SESSION_ADD_PATTERN,
+    GYM_SESSION_STATUS_PATTERN
+  ].map((pattern) => pattern.source).join("|"),
+  "i"
+);
+
+export function gymSessionActionForText(text) {
+  const value = String(text || "");
+  if (GYM_SESSION_START_PATTERN.test(value)) return "start";
+  if (GYM_SESSION_NEXT_PATTERN.test(value)) return "next";
+  if (GYM_SESSION_SKIP_PATTERN.test(value)) return "skip";
+  if (GYM_SESSION_ADD_PATTERN.test(value)) return "add_set";
+  if (GYM_SESSION_STATUS_PATTERN.test(value)) return "status";
+  return null;
+}
+
 const GYM_PATTERN = new RegExp(
-  `${GYM_LOG_PATTERN.source}|${GYM_STATUS_PATTERN.source}|${GYM_TEMPLATE_PATTERN.source}`,
+  `${GYM_LOG_PATTERN.source}|${GYM_STATUS_PATTERN.source}|${GYM_TEMPLATE_PATTERN.source}` +
+    `|${GYM_SESSION_PATTERN.source}|${GYM_FINISH_PATTERN.source}`,
   "i"
 );
 
@@ -633,11 +675,15 @@ export function classifyIntent(text, caps = {}, history = []) {
     expectedTools = expectedTools.filter((tool) => tool.name === requestedTool);
   }
   if (matched === "gym") {
-    const requestedTool = GYM_STATUS_PATTERN.test(s)
-      ? "gym_status"
-      : GYM_TEMPLATE_PATTERN.test(s)
-        ? "update_template"
-        : "log_set";
+    const requestedTool = GYM_FINISH_PATTERN.test(s)
+      ? "finish_workout"
+      : GYM_SESSION_PATTERN.test(s)
+        ? "gym_session"
+        : GYM_STATUS_PATTERN.test(s)
+          ? "gym_status"
+          : GYM_TEMPLATE_PATTERN.test(s)
+            ? "update_template"
+            : "log_set";
     expectedTools = expectedTools.filter((tool) => tool.name === requestedTool);
   }
   const expected = expectedTools.map((t) => t.name);
@@ -649,12 +695,16 @@ export function classifyIntent(text, caps = {}, history = []) {
     return { intent: "needs_clarification", family: matched, expected, mutations, reason: "pronoun with no referent in context" };
   }
   const radarAction = matched === "radar" ? radarActionForText(s) : null;
+  const gymSessionAction = matched === "gym" && expected.includes("gym_session")
+    ? gymSessionActionForText(s)
+    : null;
   return {
     intent: "executable_action",
     family: matched,
     expected,
     mutations,
     ...(radarAction ? { radarAction } : {}),
+    ...(gymSessionAction ? { gymSessionAction } : {}),
     reason: `matched ${matched} family`
   };
 }
