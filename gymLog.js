@@ -215,6 +215,8 @@ export function normalizeGymLog(stored) {
           if (set) workout.sets.push(set);
         }
       }
+      const finishedAt = isoTimestamp(candidate.finishedAt);
+      if (finishedAt) workout.finishedAt = finishedAt;
       workoutsByDate.set(candidate.date, workout);
     }
   }
@@ -260,7 +262,7 @@ export function normalizeGymLog(stored) {
     }
   }
 
-  return {
+  const normalized = {
     version: 1,
     revision: Number.isSafeInteger(stored.revision) && stored.revision >= 0
       ? stored.revision
@@ -271,6 +273,220 @@ export function normalizeGymLog(stored) {
     history,
     updatedAt: isoTimestamp(stored.updatedAt)
   };
+  const session = normalizedSession(stored.session, normalized.templates);
+  if (session) normalized.session = session;
+  return normalized;
+}
+
+// A live workout survives an app restart: the session rides the same stored
+// document, and an entry that no longer makes sense (missing template, index
+// out of range) is dropped rather than resurrected wrong.
+function normalizedSession(candidate, templates) {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const templateId = cleanText(candidate.templateId, 80);
+  const template = templates.find((entry) => entry.id === templateId);
+  const startedAt = isoTimestamp(candidate.startedAt);
+  if (!template || !startedAt) return null;
+  const exerciseIndex = candidate.exerciseIndex;
+  if (
+    !Number.isInteger(exerciseIndex) ||
+    exerciseIndex < 0 ||
+    exerciseIndex > template.exercises.length
+  ) {
+    return null;
+  }
+  const session = { templateId, startedAt, exerciseIndex, restUntil: null, extraTargets: {} };
+  const restUntil = isoTimestamp(candidate.restUntil);
+  if (restUntil) session.restUntil = restUntil;
+  if (candidate.extraTargets && typeof candidate.extraTargets === "object" &&
+      !Array.isArray(candidate.extraTargets)) {
+    for (const [slug, extra] of Object.entries(candidate.extraTargets)) {
+      const exercise = canonicalExercise(slug);
+      if (exercise && Number.isInteger(extra) && extra >= 1 && extra <= 10) {
+        session.extraTargets[exercise.slug] = extra;
+      }
+    }
+  }
+  return session;
+}
+
+function epochSeconds(iso) {
+  const timestamp = isoTimestamp(iso);
+  if (!timestamp) return null;
+  return Math.floor(Date.parse(timestamp) / 1000);
+}
+
+const NO_SESSION_MESSAGE = "no workout running — say start workout";
+
+export function startSession(log, templateId, isoNow) {
+  const current = normalizeGymLog(log);
+  const at = isoTimestamp(isoNow);
+  if (!at) return { ok: false, message: "Starting a workout needs a valid ISO timestamp." };
+  if (current.session) {
+    return { ok: false, message: "A workout is already running — say finish workout first." };
+  }
+  const wantedId = cleanText(templateId, 80);
+  const template = wantedId
+    ? current.templates.find((entry) => entry.id === wantedId)
+    : current.templates[0];
+  if (!template) {
+    return { ok: false, message: `I could not find the template "${wantedId}".` };
+  }
+  current.session = {
+    templateId: template.id,
+    startedAt: at,
+    exerciseIndex: 0,
+    restUntil: null,
+    extraTargets: {}
+  };
+  return current;
+}
+
+function sessionTemplate(current) {
+  return current.session
+    ? current.templates.find((entry) => entry.id === current.session.templateId) || null
+    : null;
+}
+
+function setsLoggedOn(current, date, slug) {
+  const workout = current.workouts.find((entry) => entry.date === date);
+  return workout ? workout.sets.filter((set) => set.exerciseSlug === slug).length : 0;
+}
+
+function targetWithExtras(session, exercise) {
+  return exercise.targetSets + (session.extraTargets[exercise.slug] || 0);
+}
+
+export function sessionState(log, now) {
+  const current = normalizeGymLog(log);
+  const template = sessionTemplate(current);
+  const nowSeconds = epochSeconds(now);
+  if (!current.session || !template || nowSeconds === null) return null;
+  const session = current.session;
+  const today = isoTimestamp(now).slice(0, 10);
+  const done = session.exerciseIndex >= template.exercises.length;
+  const entry = done ? null : template.exercises[session.exerciseIndex];
+  const exercise = entry ? canonicalExercise(entry.slug) : null;
+  const nextEntry = done ? null : template.exercises[session.exerciseIndex + 1] || null;
+  const nextExercise = nextEntry ? canonicalExercise(nextEntry.slug) : null;
+
+  let restRemainingSeconds = null;
+  let restUntil = null;
+  if (session.restUntil) {
+    const restSeconds = epochSeconds(session.restUntil);
+    if (restSeconds !== null && restSeconds > nowSeconds) {
+      restUntil = session.restUntil;
+      restRemainingSeconds = restSeconds - nowSeconds;
+    }
+  }
+
+  let lastTime = null;
+  if (entry) {
+    const previous = progress(current, entry.slug).lastSession;
+    if (previous && previous.sets.length) {
+      lastTime = previous.sets.reduce(
+        (top, set) => setIsBetter(set, top) ? set : top,
+        null
+      );
+      lastTime = { weightGrams: lastTime.weightGrams, reps: lastTime.reps };
+    }
+  }
+
+  const setsLoggedTotal = (current.workouts.find((w) => w.date === today) || { sets: [] })
+    .sets.length;
+  return {
+    templateId: session.templateId,
+    startedAt: session.startedAt,
+    exerciseIndex: session.exerciseIndex,
+    exercise: entry
+      ? {
+          slug: entry.slug,
+          name: exercise.name,
+          targetSets: targetWithExtras(session, entry),
+          targetReps: entry.targetReps,
+          restSeconds: entry.restSeconds
+        }
+      : null,
+    setsLoggedThisExercise: entry ? setsLoggedOn(current, today, entry.slug) : 0,
+    setsLoggedTotal,
+    restUntil,
+    restRemainingSeconds,
+    lastTime,
+    upNext: nextExercise ? { slug: nextEntry.slug, name: nextExercise.name } : null,
+    done
+  };
+}
+
+export function noteSetLogged(log, exerciseSlug, isoNow) {
+  const current = normalizeGymLog(log);
+  const template = sessionTemplate(current);
+  const at = isoTimestamp(isoNow);
+  const exercise = canonicalExercise(exerciseSlug);
+  if (!current.session || !template || !at || !exercise) return current;
+  const session = current.session;
+  if (session.exerciseIndex >= template.exercises.length) return current;
+  const entry = template.exercises[session.exerciseIndex];
+  if (entry.slug !== exercise.slug) return current; // off-plan set: no session effect
+
+  const nowSeconds = epochSeconds(at);
+  session.restUntil = new Date((nowSeconds + entry.restSeconds) * 1000).toISOString();
+  const today = at.slice(0, 10);
+  if (setsLoggedOn(current, today, entry.slug) >= targetWithExtras(session, entry)) {
+    session.exerciseIndex += 1; // extra sets never retreat the index
+  }
+  return current;
+}
+
+export function advanceExercise(log, { skip = false } = {}) {
+  const current = normalizeGymLog(log);
+  const template = sessionTemplate(current);
+  if (!current.session || !template) return { ok: false, message: NO_SESSION_MESSAGE };
+  const session = current.session;
+  if (session.exerciseIndex >= template.exercises.length) {
+    return { ok: false, message: "That was the last exercise — say finish workout." };
+  }
+  session.exerciseIndex += 1;
+  session.restUntil = null;
+  void skip; // next and skip share semantics; the word choice is the user's
+  return current;
+}
+
+export function addExtraSet(log) {
+  const current = normalizeGymLog(log);
+  const template = sessionTemplate(current);
+  if (!current.session || !template) return { ok: false, message: NO_SESSION_MESSAGE };
+  const session = current.session;
+  if (session.exerciseIndex >= template.exercises.length) {
+    return { ok: false, message: "That was the last exercise — say finish workout." };
+  }
+  const entry = template.exercises[session.exerciseIndex];
+  const extra = (session.extraTargets[entry.slug] || 0) + 1;
+  if (extra > 10) return { ok: false, message: "That's ten extra sets already — plenty." };
+  session.extraTargets[entry.slug] = extra;
+  return current;
+}
+
+export function finishSession(log, isoNow) {
+  const current = normalizeGymLog(log);
+  const template = sessionTemplate(current);
+  const at = isoTimestamp(isoNow);
+  if (!current.session || !template) return { ok: false, message: NO_SESSION_MESSAGE };
+  if (!at) return { ok: false, message: "Finishing a workout needs a valid ISO timestamp." };
+
+  const startSeconds = epochSeconds(current.session.startedAt);
+  const endSeconds = epochSeconds(at);
+  const today = at.slice(0, 10);
+  const workout = current.workouts.find((entry) => entry.date === today);
+  if (workout) workout.finishedAt = at;
+  const sets = workout ? workout.sets.length : 0;
+  const exercises = workout
+    ? new Set(workout.sets.map((set) => set.exerciseSlug)).size
+    : 0;
+  const minutes = startSeconds !== null && endSeconds !== null && endSeconds >= startSeconds
+    ? Math.floor((endSeconds - startSeconds) / 60)
+    : 0;
+  delete current.session;
+  return { log: current, summary: { exercises, sets, minutes } };
 }
 
 export function validateSet(params, log, today) {

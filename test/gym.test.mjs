@@ -566,3 +566,102 @@ test("gym phrases route to one exact tool without catching safety conversations"
     raw_answer: "bench press one hundred eighty pounds eight reps"
   }, {}).ok, true, "semantic precheck owns the exact pound refusal");
 });
+
+// ---- Stage 2: live session model -------------------------------------------
+
+const {
+  addExtraSet,
+  advanceExercise,
+  finishSession,
+  noteSetLogged,
+  sessionState,
+  startSession
+} = await import("../gymLog.js");
+
+const T0 = "2026-08-10T17:00:00.000Z";
+const at = (minutes, seconds = 0) =>
+  new Date(Date.parse(T0) + (minutes * 60 + seconds) * 1000).toISOString();
+
+function loggedSet(slug, setNumber, iso) {
+  return {
+    exerciseSlug: slug, weightGrams: 80000, unit: "kg",
+    reps: 8, setNumber, at: iso
+  };
+}
+
+test("a session starts once, survives normalize, and refuses a double start", () => {
+  const started = startSession(gymFixture(), undefined, T0);
+  assert.equal(started.ok, undefined, "start returns the log, not a failure");
+  assert.equal(started.session.templateId, STARTER_TEMPLATE.id);
+  const roundTrip = normalizeGymLog(JSON.parse(JSON.stringify(started)));
+  assert.equal(roundTrip.session.exerciseIndex, 0, "session survives storage round-trip");
+  const again = startSession(roundTrip, undefined, at(1));
+  assert.equal(again.ok, false);
+  assert.match(again.message, /already running/);
+  const unknown = startSession(gymFixture(), "no-such-template", T0);
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.message, /could not find/);
+});
+
+test("sessionState reports exercise, targets, rest, and done honestly", () => {
+  let log = startSession(gymFixture(), undefined, T0);
+  const fresh = sessionState(log, at(0, 30));
+  assert.equal(fresh.exercise.slug, "squat");
+  assert.equal(fresh.exercise.targetSets, 3);
+  assert.equal(fresh.restRemainingSeconds, null, "no rest before any set");
+  assert.equal(fresh.upNext.slug, "bench-press");
+  assert.equal(fresh.done, false);
+  assert.equal(sessionState(gymFixture(), T0), null, "no session, no state");
+});
+
+test("logging sets starts rest windows and auto-advances after targets, never after extras", () => {
+  let log = startSession(gymFixture(), undefined, T0);
+  const today = T0.slice(0, 10);
+  for (let n = 1; n <= 2; n++) {
+    log.workouts = [{ date: today, sets: [...(log.workouts[0]?.sets || []), loggedSet("squat", n, at(n))] }];
+    log = noteSetLogged(log, "squat", at(n));
+    assert.equal(log.session.exerciseIndex, 0, `still on squat after set ${n}`);
+  }
+  const midRest = sessionState(log, at(2, 30));
+  assert.equal(midRest.restRemainingSeconds, 60, "90s rest window, 30s elapsed");
+
+  log = addExtraSet(log);
+  assert.equal(log.session.extraTargets["squat"], 1);
+  log.workouts[0].sets.push(loggedSet("squat", 3, at(3)));
+  log = noteSetLogged(log, "squat", at(3));
+  assert.equal(log.session.exerciseIndex, 0, "extra set keeps squat open at 3/4");
+  log.workouts[0].sets.push(loggedSet("squat", 4, at(4)));
+  log = noteSetLogged(log, "squat", at(4));
+  assert.equal(log.session.exerciseIndex, 1, "advances after target+extra reached");
+
+  const offPlan = noteSetLogged(log, "deadlift", at(5));
+  assert.equal(offPlan.session.exerciseIndex, 1, "off-plan sets never move the session");
+});
+
+test("skip, last-exercise refusal, and the confirmed finish summary are exact", () => {
+  let log = startSession(gymFixture(), undefined, T0);
+  for (let i = 0; i < STARTER_TEMPLATE.exercises.length - 1; i++) {
+    log = advanceExercise(log, { skip: true });
+  }
+  assert.equal(sessionState(log, at(1)).exercise.slug, "deadlift");
+  log = advanceExercise(log, {});
+  assert.equal(sessionState(log, at(1)).done, true);
+  const tooFar = advanceExercise(log, {});
+  assert.equal(tooFar.ok, false);
+  assert.match(tooFar.message, /finish workout/);
+
+  const today = T0.slice(0, 10);
+  log.workouts = [{
+    date: today,
+    sets: [loggedSet("squat", 1, at(1)), loggedSet("squat", 2, at(2)), loggedSet("bench-press", 1, at(3))]
+  }];
+  const finished = finishSession(log, at(41, 30));
+  assert.deepEqual(finished.summary, { exercises: 2, sets: 3, minutes: 41 });
+  assert.equal(finished.log.session, undefined, "session cleared");
+  assert.equal(finished.log.workouts[0].finishedAt, at(41, 30));
+  const roundTrip = normalizeGymLog(JSON.parse(JSON.stringify(finished.log)));
+  assert.equal(roundTrip.workouts[0].finishedAt, at(41, 30), "finishedAt survives storage");
+  const noSession = finishSession(gymFixture(), T0);
+  assert.equal(noSession.ok, false);
+  assert.match(noSession.message, /no workout running/);
+});
