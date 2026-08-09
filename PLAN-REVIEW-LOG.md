@@ -59,3 +59,19 @@ because the audited source boundary exposes only existence + URL —
 inventing differentiation would violate the advisor boundary; (3) enum
 table followed over loose prose. Proofs run by Claude: money+radar tests
 pass, selftest 35/35, full npm test green. Awaiting human commit sign-off.
+
+## Act 3 — Build: Financial Co-Pilot Stage 2 (2026-08-09)
+
+### Round 1 — Codex build (/tmp/codex-stage2.txt)
+
+moneyLedger.js (424 lines) + 600-line test file + two skills + registry
+routing + brief integration, zero deviations. Registry patterns show real
+care: "I spent forty minutes" excluded from expense routing by a time-unit
+lookahead; "add a bill reminder" stays a reminder request. Math.* appears
+only clamping the suggestion limit — all money arithmetic is BigInt.
+
+### Claude's verdict — APPROVED (no fix rounds)
+
+Proofs run by Claude: ledger tests (confirm-gated, revision-bound,
+currency-refusal, BigInt discipline), brief tests (ordered, honest,
+once-daily), full npm test, selftest 35/35. Awaiting commit sign-off.

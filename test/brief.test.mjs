@@ -18,6 +18,10 @@ const { assembleDailyBrief, claimDailyBriefOffer, getSkill } = await import("../
 const { classifyIntent, needsConfirmation, toolByName } = await import("../toolRegistry.js");
 
 const NOW = new Date(2026, 6, 28, 7, 30, 0);
+const BASELINE_MONEY =
+  "Money minute: USD to Kenyan shilling is 130.25 KES per 1 USD " +
+  "(as of 2026-07-27, Exchange Test). The US 10-year yield is " +
+  "4.35 % — US Treasury 10 Yr (as of 2026-07-27, Treasury Test).";
 const figure = (value, unit, source) => ({
   value,
   unit,
@@ -123,7 +127,84 @@ const allSources = {
   console.log("  ✓ all sources produce four ordered, sourced sections");
 }
 
-// 2) One dead source becomes one honest clause; the other sections survive.
+// 2) An empty ledger contributes no filler and leaves today's brief bytes intact.
+{
+  const baseline = await assembleDailyBrief(allSources);
+  assert.equal(baseline.sections[2].spoken, BASELINE_MONEY,
+    "the pre-ledger money section stays frozen as an exact string");
+
+  const emptyLedger = await assembleDailyBrief({
+    ...allSources,
+    readJsonStatus: async () => ({ status: "error", value: null }),
+    readJson: async (name, fallback) => name === "money-ledger.json"
+      ? {
+          version: 1,
+          revision: 0,
+          currency: null,
+          entries: { incomes: [], expenses: [], bills: [], debts: [], goals: [] },
+          history: [],
+          updatedAt: null
+        }
+      : fallback
+  });
+  assert.equal(emptyLedger.sections[2].spoken, BASELINE_MONEY);
+  assert.equal(JSON.stringify(emptyLedger), JSON.stringify(baseline),
+    "an empty persisted ledger must leave the complete brief byte-identical");
+  console.log("  ✓ an empty ledger leaves the brief byte-identical");
+}
+
+// 3) The money minute names only two nearest bills, one furthest-behind goal,
+// and one code-templated suggested action from a dated ledger fixture.
+{
+  const ledgerNow = new Date(2026, 6, 23, 7, 30, 0);
+  const ledger = {
+    version: 1,
+    revision: 6,
+    currency: "EUR",
+    entries: {
+      incomes: [],
+      expenses: [],
+      bills: [
+        { name: "School fees", amountDigits: "400", dueDay: 28, cadence: "monthly" },
+        { name: "Boat insurance", amountDigits: "250", dueDay: 28, cadence: "monthly" },
+        { name: "Rent", amountDigits: "900", dueDay: 25, cadence: "monthly" }
+      ],
+      debts: [],
+      goals: [
+        {
+          name: "Home leave",
+          targetDigits: "1200",
+          savedDigits: "1000",
+          targetDate: "2026-08-20"
+        },
+        {
+          name: "Emergency fund",
+          targetDigits: "1860",
+          savedDigits: "1000",
+          targetDate: "2026-08-20"
+        }
+      ]
+    },
+    history: [],
+    updatedAt: "2026-07-22T12:00:00.000Z"
+  };
+  const brief = await assembleDailyBrief({
+    ...allSources,
+    now: () => ledgerNow,
+    readJson: async (name, fallback) => name === "money-ledger.json" ? ledger : fallback
+  });
+  const money = brief.sections.find((section) => section.key === "money").spoken;
+  assert.equal(
+    money,
+    BASELINE_MONEY +
+      " Money next: Rent in 2 days, and School fees in 5 days." +
+      " Goal pace as of 2026-07-23: Emergency fund needs EUR 215 a week to stay on pace." +
+      " Rent is due in 2 days — EUR 900."
+  );
+  console.log("  ✓ money minute speaks bounded bills, dated goal pace, and one suggested action");
+}
+
+// 4) One dead source becomes one honest clause; the other sections survive.
 {
   const brief = await assembleDailyBrief({
     ...allSources,
@@ -139,7 +220,7 @@ const allSources = {
   console.log("  ✓ one dead source yields one honest clause and leaves the rest intact");
 }
 
-// 3) A Figure without source or date is refused by formatFigure and never spoken.
+// 5) A Figure without source or date is refused by formatFigure and never spoken.
 {
   const invalidFigures = [
     { value: 999, unit: "KES per 1 USD", asOf: "2026-07-27", url: "https://source.example/figure", stale: false },
@@ -157,7 +238,7 @@ const allSources = {
   console.log("  ✓ money figures without source or date are refused without hiding valid figures");
 }
 
-// 4) The persisted offer flips once per local date and resets on the next one.
+// 6) The persisted offer flips once per local date and resets on the next one.
 {
   const firstMorning = new Date(2026, 6, 28, 5, 0, 0);
   assert.equal(await claimDailyBriefOffer(firstMorning), true);
@@ -173,7 +254,7 @@ const allSources = {
   console.log("  ✓ the morning offer persists once per local date and resets");
 }
 
-// 5) The real endpoint exists on loopback and rejects a proxied remote request.
+// 7) The real endpoint exists on loopback and rejects a proxied remote request.
 {
   const port = await freePort();
   const child = spawn(process.execPath, [

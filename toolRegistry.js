@@ -59,6 +59,8 @@ const META = {
     confirm: "always",
     forceFamilies: ["map_update"]
   },
+  update_ledger:   { family: "ledger",   effect: "mutation", confirm: "always" },
+  money_status:    { family: "ledger",   effect: "read" },
   open_url:        { family: "navigate", effect: "client" },
   play_media:      { family: "media",    effect: "client" },
   search_notes:    { family: "vault",    effect: "read",     requires: "vault", forceFamilies: ["vault_read"] },
@@ -117,6 +119,7 @@ export const ACTIONABLE_FAMILIES = new Set([
   "school",
   "map",
   "map_update",
+  "ledger",
   "vault",
   "vault_read",
   "meeting",
@@ -241,6 +244,49 @@ const MONEY_MAP_UPDATE_PATTERN = new RegExp(
     String.raw`\b[^.?!]{0,50}\b(?:has\s+changed|is\s+actually|should\s+be)\b`,
   "i"
 );
+const LEDGER_COMMAND_PREFIX =
+  String.raw`(?:(?:please|(?:can|could|would|will)\s+you)\s+)?`;
+const LEDGER_COMMAND_TRAILER = String.raw`(?:\s+please)?\s*[?!.]*`;
+const LEDGER_SPEND_PATTERN = new RegExp(
+  String.raw`^\s*(?:actually\s+)?i\s+(?:just\s+)?spent\b` +
+    // "I spent forty minutes researching bonds" is research/conversation,
+    // not a financial write. A time unit immediately after "spent" keeps it
+    // out of the ledger route without weakening ordinary expense statements.
+    String.raw`(?!\s+(?:[a-z0-9-]+\s+)?(?:time|seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b)`,
+  "i"
+);
+const LEDGER_BILL_PATTERN = new RegExp(
+  String.raw`^\s*` +
+    LEDGER_COMMAND_PREFIX +
+    String.raw`(?:log|add|record)\b` +
+    // A bill reminder remains a reminder request; the ledger never creates it.
+    String.raw`(?![^.?!]{0,80}\b(?:remind(?:er|ers|ing)?|alarms?|alerts?)\b)` +
+    String.raw`[^.?!]{0,60}\bbills?\b`,
+  "i"
+);
+const LEDGER_GOAL_PATTERN = new RegExp(
+  String.raw`^\s*` +
+    LEDGER_COMMAND_PREFIX +
+    String.raw`track\s+(?:(?:a|my|the)\s+)?(?:(?:savings?|money|financial)\s+)?goal\b`,
+  "i"
+);
+const LEDGER_WRITE_PATTERN = new RegExp(
+  `${LEDGER_SPEND_PATTERN.source}|${LEDGER_BILL_PATTERN.source}|${LEDGER_GOAL_PATTERN.source}`,
+  "i"
+);
+const LEDGER_STATUS_PATTERN = new RegExp(
+  String.raw`^\s*` +
+    LEDGER_COMMAND_PREFIX +
+    String.raw`(?:how(?:['’]s|\s+is)\s+my\s+money|` +
+    String.raw`(?:(?:what(?:['’]s|\s+is)|show(?:\s+me)?|check|tell\s+me|give\s+me)\s+)?(?:my\s+)?money\s+status)` +
+    LEDGER_COMMAND_TRAILER +
+    String.raw`\s*$`,
+  "i"
+);
+const LEDGER_PATTERN = new RegExp(
+  `${LEDGER_WRITE_PATTERN.source}|${LEDGER_STATUS_PATTERN.source}`,
+  "i"
+);
 
 export function radarActionForText(text) {
   const value = String(text || "");
@@ -260,6 +306,7 @@ const FAMILY_PATTERNS = {
   school: MONEY_SCHOOL_PATTERN,
   map:
     /\b(?:my\s+money\s+map|money\s+map|(?:show|build|make|give)\s+me\s+(?:my\s+)?(?:money\s+map|investment\s+plan)|build\s+my\s+(?:money\s+map|investment\s+plan|plan)|my\s+investment\s+plan)\b|^\s*(?:an?\s+)?investment\s+plan\s*[?!.]*$/i,
+  ledger: LEDGER_PATTERN,
   vault:
     /\b(?:save|capture|append|write|put|add)\b[^.?!]{0,80}\b(?:obsidian|vault|daily\s+note)\b|\b(?:obsidian|vault|daily\s+note)\b[^.?!]{0,80}\b(?:save|capture|append|write|put|add)\b/i,
   vault_read:
@@ -527,7 +574,14 @@ export function classifyIntent(text, caps = {}, history = []) {
 
   if (!matched) return { intent: "chat", family: null, expected: [], reason: "no actionable family matched" };
 
-  const expectedTools = tools.filter((t) => t.forceFamilies.includes(matched));
+  let expectedTools = tools.filter((t) => t.forceFamilies.includes(matched));
+  // Reads and writes deliberately share the public "ledger" family, but a
+  // status request must not inherit update_ledger's mutation requirement (or
+  // the server would keep asking for a write after money_status succeeded).
+  if (matched === "ledger") {
+    const requestedTool = LEDGER_STATUS_PATTERN.test(s) ? "money_status" : "update_ledger";
+    expectedTools = expectedTools.filter((tool) => tool.name === requestedTool);
+  }
   const expected = expectedTools.map((t) => t.name);
   // On a mutation turn, helper reads (check before delete) must not satisfy
   // the turn — the server uses this list to demand the mutation itself.

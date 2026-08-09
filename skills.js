@@ -24,6 +24,14 @@ import { fxRate, worldBankIndicator, usYieldCurve, formatFigure } from "./financ
 import { unreadReport } from "./macMessages.js";
 import { MONEY_SCHOOL_CURRICULUM } from "./moneySchool.js";
 import {
+  applyLedgerChange,
+  billsDueWithin,
+  goalPace,
+  normalizeLedger,
+  suggestedActions,
+  validateLedgerChange
+} from "./moneyLedger.js";
+import {
   appendToDaily,
   readNote,
   searchNotes,
@@ -2516,6 +2524,297 @@ async function prepareMoneyMapUpdate(params, ctx) {
   return { ok: true };
 }
 
+const confirmedLedgerUpdates = new WeakMap();
+
+function ledgerFailure(summary, content = summary) {
+  return { ok: false, summary, content };
+}
+
+function ledgerHasEntries(ledger) {
+  return Object.values(ledger.entries).some(
+    (entries) => Array.isArray(entries) && entries.length > 0
+  );
+}
+
+function ledgerPlanningCurrency(storedMap) {
+  const map = normalizeMoneyMap(storedMap);
+  return map.currency && map.answers.contract_monthly_income ? map.currency : null;
+}
+
+function ledgerRevisionIsUsable(stored) {
+  return (
+    stored == null ||
+    (
+      typeof stored === "object" &&
+      !Array.isArray(stored) &&
+      Number.isSafeInteger(stored.revision) &&
+      stored.revision >= 0 &&
+      stored.revision < Number.MAX_SAFE_INTEGER
+    )
+  );
+}
+
+function stableLedgerJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableLedgerJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return (
+      "{" +
+      Object.keys(value)
+        .filter((key) => value[key] !== undefined)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${stableLedgerJson(value[key])}`)
+        .join(",") +
+      "}"
+    );
+  }
+  return JSON.stringify(value);
+}
+
+function ledgerStateIsCanonical(stored, normalized) {
+  return stored == null || stableLedgerJson(stored) === stableLedgerJson(normalized);
+}
+
+function exactLedgerContent(summary, subject) {
+  return (
+    `${summary}\n\nRead this code-built ${subject} exactly. ` +
+    "Do not add, omit, paraphrase, or recalculate any figure, and do not create a reminder. " +
+    "End after the final sentence above."
+  );
+}
+
+function ledgerAmountDigits(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  return entry.amountDigits || entry.balanceDigits || entry.targetDigits || null;
+}
+
+function sameLedgerEntry(left, right) {
+  if (!left || !right) return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) => key === rightKeys[index] && left[key] === right[key]
+    )
+  );
+}
+
+function wholeNumberWords(digits) {
+  if (!/^(0|[1-9]\d*)$/.test(String(digits || ""))) return String(digits || "");
+  const ones = [
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+    "seventeen", "eighteen", "nineteen"
+  ];
+  const tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+  const belowThousand = (value) => {
+    const parts = [];
+    if (value >= 100n) {
+      parts.push(ones[Number(value / 100n)], "hundred");
+      value %= 100n;
+    }
+    if (value >= 20n) {
+      const ten = tens[Number(value / 10n)];
+      const one = value % 10n;
+      parts.push(one ? `${ten}-${ones[Number(one)]}` : ten);
+    } else if (value > 0n || !parts.length) {
+      parts.push(ones[Number(value)]);
+    }
+    return parts.join(" ");
+  };
+  let value = BigInt(digits);
+  if (value === 0n) return "zero";
+  const scales = [
+    [1_000_000_000_000_000n, "quadrillion"],
+    [1_000_000_000_000n, "trillion"],
+    [1_000_000_000n, "billion"],
+    [1_000_000n, "million"],
+    [1_000n, "thousand"]
+  ];
+  const parts = [];
+  for (const [scale, label] of scales) {
+    if (value < scale) continue;
+    parts.push(belowThousand(value / scale), label);
+    value %= scale;
+  }
+  if (value > 0n) parts.push(belowThousand(value));
+  return parts.join(" ");
+}
+
+function spokenLedgerAmount(currency, digits) {
+  const amount = wholeNumberWords(digits);
+  const count = /^(0|[1-9]\d*)$/.test(String(digits || "")) ? BigInt(digits) : null;
+  const labels = {
+    BGN: ["Bulgarian lev", "Bulgarian leva"],
+    EUR: ["euro", "euro"],
+    GBP: ["British pound", "British pounds"],
+    KES: ["Kenyan shilling", "Kenyan shillings"],
+    USD: ["US dollar", "US dollars"]
+  };
+  const pair = labels[currency];
+  const unit = pair ? pair[count === 1n ? 0 : 1] : currency;
+  return `${amount} ${unit}`.trim();
+}
+
+function ledgerPaceRows(ledger, today) {
+  return ledger.entries.goals.flatMap((goal, index) => {
+    const pace = goalPace(goal, today);
+    return pace.onPace === null
+      ? []
+      : [{ goal, pace, index }];
+  });
+}
+
+function ledgerPaceSentence(ledger, row, today) {
+  if (row.pace.onPace) {
+    return `Goal pace as of ${today}: ${row.goal.name} is fully funded.`;
+  }
+  return (
+    `Goal pace as of ${today}: ${row.goal.name} needs ` +
+    `${userMoney(ledger.currency, row.pace.weeklyNeedDigits)} a week to stay on pace.`
+  );
+}
+
+function furthestBehindGoal(rows) {
+  return rows.reduce((furthest, row) => {
+    if (!furthest) return row;
+    const currentNeed = BigInt(row.pace.weeklyNeedDigits || "0");
+    const furthestNeed = BigInt(furthest.pace.weeklyNeedDigits || "0");
+    return currentNeed > furthestNeed ? row : furthest;
+  }, null);
+}
+
+function ledgerStatusSummary(ledger, today) {
+  if (!ledgerHasEntries(ledger)) {
+    return "Your money ledger is empty — tell me the first income, expense, bill, debt, or goal you want to record.";
+  }
+  const lines = [];
+  const bills = billsDueWithin(ledger, 7, today);
+  if (bills.length) {
+    lines.push(
+      "Bills due in the next seven days: " +
+      bills.map((bill) =>
+        `${bill.name} in ${bill.dueInDays} day${bill.dueInDays === 1 ? "" : "s"} — ` +
+        userMoney(ledger.currency, bill.amountDigits)
+      ).join("; ") + "."
+    );
+  }
+  for (const row of ledgerPaceRows(ledger, today)) {
+    lines.push(ledgerPaceSentence(ledger, row, today));
+  }
+  lines.push(...suggestedActions(ledger, today, 2));
+  return lines.length
+    ? lines.join(" ")
+    : "Your money ledger has entries, but no bills or dated goals need a status line today.";
+}
+
+function ledgerBriefClauses(ledger, today) {
+  if (!ledger || !ledgerHasEntries(ledger)) return "";
+  const sentences = [];
+  const bills = billsDueWithin(ledger, 7, today).slice(0, 2);
+  if (bills.length) {
+    const labels = bills.map(
+      (bill) => `${bill.name} in ${bill.dueInDays} day${bill.dueInDays === 1 ? "" : "s"}`
+    );
+    const list = labels.length === 2 ? `${labels[0]}, and ${labels[1]}` : labels[0];
+    sentences.push(`Money next: ${list}.`);
+  }
+  const furthest = furthestBehindGoal(ledgerPaceRows(ledger, today));
+  if (furthest) sentences.push(ledgerPaceSentence(ledger, furthest, today));
+  sentences.push(...suggestedActions(ledger, today, 1));
+  return sentences.join(" ");
+}
+
+async function prepareLedgerUpdate(params, ctx) {
+  let storedMap;
+  let storedLedger;
+  let ledger;
+  try {
+    [storedMap, storedLedger] = await Promise.all([
+      ctx.readJson("money-map.json", null),
+      ctx.readJson("money-ledger.json", null)
+    ]);
+    ledger = normalizeLedger(storedLedger);
+  } catch (error) {
+    return ledgerFailure("I could not read the current money records, so I will not change them.");
+  }
+  if (!ledgerRevisionIsUsable(storedLedger)) {
+    return ledgerFailure("The money ledger revision is invalid, so I will not change it.");
+  }
+  if (!ledgerStateIsCanonical(storedLedger, ledger)) {
+    return ledgerFailure("The money ledger is malformed, so I will not change it.");
+  }
+  const mapCurrency = ledgerPlanningCurrency(storedMap);
+  const validation = validateLedgerChange(params, ledger, mapCurrency);
+  if (!validation.ok) return ledgerFailure(validation.message);
+  confirmedLedgerUpdates.set(params, {
+    revision: ledger.revision,
+    storedCurrency: ledger.currency,
+    currency: mapCurrency,
+    kind: validation.kind,
+    entry: { ...validation.entry },
+    rawAnswer: params.raw_answer
+  });
+  return { ok: true };
+}
+
+async function executeLedgerUpdate(params, ctx) {
+  const confirmed =
+    params && typeof params === "object" ? confirmedLedgerUpdates.get(params) : null;
+  if (params && typeof params === "object") confirmedLedgerUpdates.delete(params);
+  if (!confirmed) {
+    return ledgerFailure(
+      "That ledger update has no live confirmed snapshot, so nothing changed.",
+      "Run update_ledger through precheck and explicit confirmation before execution."
+    );
+  }
+
+  let storedMap;
+  let storedLedger;
+  let ledger;
+  try {
+    [storedMap, storedLedger] = await Promise.all([
+      ctx.readJson("money-map.json", null),
+      ctx.readJson("money-ledger.json", null)
+    ]);
+    ledger = normalizeLedger(storedLedger);
+  } catch (error) {
+    return ledgerFailure("I could not re-read the money ledger, so nothing changed.");
+  }
+  const mapCurrency = ledgerPlanningCurrency(storedMap);
+  const validation = validateLedgerChange(params, ledger, mapCurrency);
+  if (
+    !validation.ok ||
+    !ledgerRevisionIsUsable(storedLedger) ||
+    !ledgerStateIsCanonical(storedLedger, ledger) ||
+    ledger.revision !== confirmed.revision ||
+    ledger.currency !== confirmed.storedCurrency ||
+    mapCurrency !== confirmed.currency ||
+    validation.kind !== confirmed.kind ||
+    !sameLedgerEntry(validation.entry, confirmed.entry) ||
+    params.raw_answer !== confirmed.rawAnswer
+  ) {
+    return ledgerFailure("The money ledger changed before you confirmed, so nothing changed.");
+  }
+
+  const at = moneyIsoNow(ctx);
+  const base = ledger.currency ? ledger : { ...ledger, currency: mapCurrency };
+  const updated = applyLedgerChange(base, validation, at);
+  await ctx.writeJson("money-ledger.json", updated);
+  const amountDigits = ledgerAmountDigits(validation.entry);
+  const summary =
+    `Recorded the ${validation.kind} ${validation.entry.name} for ` +
+    `${userMoney(updated.currency, amountDigits)}.`;
+  return {
+    ok: true,
+    summary,
+    content: exactLedgerContent(summary, "ledger result"),
+    ledger: updated
+  };
+}
+
 export function isDailyBriefOfferTime(now = new Date()) {
   const localNow = new Date(now);
   const hour = localNow.getHours();
@@ -2589,6 +2888,15 @@ export async function assembleDailyBrief(ctx = skillCtx) {
     null,
     1000
   );
+  const moneyLedgerForBrief = briefSource(
+    async () => {
+      if (!ctx || typeof ctx.readJson !== "function") return null;
+      const ledger = normalizeLedger(await ctx.readJson("money-ledger.json", null));
+      return ledgerHasEntries(ledger) ? ledger : null;
+    },
+    null,
+    1000
+  );
   const radarDueForBrief = hasValidNow
     ? briefSource(
         () => isOpportunityRadarDue(now, ctx),
@@ -2652,7 +2960,7 @@ export async function assembleDailyBrief(ctx = skillCtx) {
     }, { key: "today", spoken: "Reminders are unreachable right now." }),
 
     (async () => {
-      const [fxPart, yieldPart, personalMap] = await Promise.all([
+      const [fxPart, yieldPart, personalMap, personalLedger] = await Promise.all([
         briefSource(async () => {
           const rate = await fetchFx("USD", "KES", { timeoutMs: 4000 });
           if (!rate) throw new Error("exchange rate is unavailable");
@@ -2672,16 +2980,19 @@ export async function assembleDailyBrief(ctx = skillCtx) {
             item: { key: "us10y", figure: tenYear }
           };
         }, { spoken: "The Treasury yield is unreachable right now.", item: null }),
-        moneyMapForBrief
+        moneyMapForBrief,
+        moneyLedgerForBrief
       ]);
       const mapClause =
         personalMap && personalMap.currentStage === 1
           ? ` Stage 1 sits at ${personalMap.progressPercent} percent — ` +
             "say 'my money map' for the picture."
           : "";
+      const ledgerText = ledgerBriefClauses(personalLedger, localDateKey(now));
+      const ledgerClause = ledgerText ? ` ${ledgerText}` : "";
       return {
         key: "money",
-        spoken: `Money minute: ${fxPart.spoken} ${yieldPart.spoken}${mapClause}`,
+        spoken: `Money minute: ${fxPart.spoken} ${yieldPart.spoken}${mapClause}${ledgerClause}`,
         items: [fxPart.item, yieldPart.item].filter(Boolean)
       };
     })(),
@@ -3079,6 +3390,128 @@ const SKILLS = [
         ...result,
         summary: `${result.summary} ${MONEY_MAP_CLOSE}`,
         content: `${result.content}\n\n${MONEY_MAP_CLOSE}`
+      };
+    }
+  },
+  {
+    name: "update_ledger",
+    description:
+      "Record one user-spoken income, expense, monthly bill, debt, or savings goal in the " +
+      "local append-audit money ledger. Every call requires a named confirmation before it writes. " +
+      "Use for phrases such as 'I spent', 'log an income', 'add a bill', or 'track a goal'.",
+    requiresConfirmation: true,
+    paramSchema: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["income", "expense", "bill", "debt", "goal"],
+          description: "The one kind of ledger entry to append."
+        },
+        name: {
+          type: "string",
+          minLength: 1,
+          maxLength: 500,
+          description: "The user's short name for the entry; it is sanitized and capped at 60 characters."
+        },
+        integer_value: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Whole-unit amount, debt balance, or goal target."
+        },
+        currency: {
+          type: "string",
+          description: "Optional three-letter currency; when present it must match the Money Map."
+        },
+        due_day: {
+          type: "integer",
+          minimum: 1,
+          maximum: 28,
+          description: "Monthly bill day, from 1 through 28; bills require it."
+        },
+        target_date: {
+          type: "string",
+          description: "Optional goal target date in YYYY-MM-DD form."
+        },
+        saved_value: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Optional whole-unit amount already saved toward a goal."
+        },
+        min_payment_value: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Optional whole-unit minimum payment for a debt."
+        },
+        raw_answer: {
+          type: "string",
+          minLength: 1,
+          description: "The user's original spoken wording, checked at confirmation time but not copied into history."
+        }
+      },
+      required: ["kind", "name", "integer_value", "raw_answer"],
+      additionalProperties: false
+    },
+    confirmPrompt(params) {
+      const confirmed =
+        params && typeof params === "object" ? confirmedLedgerUpdates.get(params) : null;
+      const kind = confirmed ? confirmed.kind : String(params && params.kind || "entry");
+      const name = confirmed
+        ? confirmed.entry.name
+        : briefText(params && params.name, "unnamed entry", 60);
+      const digits = confirmed
+        ? ledgerAmountDigits(confirmed.entry)
+        : Number.isSafeInteger(params && params.integer_value)
+          ? String(params.integer_value)
+          : "";
+      const currency = confirmed
+        ? confirmed.currency
+        : /^[A-Za-z]{3}$/.test(String(params && params.currency || ""))
+          ? String(params.currency).toUpperCase()
+          : "";
+      return `Record the ${kind} ${name}, ${spokenLedgerAmount(currency, digits)}?`;
+    },
+    async precheck(params, ctx = skillCtx) {
+      return prepareLedgerUpdate(params, ctx);
+    },
+    async execute(params, ctx = skillCtx) {
+      return executeLedgerUpdate(params, ctx);
+    }
+  },
+  {
+    name: "money_status",
+    description:
+      "Read a code-built status from the local money ledger: bills due within seven days, dated " +
+      "goal pace, and no more than two suggested weekly actions. It never creates reminders or moves money.",
+    requiresConfirmation: false,
+    paramSchema: { type: "object", properties: {}, additionalProperties: false },
+    async execute(params = {}, ctx = skillCtx) {
+      if (!params || typeof params !== "object" || Array.isArray(params) || Object.keys(params).length) {
+        return ledgerFailure("Money status does not accept any arguments.");
+      }
+      let ledger;
+      try {
+        ledger = normalizeLedger(await ctx.readJson("money-ledger.json", null));
+      } catch (error) {
+        return ledgerFailure("I could not read the money ledger right now.");
+      }
+      let suppliedNow;
+      try {
+        suppliedNow = typeof ctx.now === "function" ? ctx.now() : Date.now();
+      } catch (error) {
+        suppliedNow = Number.NaN;
+      }
+      const parsed = new Date(suppliedNow);
+      const today = localDateKey(Number.isFinite(parsed.getTime()) ? parsed : new Date());
+      const summary = ledgerStatusSummary(ledger, today);
+      return {
+        ok: true,
+        summary,
+        content: exactLedgerContent(summary, "money status"),
+        ledger
       };
     }
   },
