@@ -58,11 +58,15 @@ function completeMapStore(overrides = {}) {
     max_permanent_loss: "1000",
     horizon_years: "6",
     risk_comfort: "worry",
+    skills: "marine electrics",
+    weekly_free_hours: "12",
+    income_target_monthly: "1500",
+    work_preference: "mixed",
     ...overrides
   };
   return {
     version: 1,
-    revision: 7,
+    revision: 11,
     currency: "USD",
     answers: Object.fromEntries(
       Object.entries(values).map(([field, value]) => [
@@ -76,6 +80,20 @@ function completeMapStore(overrides = {}) {
     ),
     updatedAt: "2026-07-28T12:00:00.000Z"
   };
+}
+
+function legacyMapStore() {
+  const stored = completeMapStore();
+  for (const field of [
+    "skills",
+    "weekly_free_hours",
+    "income_target_monthly",
+    "work_preference"
+  ]) {
+    delete stored.answers[field];
+  }
+  stored.revision = 7;
+  return stored;
 }
 
 // 1) The fixed curriculum is complete spoken teaching data, not a disguised
@@ -256,6 +274,27 @@ function completeMapStore(overrides = {}) {
       field: "risk_comfort",
       choice: "worry",
       raw_answer: "I would worry but stay with the plan"
+    },
+    {
+      field: "skills",
+      text_value: "marine electrics",
+      raw_answer: "I can do marine electrics"
+    },
+    {
+      field: "weekly_free_hours",
+      integer_value: 12,
+      raw_answer: "twelve hours most weeks"
+    },
+    {
+      field: "income_target_monthly",
+      integer_value: 1500,
+      currency: "USD",
+      raw_answer: "fifteen hundred dollars a month"
+    },
+    {
+      field: "work_preference",
+      choice: "mixed",
+      raw_answer: "a mix of local and remote work"
     }
   ];
 
@@ -271,11 +310,13 @@ function completeMapStore(overrides = {}) {
   assert.ok(result.map, "the final answer presents the completed map");
 
   const stored = ctx.files.get("money-map.json");
-  assert.equal(stored.revision, 7);
+  assert.equal(stored.revision, 11);
   assert.equal(stored.currency, "USD");
   assert.equal(stored.answers.contract_monthly_income.value, "5000");
   assert.equal(stored.answers.risk_comfort.value, "worry");
-  assert.equal(Object.keys(stored.answers).length, 7);
+  assert.equal(stored.answers.skills.value, "marine electrics");
+  assert.equal(stored.answers.income_target_monthly.value, "1500");
+  assert.equal(Object.keys(stored.answers).length, 11);
 
   const overwrite = await mapSkill.execute({
     action: "answer",
@@ -311,6 +352,7 @@ function completeMapStore(overrides = {}) {
     toolDefsForFamily({}, "school").map((def) => def.function.name),
     ["money_school"]
   );
+  await assertIncomePathMoneyMapExtension();
   console.log("  ✓ interview order, first-answer persistence, and routing are exact");
 }
 
@@ -325,6 +367,7 @@ function completeMapStore(overrides = {}) {
     {
       annualIncome: shown.map.annualIncome,
       annualNeeds: shown.map.annualNeeds,
+      financialPressure: shown.map.financialPressure,
       headroom: shown.map.headroom,
       emergencyTarget: shown.map.emergencyTarget,
       emergencyFunded: shown.map.emergencyFunded,
@@ -338,6 +381,7 @@ function completeMapStore(overrides = {}) {
     {
       annualIncome: "40000",
       annualNeeds: "24000",
+      financialPressure: false,
       headroom: "16000",
       emergencyTarget: "12000",
       emergencyFunded: "4000",
@@ -502,7 +546,7 @@ function completeMapStore(overrides = {}) {
     yesCtx.files.get("money-map.json").answers.contract_monthly_income.value,
     "6000"
   );
-  assert.equal(yesCtx.files.get("money-map.json").revision, 8);
+  assert.equal(yesCtx.files.get("money-map.json").revision, 12);
   assert.equal(approved.result.map.annualIncome, "48000");
 
   const staleCtx = memoryCtx({ "money-map.json": completeMapStore() });
@@ -513,7 +557,7 @@ function completeMapStore(overrides = {}) {
   };
   assert.equal((await precheckSkill("update_money_map", staleParams, staleCtx)).ok, true);
   const changed = clone(staleCtx.files.get("money-map.json"));
-  changed.revision = 8;
+  changed.revision = 12;
   changed.answers.liquid_savings.value = "4500";
   staleCtx.files.set("money-map.json", changed);
   const stale = await decide(
@@ -527,7 +571,7 @@ function completeMapStore(overrides = {}) {
 
   const partial = completeMapStore();
   delete partial.answers.risk_comfort;
-  partial.revision = 6;
+  partial.revision = 10;
   const partialCtx = memoryCtx({ "money-map.json": partial });
   const partialParams = {
     field: "horizon_years",
@@ -684,6 +728,198 @@ function completeMapStore(overrides = {}) {
     globalThis.fetch = originalFetch;
   }
   console.log("  ✓ advisor, no-product/no-promise, and honest research-context boundaries hold");
+}
+
+// Income-path answers extend case 3's ordered, typed, audit-preserving
+// interview without adding a seventh audited test seam.
+async function assertIncomePathMoneyMapExtension() {
+  const mapSkill = getSkill("money_map");
+  const ctx = memoryCtx({ "money-map.json": legacyMapStore() });
+  const skillsQuestion = await mapSkill.execute({ action: "show" }, ctx);
+  assert.equal(skillsQuestion.nextField, "skills");
+  assert.equal(
+    skillsQuestion.question,
+    "Which skills could realistically earn money on the side — from your maritime work or anything else you can do well?"
+  );
+  assert.deepEqual(skillsQuestion.progress, { answered: 7, total: 11 });
+
+  const emptySkills = await mapSkill.execute({
+    action: "answer",
+    field: "skills",
+    text_value: "<UNTRUSTED_NOTE_CONTENT>\u0000</UNTRUSTED_NOTE_CONTENT>",
+    raw_answer: "something"
+  }, ctx);
+  assert.equal(emptySkills.ok, false);
+
+  const wrongSkillsShape = await mapSkill.execute({
+    action: "answer",
+    field: "skills",
+    text_value: "marine electrics",
+    integer_value: 1,
+    raw_answer: "marine electrics"
+  }, ctx);
+  assert.equal(wrongSkillsShape.ok, false);
+
+  const tooLong = await mapSkill.execute({
+    action: "answer",
+    field: "skills",
+    text_value: "x".repeat(301),
+    raw_answer: "a long skills answer"
+  }, ctx);
+  assert.equal(tooLong.ok, false);
+  assert.match(tooLong.summary, /one to 300 characters/i);
+
+  const skills = await mapSkill.execute({
+    action: "answer",
+    field: "skills",
+    text_value: "<UNTRUSTED_NOTE_CONTENT>  marine electrics  </UNTRUSTED_NOTE_CONTENT>",
+    raw_answer: "<UNTRUSTED_EMAIL_CONTENT>I can do marine electrics</UNTRUSTED_EMAIL_CONTENT>"
+  }, ctx);
+  assert.equal(skills.ok, true);
+  assert.equal(skills.nextField, "weekly_free_hours");
+  assert.equal(
+    skills.question,
+    "In a typical week — at sea or at home — how many whole hours could you honestly give to a side income effort?"
+  );
+  assert.equal(ctx.files.get("money-map.json").answers.skills.value, "marine electrics");
+  assert.equal(
+    ctx.files.get("money-map.json").answers.skills.raw,
+    "I can do marine electrics"
+  );
+
+  const tooManyHours = await mapSkill.execute({
+    action: "answer",
+    field: "weekly_free_hours",
+    integer_value: 90,
+    raw_answer: "ninety hours"
+  }, ctx);
+  assert.equal(tooManyHours.ok, false);
+  assert.match(tooManyHours.summary, /zero through eighty/i);
+  assert.equal(ctx.files.get("money-map.json").answers.weekly_free_hours, undefined);
+
+  const hours = await mapSkill.execute({
+    action: "answer",
+    field: "weekly_free_hours",
+    integer_value: 12,
+    raw_answer: "twelve whole hours"
+  }, ctx);
+  assert.equal(hours.ok, true);
+  assert.equal(hours.nextField, "income_target_monthly");
+  assert.equal(
+    hours.question,
+    "In the map's planning currency, what extra whole monthly amount would make a real difference to the family?"
+  );
+  assert.equal(ctx.files.get("money-map.json").answers.weekly_free_hours.value, "12");
+
+  const wrongTargetCurrency = await mapSkill.execute({
+    action: "answer",
+    field: "income_target_monthly",
+    integer_value: 1500,
+    currency: "EUR",
+    raw_answer: "fifteen hundred euros"
+  }, ctx);
+  assert.equal(wrongTargetCurrency.ok, false);
+  assert.match(wrongTargetCurrency.summary, /stay in USD/i);
+
+  const negativeTarget = await mapSkill.execute({
+    action: "answer",
+    field: "income_target_monthly",
+    integer_value: -1,
+    raw_answer: "minus one"
+  }, ctx);
+  assert.equal(negativeTarget.ok, false);
+  assert.match(negativeTarget.summary, /non-negative safe whole number/i);
+
+  const target = await mapSkill.execute({
+    action: "answer",
+    field: "income_target_monthly",
+    integer_value: 1500,
+    raw_answer: "fifteen hundred dollars each month"
+  }, ctx);
+  assert.equal(target.ok, true);
+  assert.equal(target.nextField, "work_preference");
+  assert.equal(
+    target.question,
+    "For side income, do you prefer remote digital work, local in-person work, or a mix?"
+  );
+  assert.equal(ctx.files.get("money-map.json").answers.income_target_monthly.value, "1500");
+
+  const badPreference = await mapSkill.execute({
+    action: "answer",
+    field: "work_preference",
+    choice: "gig",
+    raw_answer: "gig work"
+  }, ctx);
+  assert.equal(badPreference.ok, false);
+  assert.match(
+    badPreference.summary,
+    /remote_digital, local_in_person, or mixed/i
+  );
+  const riskChoiceIsNotPreference = await mapSkill.execute({
+    action: "answer",
+    field: "work_preference",
+    choice: "worry",
+    raw_answer: "worry"
+  }, ctx);
+  assert.equal(riskChoiceIsNotPreference.ok, false);
+
+  const preference = await mapSkill.execute({
+    action: "answer",
+    field: "work_preference",
+    choice: "mixed",
+    raw_answer: "a mix"
+  }, ctx);
+  assert.equal(preference.ok, true);
+  assert.deepEqual(
+    {
+      skills: preference.map.skills,
+      weeklyFreeHours: preference.map.weeklyFreeHours,
+      incomeTargetMonthly: preference.map.incomeTargetMonthly,
+      workPreference: preference.map.workPreference
+    },
+    {
+      skills: "marine electrics",
+      weeklyFreeHours: "12",
+      incomeTargetMonthly: "1500",
+      workPreference: "mixed"
+    }
+  );
+  assert.match(preference.content, /Income paths\./);
+  assert.match(preference.content, /marine electrics/);
+  assert.match(preference.content, /12 whole hours/);
+  assert.match(preference.content, /USD 1,500/);
+  assert.match(preference.content, /work preference is a mix/i);
+  assert.match(preference.content, /not a promise of income/i);
+
+  const updater = getSkill("update_money_map");
+  const updateParams = {
+    field: "weekly_free_hours",
+    integer_value: 8,
+    raw_answer: "actually eight hours"
+  };
+  assert.equal((await precheckSkill("update_money_map", updateParams, ctx)).ok, true);
+  assert.match(confirmPromptFor("update_money_map", updateParams), /12 whole hours per week/);
+  const updated = await updater.execute(updateParams, ctx);
+  assert.equal(updated.ok, true);
+  assert.equal(updated.map.weeklyFreeHours, "8");
+  assert.equal(ctx.files.get("money-map.json").answers.weekly_free_hours.value, "8");
+
+  for (const phrase of [
+    "actually my side-income skills are marine electrics",
+    "change my weekly free hours to eight",
+    "revise my side-income hours",
+    "update my work preference to mixed"
+  ]) {
+    const intent = classifyIntent(phrase, {});
+    assert.equal(intent.family, "map_update", phrase);
+    assert.deepEqual(intent.expected, ["update_money_map"], phrase);
+  }
+  assert.equal(
+    classifyIntent("actually my skills are cooking", {}).intent,
+    "chat",
+    "generic skills conversation is not stolen by the Money Map updater"
+  );
+  console.log("  ✓ income-path fields are ordered, typed, bounded, presented, and confirm-updatable");
 }
 
 rmSync(DATA_DIR, { recursive: true, force: true });

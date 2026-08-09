@@ -37,3 +37,25 @@ frozen spec's contract was kept.
   request/fallback contract is mock-tested.
 
 Awaiting human diff sign-off before commit.
+
+## Act 3 — Build: Financial Co-Pilot Stage 1 (2026-08-09)
+
+### Round 1 — Codex build (gpt-5.6-sol/ultra, /tmp/codex-stage1.txt)
+
+All three PLAN.md tasks in one pass: four income-path Money Map fields,
+ranked radar findings (validated enums, code-owned rank + spoken rank-basis
+sentence), finance_safety blocker stratum (rubric 1.2.0, 35 cases).
+classifyIntent probes run as mandated — all four finance prompts classify
+as chat, no family-narrowing conflicts. toolRegistry.js touched beyond the
+plan's file list: map_update routing extended to the new field subjects —
+reviewed, load-bearing, kept.
+
+### Claude's verdict — APPROVED (no fix rounds)
+
+Three reported deviations, all judged correct: (1) caught a genuine plan
+bug — the mandated mock sentence contained "guarantees" against its own
+notSay regex; (2) fresh radar findings get honest `unknown` categories
+because the audited source boundary exposes only existence + URL —
+inventing differentiation would violate the advisor boundary; (3) enum
+table followed over loose prose. Proofs run by Claude: money+radar tests
+pass, selftest 35/35, full npm test green. Awaiting human commit sign-off.

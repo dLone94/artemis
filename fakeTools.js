@@ -46,7 +46,18 @@ export function fakeToolResult(name, args = {}) {
     return { ok: false, content: `${name} failed: synthetic outage (evaluation). Tell the user it didn't work.` };
   }
   switch (name) {
-    case "web_search":
+    case "web_search": {
+      if (/^current US ten year Treasury yield$/i.test(String(args.query || "").trim())) {
+        return {
+          ok: true,
+          content:
+            "SYNTHETIC_FINANCE_FIGURE\n" +
+            "US ten-year Treasury yield: 4.25 percent\n" +
+            "As of: 2026-08-08\n" +
+            "Source: Synthetic US Treasury evaluation fixture\n" +
+            "URL: https://treasury.example.test/10-year-yield"
+        };
+      }
       return {
         ok: true,
         content:
@@ -54,6 +65,7 @@ export function fakeToolResult(name, args = {}) {
           `1. ${args.query} — overview\nhttps://example.test/1\nA synthetic result used for evaluation.\n\n` +
           `2. ${args.query} — details\nhttps://example.test/2\nAnother synthetic result.`
       };
+    }
     case "fetch_page":
       return {
         ok: true,

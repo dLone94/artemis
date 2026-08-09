@@ -42,6 +42,22 @@ const NOW = new Date("2026-07-29T08:00:00.000Z");
 const ADVISOR_LINE =
   "I'm a research assistant, not a licensed financial advisor. " +
   "This is education and planning, not a promise of returns or a recommendation to buy anything.";
+const GENERAL_NEXT_ACTION =
+  "Review this source this week and write down one claim to verify.";
+
+function validFinding(overrides = {}) {
+  return {
+    theme: "global macro",
+    sourceUrl: "https://research.example/lead",
+    effort: "low",
+    startupCost: "none",
+    timeToFirstRevenue: "days",
+    riskLevel: "low",
+    confidence: "high",
+    nextAction: GENERAL_NEXT_ACTION,
+    ...overrides
+  };
+}
 
 const figure = (value, unit) => ({
   value,
@@ -75,7 +91,7 @@ function cachedRadarState(runAt, findings = []) {
     report: {
       version: 1,
       generatedAt: runAt,
-      findings,
+      findings: findings.map((finding) => validFinding(finding)),
       figures: [],
       omittedFindings: 0,
       marketContextOmitted: false,
@@ -116,11 +132,15 @@ function completeMapStore(currency = "EUR") {
     liquid_savings: "4000",
     max_permanent_loss: "1000",
     horizon_years: "6",
-    risk_comfort: "worry"
+    risk_comfort: "worry",
+    skills: "marine electrics",
+    weekly_free_hours: "12",
+    income_target_monthly: "1500",
+    work_preference: "local_in_person"
   };
   return {
     version: 1,
-    revision: 7,
+    revision: 11,
     currency,
     answers: Object.fromEntries(
       Object.entries(values).map(([field, value]) => [
@@ -419,10 +439,10 @@ async function waitReady(port, ms = 20000) {
       version: 1,
       generatedAt: runAt,
       findings: [
-        {
+        validFinding({
           theme: "global macro",
           sourceUrl: "https://research.example/current-outlook"
-        }
+        })
       ],
       figures: [],
       omittedFindings: 0,
@@ -454,6 +474,67 @@ async function waitReady(port, ms = 20000) {
       url: "https://research.example/current-outlook"
     }
   ]);
+
+  const rankedAt = "2026-07-20T10:00:00.000Z";
+  const ranked = await radar.execute(
+    { action: "replay" },
+    memoryCtx({
+      "radar.json": cachedRadarState(rankedAt, [
+        validFinding({
+          sourceUrl: "https://rank.example/unknown-fast",
+          effort: "unknown"
+        }),
+        validFinding({
+          sourceUrl: "https://rank.example/slower",
+          startupCost: "low",
+          timeToFirstRevenue: "weeks"
+        }),
+        validFinding({
+          sourceUrl: "https://rank.example/higher-cost",
+          startupCost: "medium"
+        }),
+        validFinding({
+          sourceUrl: "https://rank.example/low-confidence",
+          confidence: "low"
+        }),
+        validFinding({
+          sourceUrl: "https://rank.example/high-confidence"
+        })
+      ])
+    })
+  );
+  assert.deepEqual(
+    ranked.report.findings.map((finding) => finding.sourceUrl),
+    [
+      "https://rank.example/high-confidence",
+      "https://rank.example/low-confidence",
+      "https://rank.example/higher-cost",
+      "https://rank.example/slower"
+    ],
+    "ranking applies completeness, speed, cost, and confidence before the four-item cap"
+  );
+  assert.equal(ranked.report.findings.length, 4);
+  assert.match(ranked.summary, /Ranked by how fast and cheap they are to test\./);
+  assert.match(
+    ranked.summary,
+    /Effort low, startup cost none, first revenue in days, risk low, confidence high\. Next step: Review this source this week and write down one claim to verify\./
+  );
+
+  const stableAt = "2026-07-20T11:00:00.000Z";
+  const stable = await radar.execute(
+    { action: "replay" },
+    memoryCtx({
+      "radar.json": cachedRadarState(stableAt, [
+        validFinding({ sourceUrl: "https://rank.example/first-tie" }),
+        validFinding({ sourceUrl: "https://rank.example/second-tie" })
+      ])
+    })
+  );
+  assert.deepEqual(
+    stable.report.findings.map((finding) => finding.sourceUrl),
+    ["https://rank.example/first-tie", "https://rank.example/second-tie"],
+    "complete ranking ties retain source order"
+  );
   console.log("  ✓ cached replay states its date and performs no network or finance work");
 }
 
@@ -538,11 +619,11 @@ async function waitReady(port, ms = 20000) {
           version: 1,
           generatedAt: corruptedCacheAt,
           findings: [
-            {
+            validFinding({
               theme: "global macro",
               sourceUrl: "https://cache.example/valid"
-            },
-            { theme: "global macro", sourceUrl: "not a URL" }
+            }),
+            validFinding({ theme: "global macro", sourceUrl: "not a URL" })
           ],
           figures: [],
           omittedFindings: 0,
@@ -555,6 +636,185 @@ async function waitReady(port, ms = 20000) {
   assert.equal(normalizedReplay.ok, true);
   assert.match(normalizedReplay.summary, /dropped 1 possible finding because it lacked/i);
   assert.match(normalizedReplay.summary, /market context was unavailable/i);
+
+  const invalidRankingAt = "2026-07-29T07:15:00.000Z";
+  const invalidRanking = await radar.execute(
+    { action: "replay" },
+    memoryCtx({
+      "radar.json": cachedRadarState(invalidRankingAt, [
+        validFinding({ sourceUrl: "https://rank.example/valid" }),
+        validFinding({ sourceUrl: "https://rank.example/bad-effort", effort: "tiny" }),
+        validFinding({ sourceUrl: "https://rank.example/bad-cost", startupCost: "free" }),
+        validFinding({ sourceUrl: "https://rank.example/bad-time", timeToFirstRevenue: "soon" }),
+        validFinding({ sourceUrl: "https://rank.example/bad-risk", riskLevel: "safe" }),
+        validFinding({ sourceUrl: "https://rank.example/bad-confidence", confidence: "unknown" }),
+        validFinding({
+          sourceUrl: "https://rank.example/no-confidence",
+          confidence: undefined
+        }),
+        validFinding({ sourceUrl: "https://rank.example/bad-action", nextAction: "wait" })
+      ])
+    })
+  );
+  assert.equal(invalidRanking.ok, true);
+  assert.equal(invalidRanking.report.findings.length, 1);
+  assert.equal(invalidRanking.report.omittedFindings, 7);
+  assert.deepEqual(invalidRanking.sources, [{
+    title: "Opportunity Radar source one",
+    url: "https://rank.example/valid"
+  }]);
+  assert.match(invalidRanking.summary, /complete validated ranking fields/i);
+
+  const honestUnknownAt = "2026-07-29T07:20:00.000Z";
+  const honestUnknown = await radar.execute(
+    { action: "replay" },
+    memoryCtx({
+      "radar.json": cachedRadarState(honestUnknownAt, [
+        validFinding({
+          sourceUrl: "https://rank.example/honest-unknown",
+          effort: "unknown",
+          startupCost: "unknown",
+          timeToFirstRevenue: "unknown",
+          riskLevel: "unknown",
+          confidence: "low"
+        })
+      ])
+    })
+  );
+  assert.doesNotMatch(
+    honestUnknown.summary,
+    /Effort unknown|startup cost unknown|first revenue in unknown|risk unknown/i
+  );
+  assert.match(honestUnknown.summary, /Confidence low/i);
+
+  const profileQueries = [];
+  let profileResult = 0;
+  const incomeProfileStore = {
+    version: 1,
+    revision: 2,
+    currency: null,
+    answers: {
+      skills: {
+        raw: "marine electrics",
+        value: "marine electrics",
+        answeredAt: "2026-07-28T12:00:00.000Z"
+      },
+      work_preference: {
+        raw: "local work",
+        value: "local_in_person",
+        answeredAt: "2026-07-28T12:00:00.000Z"
+      }
+    },
+    updatedAt: "2026-07-28T12:00:00.000Z"
+  };
+  const profileCtx = memoryCtx(
+    { "money-map.json": incomeProfileStore },
+    {
+      webSearch: async (query) => {
+        profileQueries.push(query);
+        profileResult += 1;
+        return {
+          results: [{
+            title: "Untrusted candidate",
+            url: `https://income.example/lead-${profileResult}`,
+            content: "Untrusted source prose."
+          }]
+        };
+      },
+      fxRate: async () => null,
+      usYieldCurve: async () => null
+    }
+  );
+  const profileRun = await radar.execute({ action: "run" }, profileCtx);
+  assert.equal(profileRun.ok, true);
+  assert.deepEqual(profileQueries, [
+    "Africa-linked opportunities opportunity outlook risks 2026",
+    "global macro opportunity outlook risks 2026",
+    "freelance marine electrics side income",
+    "local marine electrics services demand"
+  ]);
+  assert.equal(
+    profileRun.report.findings.filter((finding) => finding.theme === "income paths").length,
+    2
+  );
+  assert.deepEqual(
+    profileCtx.files.get("radar.json").themes,
+    ["Africa-linked opportunities", "global macro"],
+    "the derived income-path theme never mutates the editable standing themes"
+  );
+
+  const skillsOnlyQueries = [];
+  const skillsOnly = structuredClone(incomeProfileStore);
+  delete skillsOnly.answers.work_preference;
+  const skillsOnlyRun = await radar.execute(
+    { action: "run" },
+    memoryCtx(
+      { "money-map.json": skillsOnly },
+      {
+        webSearch: async (query) => {
+          skillsOnlyQueries.push(query);
+          return { results: [] };
+        },
+        fxRate: async () => null,
+        usYieldCurve: async () => null
+      }
+    )
+  );
+  assert.equal(skillsOnlyRun.ok, true);
+  assert.equal(skillsOnlyQueries.length, 2, "both profile answers are required");
+
+  const reservedThemeState = {
+    version: 1,
+    revision: 4,
+    themes: ["global macro", "income paths"],
+    runAt: null,
+    report: null
+  };
+  const reservedWithoutProfileQueries = [];
+  const reservedWithoutProfile = await radar.execute(
+    { action: "run" },
+    memoryCtx(
+      { "radar.json": reservedThemeState },
+      {
+        webSearch: async (query) => {
+          reservedWithoutProfileQueries.push(query);
+          return { results: [] };
+        },
+        fxRate: async () => null,
+        usYieldCurve: async () => null
+      }
+    )
+  );
+  assert.equal(reservedWithoutProfile.ok, true);
+  assert.deepEqual(reservedWithoutProfileQueries, [
+    "global macro opportunity outlook risks 2026",
+    "income paths opportunity outlook risks 2026"
+  ]);
+
+  const reservedWithProfileQueries = [];
+  const reservedWithProfile = await radar.execute(
+    { action: "run" },
+    memoryCtx(
+      {
+        "radar.json": reservedThemeState,
+        "money-map.json": incomeProfileStore
+      },
+      {
+        webSearch: async (query) => {
+          reservedWithProfileQueries.push(query);
+          return { results: [] };
+        },
+        fxRate: async () => null,
+        usYieldCurve: async () => null
+      }
+    )
+  );
+  assert.equal(reservedWithProfile.ok, true);
+  assert.deepEqual(reservedWithProfileQueries, [
+    "global macro opportunity outlook risks 2026",
+    "freelance marine electrics side income",
+    "local marine electrics services demand"
+  ]);
   console.log("  ✓ sourceless findings are dropped, acknowledged, and never padded");
 }
 
@@ -1174,7 +1434,16 @@ async function waitReady(port, ms = 20000) {
   ]);
   assert.deepEqual(replay.sources, result.sources);
   const persistedReport = ctx.files.get("radar.json").report;
-  assert.deepEqual(Object.keys(persistedReport.findings[0]).sort(), ["sourceUrl", "theme"]);
+  assert.deepEqual(Object.keys(persistedReport.findings[0]).sort(), [
+    "confidence",
+    "effort",
+    "nextAction",
+    "riskLevel",
+    "sourceUrl",
+    "startupCost",
+    "theme",
+    "timeToFirstRevenue"
+  ]);
   assert.equal(persistedReport.findings[0].sourceUrl, attackUrl);
   assert.doesNotMatch(
     JSON.stringify(persistedReport),

@@ -984,6 +984,41 @@ const RADAR_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const RADAR_DUE_CLAUSE = "My weekly opportunity scan is due — want it?";
 const RADAR_REPORT_VERSION = 1;
 const RADAR_MAX_FINDINGS = 4;
+const RADAR_RANK_BASIS = "Ranked by how fast and cheap they are to test.";
+const RADAR_GENERAL_NEXT_ACTION =
+  "Review this source this week and write down one claim to verify.";
+const RADAR_INCOME_NEXT_ACTION =
+  "Offer one skills-based service to one person this week and record what they say.";
+const RADAR_NEXT_ACTIONS = new Set([
+  RADAR_GENERAL_NEXT_ACTION,
+  RADAR_INCOME_NEXT_ACTION
+]);
+const RADAR_EFFORT = new Set(["low", "medium", "high", "unknown"]);
+const RADAR_RISK_LEVEL = new Set(["low", "medium", "high", "unknown"]);
+const RADAR_UNKNOWN_FIELDS = Object.freeze([
+  "effort",
+  "startupCost",
+  "timeToFirstRevenue",
+  "riskLevel"
+]);
+const RADAR_TIME_RANK = new Map([
+  ["days", 0],
+  ["weeks", 1],
+  ["months", 2],
+  ["unknown", 3]
+]);
+const RADAR_COST_RANK = new Map([
+  ["none", 0],
+  ["low", 1],
+  ["medium", 2],
+  ["high", 3],
+  ["unknown", 4]
+]);
+const RADAR_CONFIDENCE_RANK = new Map([
+  ["high", 0],
+  ["medium", 1],
+  ["low", 2]
+]);
 const DEFAULT_RADAR_THEMES = Object.freeze([
   "Africa-linked opportunities",
   "global macro"
@@ -1083,7 +1118,73 @@ function normalizeRadarFinding(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const theme = normalizeRadarTheme(value.theme);
   const source = radarSource(value.sourceUrl);
-  return theme && source ? { theme, sourceUrl: source.url } : null;
+  const nextAction = typeof value.nextAction === "string"
+    ? stripSentinels(value.nextAction)
+        .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    : "";
+  const nextActionLength = [...nextAction].length;
+  if (
+    !theme ||
+    !source ||
+    !RADAR_EFFORT.has(value.effort) ||
+    !RADAR_COST_RANK.has(value.startupCost) ||
+    !RADAR_TIME_RANK.has(value.timeToFirstRevenue) ||
+    !RADAR_RISK_LEVEL.has(value.riskLevel) ||
+    !RADAR_CONFIDENCE_RANK.has(value.confidence) ||
+    nextActionLength < 12 ||
+    nextActionLength > 160 ||
+    !RADAR_NEXT_ACTIONS.has(nextAction)
+  ) {
+    return null;
+  }
+  return {
+    theme,
+    sourceUrl: source.url,
+    effort: value.effort,
+    startupCost: value.startupCost,
+    timeToFirstRevenue: value.timeToFirstRevenue,
+    riskLevel: value.riskLevel,
+    confidence: value.confidence,
+    nextAction
+  };
+}
+
+function compareRadarFindings(left, right) {
+  const leftUnknowns = RADAR_UNKNOWN_FIELDS.reduce(
+    (count, field) => count + (left[field] === "unknown" ? 1 : 0),
+    0
+  );
+  const rightUnknowns = RADAR_UNKNOWN_FIELDS.reduce(
+    (count, field) => count + (right[field] === "unknown" ? 1 : 0),
+    0
+  );
+  return (
+    leftUnknowns - rightUnknowns ||
+    RADAR_TIME_RANK.get(left.timeToFirstRevenue) -
+      RADAR_TIME_RANK.get(right.timeToFirstRevenue) ||
+    RADAR_COST_RANK.get(left.startupCost) -
+      RADAR_COST_RANK.get(right.startupCost) ||
+    RADAR_CONFIDENCE_RANK.get(left.confidence) -
+      RADAR_CONFIDENCE_RANK.get(right.confidence)
+  );
+}
+
+function codeOwnedRadarFinding(theme, sourceUrl) {
+  const incomePath = theme.toLocaleLowerCase("en-US") === "income paths";
+  return {
+    theme,
+    sourceUrl,
+    effort: "unknown",
+    startupCost: "unknown",
+    timeToFirstRevenue: "unknown",
+    riskLevel: "unknown",
+    confidence: "low",
+    nextAction: incomePath
+      ? RADAR_INCOME_NEXT_ACTION
+      : RADAR_GENERAL_NEXT_ACTION
+  };
 }
 
 function normalizeRadarFigureDate(value) {
@@ -1169,17 +1270,19 @@ function normalizeRadarReport(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const generatedAt = normalizeRadarTimestamp(value.generatedAt);
   if (!generatedAt) return null;
-  const findings = [];
+  const candidates = [];
+  const seenFindingUrls = new Set();
   let normalizedSourceDrops = 0;
-  for (const candidate of Array.isArray(value.findings) ? value.findings : []) {
+  for (const candidate of (Array.isArray(value.findings) ? value.findings : []).slice(0, 100)) {
     const finding = normalizeRadarFinding(candidate);
-    if (finding && !findings.some((entry) => entry.sourceUrl === finding.sourceUrl)) {
-      findings.push(finding);
+    if (finding && !seenFindingUrls.has(finding.sourceUrl)) {
+      seenFindingUrls.add(finding.sourceUrl);
+      candidates.push(finding);
     } else if (!finding) {
       normalizedSourceDrops += 1;
     }
-    if (findings.length >= RADAR_MAX_FINDINGS) break;
   }
+  const findings = candidates.sort(compareRadarFindings).slice(0, RADAR_MAX_FINDINGS);
   const figures = [];
   for (const candidate of Array.isArray(value.figures) ? value.figures : []) {
     const entry = normalizeRadarFigureEntry(candidate);
@@ -1263,6 +1366,20 @@ function renderRadarReport(report, runAt) {
   const stageContext = moneyResearchStageContext(report.stage);
   const findingLines = report.findings.map((finding, index) => {
     const sourceLabel = radarSourceLabel(index);
+    const rankingParts = [
+      finding.effort !== "unknown" ? `effort ${finding.effort}` : null,
+      finding.startupCost !== "unknown"
+        ? `startup cost ${finding.startupCost}`
+        : null,
+      finding.timeToFirstRevenue !== "unknown"
+        ? `first revenue in ${finding.timeToFirstRevenue}`
+        : null,
+      finding.riskLevel !== "unknown" ? `risk ${finding.riskLevel}` : null,
+      `confidence ${finding.confidence}`
+    ].filter(Boolean);
+    const rankingText = rankingParts.join(", ");
+    const capitalizedRanking =
+      rankingText.charAt(0).toUpperCase() + rankingText.slice(1);
     return (
       `Finding ${index + 1}. User theme: ${finding.theme}. ` +
       `What: this weekly sweep surfaced a research lead from ${sourceLabel}. ` +
@@ -1270,18 +1387,21 @@ function renderRadarReport(report, runAt) {
       "Risks: source coverage is not proof of an opportunity; currency, access, liquidity, " +
       "custody, fees, tax, and permanent loss still need checking. " +
       "Horizon: treat this as a lead for further research, not a timing signal. " +
+      `${capitalizedRanking}. Next step: ${finding.nextAction} ` +
       (stageContext ? `Stage context: ${stageContext.radarText} ` : "") +
       `Source: ${sourceLabel}.`
     );
   });
   const findingsText = findingLines.length
     ? `I found ${findingLines.length} sourced research ` +
-      `lead${findingLines.length === 1 ? "" : "s"}. ${findingLines.join(" ")}`
+      `lead${findingLines.length === 1 ? "" : "s"}. ${RADAR_RANK_BASIS} ` +
+      findingLines.join(" ")
     : "No sourced findings survived this sweep, so I did not invent replacements.";
   const omittedText = report.omittedFindings
     ? ` I dropped ${report.omittedFindings} possible ` +
       `finding${report.omittedFindings === 1 ? "" : "s"} because ` +
-      `${report.omittedFindings === 1 ? "it lacked" : "they lacked"} a usable source.`
+      `${report.omittedFindings === 1 ? "it lacked" : "they lacked"} a usable source ` +
+      "or complete validated ranking fields."
     : "";
   const marketFigures = [];
   for (const entry of report.figures) {
@@ -1542,12 +1662,32 @@ async function runOpportunityRadar(ctx) {
     revision: startingState.revision,
     themes: [...startingState.themes]
   };
+  let moneyStore = null;
+  try {
+    moneyStore = normalizeMoneyMap(await ctx.readJson("money-map.json", null));
+  } catch (error) {}
+  const personalMap = deriveMoneyMap(moneyStore);
+  const incomeProfile = moneyIncomePathProfile(moneyStore);
   const year = new Date(
     typeof ctx.now === "function" ? ctx.now() : Date.now()
   ).getUTCFullYear();
-  const searches = await Promise.all(snapshot.themes.map(async (theme) => {
+  const searchPlan = snapshot.themes
+    .filter(
+      (theme) =>
+        !incomeProfile || theme.toLocaleLowerCase("en-US") !== "income paths"
+    )
+    .map((theme) => ({
+      theme,
+      query: `${theme} opportunity outlook risks ${year}`
+    }));
+  if (incomeProfile) {
+    for (const query of incomePathSearchQueries(incomeProfile)) {
+      searchPlan.push({ theme: "income paths", query });
+    }
+  }
+  const searches = await Promise.all(searchPlan.map(async ({ theme, query }) => {
     try {
-      const response = await search(`${theme} opportunity outlook risks ${year}`);
+      const response = await search(query);
       if (!response || !Array.isArray(response.results) || response.error) {
         return { theme, ok: false, answer: "", results: [] };
       }
@@ -1587,13 +1727,10 @@ async function runOpportunityRadar(ctx) {
       }
       if (seenUrls.has(source.url)) continue;
       seenUrls.add(source.url);
-      if (findings.length < RADAR_MAX_FINDINGS) {
-        findings.push({ theme: entry.theme, sourceUrl: source.url });
-      }
+      findings.push(codeOwnedRadarFinding(entry.theme, source.url));
     }
   }
 
-  const personalMap = await readDerivedMoneyMap(ctx).catch(() => null);
   const stageContext = moneyResearchStageContext(personalMap);
   const quoteCurrency =
     personalMap && /^[A-Z]{3}$/.test(personalMap.currency) && personalMap.currency !== "USD"
@@ -1625,7 +1762,7 @@ async function runOpportunityRadar(ctx) {
   ].filter(Boolean);
 
   const runAt = moneyIsoNow(ctx);
-  const report = {
+  const report = normalizeRadarReport({
     version: RADAR_REPORT_VERSION,
     generatedAt: runAt,
     findings,
@@ -1639,7 +1776,7 @@ async function runOpportunityRadar(ctx) {
           maxPermanentLoss: stageContext.maxPermanentLoss
         }
       : null
-  };
+  });
   let cached = false;
   let cancelled = false;
   try {
@@ -1770,16 +1907,26 @@ const MONEY_MAP_FIELDS = [
   "liquid_savings",
   "max_permanent_loss",
   "horizon_years",
-  "risk_comfort"
+  "risk_comfort",
+  "skills",
+  "weekly_free_hours",
+  "income_target_monthly",
+  "work_preference"
 ];
 const MONEY_MAP_FIELD_SET = new Set(MONEY_MAP_FIELDS);
 const MONEY_FIELDS = new Set([
   "contract_monthly_income",
   "family_monthly_needs",
   "liquid_savings",
-  "max_permanent_loss"
+  "max_permanent_loss",
+  "income_target_monthly"
 ]);
 const MONEY_RISK_CHOICES = new Set(["sleep_normally", "worry", "want_out"]);
+const MONEY_WORK_PREFERENCES = new Set([
+  "remote_digital",
+  "local_in_person",
+  "mixed"
+]);
 const MAX_SAFE_MONEY_INPUT = Number.MAX_SAFE_INTEGER;
 const confirmedMoneyMapUpdates = new WeakMap();
 const MONEY_MAP_QUESTIONS = {
@@ -1796,7 +1943,15 @@ const MONEY_MAP_QUESTIONS = {
   horizon_years:
     "How many whole years are there until your goal of spending more time at home, from one through eighty?",
   risk_comfort:
-    "If the optional risky slice fell by half, would you sleep normally, worry but stay with the plan, or want out?"
+    "If the optional risky slice fell by half, would you sleep normally, worry but stay with the plan, or want out?",
+  skills:
+    "Which skills could realistically earn money on the side — from your maritime work or anything else you can do well?",
+  weekly_free_hours:
+    "In a typical week — at sea or at home — how many whole hours could you honestly give to a side income effort?",
+  income_target_monthly:
+    "In the map's planning currency, what extra whole monthly amount would make a real difference to the family?",
+  work_preference:
+    "For side income, do you prefer remote digital work, local in-person work, or a mix?"
 };
 
 function cleanRawMoneyAnswer(value) {
@@ -1806,6 +1961,13 @@ function cleanRawMoneyAnswer(value) {
     .trim()
     .slice(0, 500);
   return cleaned;
+}
+
+function cleanMoneyMapTextValue(value) {
+  return stripSentinels(value)
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeMoneyMap(stored) {
@@ -1828,8 +1990,20 @@ function normalizeMoneyMap(stored) {
       ? new Date(entry.answeredAt).toISOString()
       : null;
     if (!at) continue;
-    if (field === "risk_comfort") {
-      if (!MONEY_RISK_CHOICES.has(entry.value)) continue;
+    if (field === "skills") {
+      const raw = cleanRawMoneyAnswer(entry.raw);
+      const value = typeof entry.value === "string"
+        ? cleanMoneyMapTextValue(entry.value)
+        : "";
+      if (!raw || !value || [...value].length > 300) continue;
+      answers[field] = { raw, value, answeredAt: at };
+      continue;
+    }
+    if (field === "risk_comfort" || field === "work_preference") {
+      const choices = field === "risk_comfort"
+        ? MONEY_RISK_CHOICES
+        : MONEY_WORK_PREFERENCES;
+      if (!choices.has(entry.value)) continue;
       const raw = cleanRawMoneyAnswer(entry.raw);
       if (!raw) continue;
       answers[field] = {
@@ -1846,7 +2020,8 @@ function normalizeMoneyMap(stored) {
     if (
       (field === "contract_months_per_year" && value > 12n) ||
       (field === "horizon_years" && (value < 1n || value > 80n)) ||
-      (field === "family_monthly_needs" && value < 1n)
+      (field === "family_monthly_needs" && value < 1n) ||
+      (field === "weekly_free_hours" && value > 80n)
     ) {
       continue;
     }
@@ -1909,7 +2084,8 @@ function moneyAnswerValidation(params, store) {
     "integer_value",
     "currency",
     "raw_answer",
-    "choice"
+    "choice",
+    "text_value"
   ]);
   const extras = Object.keys(params || {}).filter((key) => !allowed.has(key));
   if (extras.length) {
@@ -1928,6 +2104,41 @@ function moneyAnswerValidation(params, store) {
   if (!raw) {
     return { ok: false, message: "Keep the user's original spoken answer in raw_answer." };
   }
+  if (field === "skills") {
+    const value = typeof params.text_value === "string"
+      ? cleanMoneyMapTextValue(params.text_value)
+      : "";
+    if (!value || [...value].length > 300) {
+      return {
+        ok: false,
+        message: "Skills must be a non-empty text answer from one to 300 characters."
+      };
+    }
+    if (
+      params.integer_value !== undefined ||
+      params.currency !== undefined ||
+      params.choice !== undefined
+    ) {
+      return { ok: false, message: "Skills accept text_value only." };
+    }
+    return { ok: true, field, entry: { raw, value } };
+  }
+  if (field === "work_preference") {
+    if (!MONEY_WORK_PREFERENCES.has(params.choice)) {
+      return {
+        ok: false,
+        message: "Work preference must be remote_digital, local_in_person, or mixed."
+      };
+    }
+    if (
+      params.integer_value !== undefined ||
+      params.currency !== undefined ||
+      params.text_value !== undefined
+    ) {
+      return { ok: false, message: "Work preference accepts a choice, not text or a number." };
+    }
+    return { ok: true, field, entry: { raw, value: params.choice } };
+  }
   if (field === "risk_comfort") {
     if (!MONEY_RISK_CHOICES.has(params.choice)) {
       return {
@@ -1935,7 +2146,11 @@ function moneyAnswerValidation(params, store) {
         message: "Risk comfort must be sleep_normally, worry, or want_out."
       };
     }
-    if (params.integer_value !== undefined || params.currency !== undefined) {
+    if (
+      params.integer_value !== undefined ||
+      params.currency !== undefined ||
+      params.text_value !== undefined
+    ) {
       return { ok: false, message: "Risk comfort accepts a choice, not a numeric amount." };
     }
     return {
@@ -1947,7 +2162,7 @@ function moneyAnswerValidation(params, store) {
       }
     };
   }
-  if (params.choice !== undefined) {
+  if (params.choice !== undefined || params.text_value !== undefined) {
     return { ok: false, message: "Numeric Money Map answers do not accept a sleep-test choice." };
   }
   if (!Number.isSafeInteger(params.integer_value) || params.integer_value < 0) {
@@ -1961,6 +2176,9 @@ function moneyAnswerValidation(params, store) {
   }
   if (field === "family_monthly_needs" && params.integer_value < 1) {
     return { ok: false, message: "Family monthly needs must be at least one whole currency unit." };
+  }
+  if (field === "weekly_free_hours" && params.integer_value > 80) {
+    return { ok: false, message: "Weekly free hours must be a whole number from zero through eighty." };
   }
   if (field === "contract_monthly_income") {
     if (!/^[A-Za-z]{3}$/.test(String(params.currency || ""))) {
@@ -2028,8 +2246,19 @@ function deriveMoneyMap(store) {
       maxPermanentLoss: maxPermanentLoss.toString(),
       horizonYears: store.answers.horizon_years.value,
       riskComfort: store.answers.risk_comfort.value,
+      skills: store.answers.skills ? store.answers.skills.value : null,
+      weeklyFreeHours: store.answers.weekly_free_hours
+        ? store.answers.weekly_free_hours.value
+        : null,
+      incomeTargetMonthly: store.answers.income_target_monthly
+        ? store.answers.income_target_monthly.value
+        : null,
+      workPreference: store.answers.work_preference
+        ? store.answers.work_preference.value
+        : null,
       annualIncome: annualIncome.toString(),
       annualNeeds: annualNeeds.toString(),
+      financialPressure: annualNeeds > annualIncome,
       headroom: headroom.toString(),
       emergencyTarget: emergencyTarget.toString(),
       emergencyFunded: emergencyFunded.toString(),
@@ -2071,6 +2300,23 @@ function moneyMapPresentation(store) {
     map.currentStage === 1
       ? `Stage 1 is current, with ${userMoney(map.currency, map.emergencyGap)} still to fill.`
       : "Stage 2 is current because the stored liquid reserve meets the Stage 1 target.";
+  const incomePathDetails = [
+    store.answers.skills
+      ? `You listed “${map.skills}” as skills to test`
+      : null,
+    store.answers.weekly_free_hours
+      ? `you can honestly give ${map.weeklyFreeHours} whole hours in a typical week`
+      : null,
+    store.answers.income_target_monthly
+      ? `your extra monthly target is ${userMoney(map.currency, map.incomeTargetMonthly)}`
+      : null,
+    store.answers.work_preference
+      ? `your work preference is ${moneyAnswerDisplay("work_preference", map.workPreference, map.currency)}`
+      : null
+  ].filter(Boolean);
+  const incomePathText = incomePathDetails.length
+    ? `Income paths. ${incomePathDetails.join("; ")}. These are planning inputs, not a promise of income or a recommended platform.`
+    : "";
   return {
     ok: true,
     map,
@@ -2095,6 +2341,8 @@ function moneyMapPresentation(store) {
       `which is no more than one fifth of the calculated pool and never more than your stored permanent-loss limit of ` +
       `${userMoney(map.currency, map.maxPermanentLoss)}. This is not an amount I recommend investing. ` +
       `The full principal can be lost, and no borrowing or leverage belongs here. ${mapRiskLine(map.riskComfort)}\n\n` +
+      `${incomePathText}` +
+      (incomePathText ? "\n\n" : "") +
       `${MONEY_MAP_CLOSE}`
   };
 }
@@ -2103,6 +2351,40 @@ async function readDerivedMoneyMap(ctx) {
   if (!ctx || typeof ctx.readJson !== "function") return null;
   const stored = await ctx.readJson("money-map.json", null);
   return deriveMoneyMap(normalizeMoneyMap(stored));
+}
+
+function moneyIncomePathProfile(store) {
+  const skills = store && store.answers && store.answers.skills;
+  const preference = store && store.answers && store.answers.work_preference;
+  if (
+    !skills ||
+    typeof skills.value !== "string" ||
+    !preference ||
+    !MONEY_WORK_PREFERENCES.has(preference.value)
+  ) {
+    return null;
+  }
+  return { skills: skills.value, workPreference: preference.value };
+}
+
+function incomePathSearchQueries(profile) {
+  const skills = profile.skills;
+  if (profile.workPreference === "remote_digital") {
+    return [
+      `remote freelance ${skills} side income`,
+      `digital ${skills} services demand`
+    ];
+  }
+  if (profile.workPreference === "local_in_person") {
+    return [
+      `freelance ${skills} side income`,
+      `local ${skills} services demand`
+    ];
+  }
+  return [
+    `freelance ${skills} side income`,
+    `local and remote ${skills} services demand`
+  ];
 }
 
 function moneyResearchStageContext(personalMap) {
@@ -2143,12 +2425,23 @@ function moneyResearchStageContext(personalMap) {
 
 function moneyAnswerDisplay(field, value, currency) {
   if (MONEY_FIELDS.has(field)) return userMoney(currency, value);
+  if (field === "skills") return `“${value}”`;
   if (field === "contract_months_per_year") {
     return `${value} contract month${value === "1" ? "" : "s"} per year`;
   }
   if (field === "horizon_years") {
     return `${value} year${value === "1" ? "" : "s"}`;
   }
+  if (field === "weekly_free_hours") {
+    return `${value} whole hour${value === "1" ? "" : "s"} per week`;
+  }
+  if (field === "work_preference" && value === "remote_digital") {
+    return "remote digital work";
+  }
+  if (field === "work_preference" && value === "local_in_person") {
+    return "local in-person work";
+  }
+  if (field === "work_preference" && value === "mixed") return "a mix";
   if (value === "sleep_normally") return "sleep normally";
   if (value === "want_out") return "want out";
   return "worry but stay with the plan";
@@ -2158,7 +2451,14 @@ function validateMoneyUpdateParams(params, store) {
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     return { ok: false, message: "The Money Map update must be one structured answer." };
   }
-  const allowed = new Set(["field", "integer_value", "currency", "raw_answer", "choice"]);
+  const allowed = new Set([
+    "field",
+    "integer_value",
+    "currency",
+    "raw_answer",
+    "choice",
+    "text_value"
+  ]);
   const extra = Object.keys(params).find((key) => !allowed.has(key));
   if (extra) return { ok: false, message: `Unknown money-map update argument: ${extra}.` };
   if (!MONEY_MAP_FIELD_SET.has(params.field)) {
@@ -2528,7 +2828,7 @@ const SKILLS = [
   {
     name: "money_map",
     description:
-      "Show or build the user's personal Money Map from seven ordered, whole-unit planning answers. " +
+      "Show or build the user's personal Money Map from eleven ordered planning answers. " +
       "Use for 'my money map', 'build my plan', or 'investment plan'. With no complete map, ask " +
       "exactly the next question; action answer records only that first unanswered field. " +
       "Never use this skill to overwrite an answer — use update_money_map for that confirmed path.",
@@ -2554,12 +2854,19 @@ const SKILLS = [
         },
         currency: {
           type: "string",
-          description: "Three-letter planning currency on the first monetary answer."
+          description:
+            "Three-letter planning currency on the first answer; any later monetary use must match it."
         },
         choice: {
           type: "string",
-          enum: [...MONEY_RISK_CHOICES],
-          description: "Sleep-test choice, only for risk_comfort."
+          enum: [...MONEY_RISK_CHOICES, ...MONEY_WORK_PREFERENCES],
+          description: "Enumerated choice for risk_comfort or work_preference."
+        },
+        text_value: {
+          type: "string",
+          minLength: 1,
+          maxLength: 300,
+          description: "Sanitized skills text, only for the skills field."
         },
         raw_answer: {
           type: "string",
@@ -2638,7 +2945,8 @@ const SKILLS = [
     description:
       "Change exactly one existing Money Map interview answer. Use only when the user explicitly " +
       "corrects or updates income, contract months, family needs, liquid savings, permanent-loss cap, " +
-      "horizon, or sleep-test comfort. This always names the old and new value and requires confirmation.",
+      "horizon, sleep-test comfort, skills, free hours, income target, or work preference. " +
+      "This always names the old and new value and requires confirmation.",
     requiresConfirmation: true,
     paramSchema: {
       type: "object",
@@ -2656,12 +2964,18 @@ const SKILLS = [
         },
         currency: {
           type: "string",
-          description: "The unchanged three-letter planning currency when updating contract income."
+          description: "The unchanged three-letter planning currency for a monetary update."
         },
         choice: {
           type: "string",
-          enum: [...MONEY_RISK_CHOICES],
-          description: "New sleep-test choice, only for risk_comfort."
+          enum: [...MONEY_RISK_CHOICES, ...MONEY_WORK_PREFERENCES],
+          description: "New enumerated choice for risk_comfort or work_preference."
+        },
+        text_value: {
+          type: "string",
+          minLength: 1,
+          maxLength: 300,
+          description: "New sanitized skills text, only for the skills field."
         },
         raw_answer: {
           type: "string",

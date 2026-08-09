@@ -231,6 +231,16 @@ const NEGATED_RADAR_ACTION_RE = new RegExp(
     String.raw`\s*$`,
   "i"
 );
+const MONEY_MAP_UPDATE_SUBJECT =
+  String.raw`(?:money\s+map|income|contract\s+months?|family\s+(?:needs?|costs?)|monthly\s+needs?|savings?|loss\s+(?:cap|limit)|could\s+lose|horizon|years?\s+until|risk\s+comfort|sleep\s+test|(?:side[ -]income|income[ -]path|money[ -]making)\s+skills?|(?:weekly\s+)?free\s+hours?|side[ -]income\s+hours?|work\s+preference)`;
+const MONEY_MAP_UPDATE_PATTERN = new RegExp(
+  String.raw`\b(?:actually|update|change|correct|revise)\b[^.?!]{0,70}\b` +
+    MONEY_MAP_UPDATE_SUBJECT +
+    String.raw`\b|\b` +
+    MONEY_MAP_UPDATE_SUBJECT +
+    String.raw`\b[^.?!]{0,50}\b(?:has\s+changed|is\s+actually|should\s+be)\b`,
+  "i"
+);
 
 export function radarActionForText(text) {
   const value = String(text || "");
@@ -246,8 +256,7 @@ const FAMILY_PATTERNS = {
   briefing: /\b(?:my\s+(?:morning\s+)?brief|morning\s+brief|what(?:['’]s|\s+is)\s+my\s+day)\b/i,
   radar_update: RADAR_UPDATE_PATTERN,
   radar: RADAR_READ_PATTERN,
-  map_update:
-    /\b(?:actually|update|change|correct|revise)\b[^.?!]{0,70}\b(?:money\s+map|income|contract\s+months?|family\s+(?:needs?|costs?)|monthly\s+needs?|savings?|loss\s+(?:cap|limit)|could\s+lose|horizon|years?\s+until|risk\s+comfort|sleep\s+test)\b|\b(?:income|contract\s+months?|family\s+(?:needs?|costs?)|monthly\s+needs?|savings?|loss\s+(?:cap|limit)|horizon|risk\s+comfort|sleep\s+test)\b[^.?!]{0,50}\b(?:has\s+changed|is\s+actually|should\s+be)\b/i,
+  map_update: MONEY_MAP_UPDATE_PATTERN,
   school: MONEY_SCHOOL_PATTERN,
   map:
     /\b(?:my\s+money\s+map|money\s+map|(?:show|build|make|give)\s+me\s+(?:my\s+)?(?:money\s+map|investment\s+plan)|build\s+my\s+(?:money\s+map|investment\s+plan|plan)|my\s+investment\s+plan)\b|^\s*(?:an?\s+)?investment\s+plan\s*[?!.]*$/i,
