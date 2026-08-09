@@ -130,6 +130,10 @@ export function fakeToolResult(name, args = {}) {
       return { ok: true, content: `Saved contact (synthetic): ${args.name || ""}.` };
     case "send_message":
       return { ok: true, content: "(Simulated) message not actually sent — evaluation mode." };
+    case "log_set":
+      return { ok: true, content: "(Simulated) set recorded — evaluation mode." };
+    case "gym_status":
+      return { ok: true, content: "(Simulated) gym status — evaluation mode." };
     case "search_notes":
       return {
         ok: true,

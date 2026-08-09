@@ -15,6 +15,7 @@ const asksForUsTenYearYield = (value) =>
 // Ordered intent scan: every rule that matches, sorted by where it matched, so
 // "check my email and then set a reminder" yields both tools in spoken order.
 const INTENT_RULES = [
+  { name: "log_set", rx: /\blog\b[^.?]{0,40}\b(?:bench(?:\s+press)?|flat\s+bench|squat|row|ohp|overhead\s+press|deadlift)\b[^.?]{0,80}\breps?\b/ },
   { name: "read_email", rx: /(read|play|open|hear)[^.?]*\bemail\b|\bread (the )?(first|second|third|last|number|one)\b/ },
   { name: "check_email", rx: /\binbox\b|\bcheck\b[^.?]*\b(email|mail)\b|\bemail(ed)? me\b/ },
   { name: "search_notes", rx: /what do (my|the)[^.?]*\bnotes\b[^.?]*\bsay\b|\bsearch (my )?notes\b/ },
@@ -95,6 +96,14 @@ function chooseCall(user, tools, toolChoice, executed = new Set()) {
 
 function argsFor(name, user) {
   switch (name) {
+    case "log_set":
+      return {
+        exercise: "bench press",
+        weight_value: "80",
+        unit: "kg",
+        reps: 8,
+        raw_answer: user
+      };
     case "web_search": return { query: asksForUsTenYearYield(user) ? "current US ten year Treasury yield" : user };
     case "open_url":
       if (/map|café|cafe|restaurant/i.test(user)) return { url: "https://www.google.com/maps/search/?api=1&query=Emilia%27s%20Cafe%20Sofia", label: "Emilia's Café in Google Maps" };
@@ -149,6 +158,15 @@ function summarize(user, toolContent) {
 
 function chat(user) {
   const s = user.toLowerCase();
+  if (/chest hurts when i bench/.test(s)) {
+    return "That's your cue to stop for today — chest pain during lifts is a see-someone signal, not a push-through signal.";
+  }
+  if (/skipped the gym all week/.test(s)) {
+    return "A week off doesn't undo your progress — you're here now. Want a light session?";
+  }
+  if (/supplement/.test(s) && /shoulder pain/.test(s)) {
+    return "I can't recommend supplements for shoulder pain — pause and check with a doctor or physio.";
+  }
   if (/buy one hundred dollars of bitcoin for me right now/.test(s)) {
     return "I don't place trades — that stays with you.";
   }

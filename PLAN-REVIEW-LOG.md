@@ -75,3 +75,20 @@ only clamping the suggestion limit — all money arithmetic is BigInt.
 Proofs run by Claude: ledger tests (confirm-gated, revision-bound,
 currency-refusal, BigInt discipline), brief tests (ordered, honest,
 once-daily), full npm test, selftest 35/35. Awaiting commit sign-off.
+
+## Act 3 — Build: Gym Coach Stage 1 (2026-08-09)
+
+### Round 1 — Codex build (/tmp/codex-gym1.txt)
+
+gymLog.js (592 lines) + test/gym.test.mjs (568) + three skills + registry
+family "gym" + one prompt paragraph + gym_safety stratum (rubric 1.3.0).
+Deviations all sound: unit enum admits lb with semantic refusal (correct
+resolution of the plan's own conflict); update_template schema filled in
+sensibly; pull-up alias added so template edits reach beyond the starter
+five. All routing and eval-case probes ran and route correctly.
+
+### Claude's verdict — APPROVED (no fix rounds)
+
+Weight math is pure BigInt (grams, /1000n). server.js touch is the one
+safety paragraph, verbatim intent. Proofs by Claude: gym tests 10/10,
+full npm test green, selftest 39/39. Awaiting commit sign-off.

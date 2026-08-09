@@ -61,6 +61,9 @@ const META = {
   },
   update_ledger:   { family: "ledger",   effect: "mutation", confirm: "always" },
   money_status:    { family: "ledger",   effect: "read" },
+  log_set:         { family: "gym",      effect: "mutation", confirm: "always" },
+  gym_status:      { family: "gym",      effect: "read" },
+  update_template: { family: "gym",      effect: "mutation", confirm: "always" },
   open_url:        { family: "navigate", effect: "client" },
   play_media:      { family: "media",    effect: "client" },
   search_notes:    { family: "vault",    effect: "read",     requires: "vault", forceFamilies: ["vault_read"] },
@@ -120,6 +123,7 @@ export const ACTIONABLE_FAMILIES = new Set([
   "map",
   "map_update",
   "ledger",
+  "gym",
   "vault",
   "vault_read",
   "meeting",
@@ -287,6 +291,51 @@ const LEDGER_PATTERN = new RegExp(
   `${LEDGER_WRITE_PATTERN.source}|${LEDGER_STATUS_PATTERN.source}`,
   "i"
 );
+const GYM_EXERCISE =
+  String.raw`(?:bench(?:\s+press)?|flat\s+bench|(?:back\s+)?squat|(?:barbell\s+)?row|ohp|overhead\s+press|shoulder\s+press|military\s+press|deadlift|pull(?:[ -]?up)s?)`;
+const GYM_WEIGHT_UNIT = String.raw`(?:kg|kgs|kilo|kilos|kilogram|kilograms)`;
+const GYM_REPS = String.raw`(?:reps?|repetitions?)`;
+const GYM_LOG_PATTERN = new RegExp(
+  String.raw`^\s*` +
+    LEDGER_COMMAND_PREFIX +
+    String.raw`(?:` +
+      String.raw`(?:log|record|add)\s+(?:(?:a|this)\s+)?set` +
+      String.raw`|` +
+      String.raw`(?:(?:log|record)\s+)?${GYM_EXERCISE}\b` +
+      String.raw`(?=[^.?!]{0,80}\b${GYM_WEIGHT_UNIT}\b)` +
+      String.raw`(?=[^.?!]{0,120}\b${GYM_REPS}\b)[^.?!]{0,140}` +
+    String.raw`)` +
+    LEDGER_COMMAND_TRAILER +
+    String.raw`\s*$`,
+  "i"
+);
+const GYM_STATUS_PATTERN = new RegExp(
+  String.raw`^\s*` +
+    LEDGER_COMMAND_PREFIX +
+    String.raw`(?:gym\s+status|am\s+i\s+getting\s+stronger|` +
+      String.raw`(?:what|how\s+much)\s+did\s+i\s+${GYM_EXERCISE}` +
+      String.raw`(?:\s+(?:last\s+time|today|this\s+week))?)` +
+    LEDGER_COMMAND_TRAILER +
+    String.raw`\s*$`,
+  "i"
+);
+const GYM_TEMPLATE_PATTERN = new RegExp(
+  String.raw`^\s*` +
+    LEDGER_COMMAND_PREFIX +
+    String.raw`(?:` +
+      String.raw`(?:update|change|edit)\s+(?:(?:my|the)\s+)?(?:(?:gym|workout)\s+)?template` +
+      String.raw`|(?:change|set|update)\s+${GYM_EXERCISE}\s+targets?\b[^.?!]{0,100}` +
+      String.raw`|(?:replace|change)\s+${GYM_EXERCISE}\s+(?:with|to)\s+${GYM_EXERCISE}` +
+      String.raw`(?:\s+in\s+(?:(?:my|the)\s+)?(?:(?:gym|workout)\s+)?template)?` +
+    String.raw`)` +
+    LEDGER_COMMAND_TRAILER +
+    String.raw`\s*$`,
+  "i"
+);
+const GYM_PATTERN = new RegExp(
+  `${GYM_LOG_PATTERN.source}|${GYM_STATUS_PATTERN.source}|${GYM_TEMPLATE_PATTERN.source}`,
+  "i"
+);
 
 export function radarActionForText(text) {
   const value = String(text || "");
@@ -307,6 +356,7 @@ const FAMILY_PATTERNS = {
   map:
     /\b(?:my\s+money\s+map|money\s+map|(?:show|build|make|give)\s+me\s+(?:my\s+)?(?:money\s+map|investment\s+plan)|build\s+my\s+(?:money\s+map|investment\s+plan|plan)|my\s+investment\s+plan)\b|^\s*(?:an?\s+)?investment\s+plan\s*[?!.]*$/i,
   ledger: LEDGER_PATTERN,
+  gym: GYM_PATTERN,
   vault:
     /\b(?:save|capture|append|write|put|add)\b[^.?!]{0,80}\b(?:obsidian|vault|daily\s+note)\b|\b(?:obsidian|vault|daily\s+note)\b[^.?!]{0,80}\b(?:save|capture|append|write|put|add)\b/i,
   vault_read:
@@ -347,7 +397,7 @@ const PRONOUN_ONLY_RE =
 // edge: "don't open anything" contains "open". An explicitly negated action is
 // conversation, and forcing a tool there would be acting against instruction.
 const NEGATED_ACTION_RE =
-  /\b(don['’]?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|replay|recall|find|send|text|message|remind|remember|check|save|add|cancel|delete|trash|move|nudge|chase|follow(?:[ -]?up)|teach|build|update|change|correct)\w*\b/i;
+  /\b(don['’]?t|do not|never|no need to|rather than|instead of|without)\s+(\w+\s+){0,2}(open|play|read|show|replay|recall|find|send|text|message|remind|remember|check|save|add|log|record|cancel|delete|trash|move|nudge|chase|follow(?:[ -]?up)|teach|build|update|change|replace|correct)\w*\b/i;
 const NEGATED_MEETING_ACTION_RE =
   /\b(?:don['’]?t|do\s+not|never|no\s+need\s+to|rather\s+not|without)\b[^.?!;]{0,80}\b(?:read|show|replay|recall|find)\w*\b[^.?!;]{0,50}\bmeeting\s+notes\b/i;
 const NEGATED_FOLLOWUP_ACTION_RE =
@@ -580,6 +630,14 @@ export function classifyIntent(text, caps = {}, history = []) {
   // the server would keep asking for a write after money_status succeeded).
   if (matched === "ledger") {
     const requestedTool = LEDGER_STATUS_PATTERN.test(s) ? "money_status" : "update_ledger";
+    expectedTools = expectedTools.filter((tool) => tool.name === requestedTool);
+  }
+  if (matched === "gym") {
+    const requestedTool = GYM_STATUS_PATTERN.test(s)
+      ? "gym_status"
+      : GYM_TEMPLATE_PATTERN.test(s)
+        ? "update_template"
+        : "log_set";
     expectedTools = expectedTools.filter((tool) => tool.name === requestedTool);
   }
   const expected = expectedTools.map((t) => t.name);

@@ -32,6 +32,17 @@ import {
   validateLedgerChange
 } from "./moneyLedger.js";
 import {
+  STARTER_TEMPLATE,
+  applySet,
+  applyTemplateEdit,
+  canonicalExercise,
+  consistency,
+  normalizeGymLog,
+  progress,
+  spokenKg,
+  validateSet
+} from "./gymLog.js";
+import {
   appendToDaily,
   readNote,
   searchNotes,
@@ -2554,9 +2565,9 @@ function ledgerRevisionIsUsable(stored) {
   );
 }
 
-function stableLedgerJson(value) {
+function stableJson(value) {
   if (Array.isArray(value)) {
-    return `[${value.map(stableLedgerJson).join(",")}]`;
+    return `[${value.map(stableJson).join(",")}]`;
   }
   if (value && typeof value === "object") {
     return (
@@ -2564,7 +2575,7 @@ function stableLedgerJson(value) {
       Object.keys(value)
         .filter((key) => value[key] !== undefined)
         .sort()
-        .map((key) => `${JSON.stringify(key)}:${stableLedgerJson(value[key])}`)
+        .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
         .join(",") +
       "}"
     );
@@ -2573,7 +2584,7 @@ function stableLedgerJson(value) {
 }
 
 function ledgerStateIsCanonical(stored, normalized) {
-  return stored == null || stableLedgerJson(stored) === stableLedgerJson(normalized);
+  return stored == null || stableJson(stored) === stableJson(normalized);
 }
 
 function exactLedgerContent(summary, subject) {
@@ -2812,6 +2823,319 @@ async function executeLedgerUpdate(params, ctx) {
     summary,
     content: exactLedgerContent(summary, "ledger result"),
     ledger: updated
+  };
+}
+
+const confirmedGymSets = new WeakMap();
+const confirmedTemplateEdits = new WeakMap();
+
+function gymFailure(summary, content = summary) {
+  return { ok: false, summary, content };
+}
+
+function gymRevisionIsUsable(stored) {
+  return (
+    stored == null ||
+    (
+      typeof stored === "object" &&
+      !Array.isArray(stored) &&
+      Number.isSafeInteger(stored.revision) &&
+      stored.revision >= 0 &&
+      stored.revision < Number.MAX_SAFE_INTEGER
+    )
+  );
+}
+
+function gymStateIsCanonical(stored, normalized) {
+  return stored == null || stableJson(stored) === stableJson(normalized);
+}
+
+function exactGymContent(summary, subject) {
+  return (
+    `${summary}\n\nRead this code-built ${subject} exactly. ` +
+    "Do not add, omit, paraphrase, or recalculate any set, weight, rep, or suggestion. " +
+    "End after the final sentence above."
+  );
+}
+
+function gymClock(ctx) {
+  let supplied;
+  try {
+    supplied = typeof ctx.now === "function" ? ctx.now() : new Date();
+  } catch (error) {
+    supplied = Number.NaN;
+  }
+  const parsed = new Date(supplied);
+  return Number.isFinite(parsed.getTime()) ? parsed : new Date();
+}
+
+function sameGymValue(left, right) {
+  return stableJson(left) === stableJson(right);
+}
+
+async function prepareGymSet(params, ctx) {
+  let stored;
+  let log;
+  try {
+    stored = await ctx.readJson("gym-log.json", null);
+    log = normalizeGymLog(stored);
+  } catch (error) {
+    return gymFailure("I could not read the gym log, so I will not change it.");
+  }
+  if (!gymRevisionIsUsable(stored)) {
+    return gymFailure("The gym-log revision is invalid, so I will not change it.");
+  }
+  if (!gymStateIsCanonical(stored, log)) {
+    return gymFailure("The gym log is malformed, so I will not change it.");
+  }
+  const now = gymClock(ctx);
+  const today = localDateKey(now);
+  const validation = validateSet(params, log, today);
+  if (!validation.ok) return gymFailure(validation.message);
+  confirmedGymSets.set(params, {
+    revision: log.revision,
+    today,
+    set: { ...validation.set },
+    paramsJson: stableJson(params)
+  });
+  return { ok: true };
+}
+
+async function executeGymSet(params, ctx) {
+  const confirmed =
+    params && typeof params === "object" ? confirmedGymSets.get(params) : null;
+  if (params && typeof params === "object") confirmedGymSets.delete(params);
+  if (!confirmed) {
+    return gymFailure(
+      "That set has no live confirmed snapshot, so nothing changed.",
+      "Run log_set through precheck and explicit confirmation before execution."
+    );
+  }
+
+  let stored;
+  let log;
+  try {
+    stored = await ctx.readJson("gym-log.json", null);
+    log = normalizeGymLog(stored);
+  } catch (error) {
+    return gymFailure("I could not re-read the gym log, so nothing changed.");
+  }
+  const now = gymClock(ctx);
+  const today = localDateKey(now);
+  const validation = validateSet(params, log, today);
+  if (
+    !validation.ok ||
+    !gymRevisionIsUsable(stored) ||
+    !gymStateIsCanonical(stored, log) ||
+    log.revision !== confirmed.revision ||
+    today !== confirmed.today ||
+    !sameGymValue(validation.set, confirmed.set) ||
+    stableJson(params) !== confirmed.paramsJson
+  ) {
+    return gymFailure("The gym log changed before you confirmed, so nothing changed.");
+  }
+
+  const updated = applySet(log, validation, now.toISOString());
+  await ctx.writeJson("gym-log.json", updated);
+  const set = validation.set;
+  const summary =
+    `Recorded ${set.exerciseName}, ${spokenKg(set.weightGrams)}, ` +
+    `${set.reps} reps — set ${set.setNumber}.`;
+  return {
+    ok: true,
+    summary,
+    content: exactGymContent(summary, "gym result"),
+    gymLog: updated
+  };
+}
+
+function gymSetFact(set) {
+  return `${spokenKg(set.weightGrams)} for ${set.reps} rep${set.reps === 1 ? "" : "s"}`;
+}
+
+function gymExerciseStatus(log, exercise, today) {
+  const statusLog = { ...log, updatedAt: `${today}T12:00:00.000Z` };
+  const result = progress(statusLog, exercise.slug);
+  const lines = [];
+  if (result.lastSession) {
+    lines.push(
+      `Last ${exercise.name} session on ${result.lastSession.date}: ` +
+      result.lastSession.sets.map(gymSetFact).join("; ") + "."
+    );
+  } else {
+    lines.push(`No previous ${exercise.name} session is logged.`);
+  }
+  if (result.pr) {
+    lines.push(
+      `${exercise.name} PR: ${gymSetFact(result.pr)} on ${result.pr.date}.`
+    );
+  } else {
+    lines.push(`No ${exercise.name} PR is logged yet.`);
+  }
+  if (result.suggestion) lines.push(result.suggestion);
+  return lines.join(" ");
+}
+
+function latestGymPr(log, today) {
+  const statusLog = { ...log, updatedAt: `${today}T12:00:00.000Z` };
+  const slugs = [];
+  for (const workout of log.workouts) {
+    for (const set of workout.sets) {
+      if (!slugs.includes(set.exerciseSlug)) slugs.push(set.exerciseSlug);
+    }
+  }
+  let latest = null;
+  for (const slug of slugs) {
+    const exercise = canonicalExercise(slug);
+    const pr = progress(statusLog, slug).pr;
+    if (!exercise || !pr) continue;
+    if (!latest || pr.date > latest.pr.date) latest = { exercise, pr };
+  }
+  return latest;
+}
+
+function overallGymStatus(log, today) {
+  const lines = [];
+  const todayWorkout = log.workouts.find((workout) => workout.date === today);
+  if (todayWorkout && todayWorkout.sets.length) {
+    lines.push(
+      "Today: " +
+      todayWorkout.sets.map((set) =>
+        `${set.exerciseName}, ${spokenKg(set.weightGrams)} for ${set.reps} ` +
+        `rep${set.reps === 1 ? "" : "s"} — set ${set.setNumber}`
+      ).join("; ") + "."
+    );
+  } else {
+    lines.push("No sets are logged today.");
+  }
+  const weekly = consistency(log, today, 1).workoutsPerWeek[0] || 0;
+  lines.push(`This week: ${weekly} workout${weekly === 1 ? "" : "s"}.`);
+  const latest = latestGymPr(log, today);
+  lines.push(latest
+    ? `Most recent PR: ${latest.exercise.name}, ${gymSetFact(latest.pr)} on ${latest.pr.date}.`
+    : "No PRs are logged yet.");
+  return lines.join(" ");
+}
+
+function templateEditEntries(log, params) {
+  const templateId = briefText(params && params.template_id, STARTER_TEMPLATE.id, 80);
+  const exercise = canonicalExercise(params && params.exercise);
+  const replacement = params && params.replacement_exercise === undefined
+    ? exercise
+    : canonicalExercise(params && params.replacement_exercise);
+  const template = log.templates.find((entry) => entry.id === templateId);
+  const oldEntry = template && exercise
+    ? template.exercises.find((entry) => entry.slug === exercise.slug)
+    : null;
+  const newEntry = template && replacement
+    ? template.exercises.find((entry) => entry.slug === replacement.slug)
+    : null;
+  return { templateId, exercise, replacement, oldEntry, newEntry };
+}
+
+async function prepareTemplateEdit(params, ctx) {
+  let stored;
+  let log;
+  try {
+    stored = await ctx.readJson("gym-log.json", null);
+    log = normalizeGymLog(stored);
+  } catch (error) {
+    return gymFailure("I could not read the gym templates, so I will not change them.");
+  }
+  if (!gymRevisionIsUsable(stored)) {
+    return gymFailure("The gym-log revision is invalid, so I will not change it.");
+  }
+  if (!gymStateIsCanonical(stored, log)) {
+    return gymFailure("The gym log is malformed, so I will not change it.");
+  }
+  const now = gymClock(ctx);
+  const updated = applyTemplateEdit(log, {
+    ...params,
+    expected_revision: log.revision
+  }, now.toISOString());
+  if (updated && updated.ok === false) return gymFailure(updated.message);
+  const before = templateEditEntries(log, params);
+  const after = templateEditEntries(updated, params);
+  if (!before.oldEntry || !after.newEntry || !before.exercise || !after.replacement) {
+    return gymFailure("I could not prepare that one template change.");
+  }
+  confirmedTemplateEdits.set(params, {
+    revision: log.revision,
+    templateId: before.templateId,
+    exercise: before.exercise,
+    replacement: after.replacement,
+    oldEntry: { ...before.oldEntry },
+    newEntry: { ...after.newEntry },
+    paramsJson: stableJson(params)
+  });
+  return { ok: true };
+}
+
+function templateEditSummary(selection) {
+  const oldName = selection.exercise.name.toLowerCase();
+  const newName = selection.replacement.name.toLowerCase();
+  const oldEntry = selection.oldEntry;
+  const newEntry = selection.newEntry;
+  const change = selection.exercise.slug === selection.replacement.slug
+    ? `${oldName} targets`
+    : `${oldName} to ${newName}, with targets`;
+  let summary =
+    `Changed ${change} from ${oldEntry.targetSets} by ${oldEntry.targetReps} ` +
+    `to ${newEntry.targetSets} by ${newEntry.targetReps}`;
+  if (oldEntry.restSeconds !== newEntry.restSeconds) {
+    summary += `, and rest from ${oldEntry.restSeconds} to ${newEntry.restSeconds} seconds`;
+  }
+  return `${summary}.`;
+}
+
+async function executeTemplateEdit(params, ctx) {
+  const confirmed =
+    params && typeof params === "object" ? confirmedTemplateEdits.get(params) : null;
+  if (params && typeof params === "object") confirmedTemplateEdits.delete(params);
+  if (!confirmed) {
+    return gymFailure(
+      "That template edit has no live confirmed snapshot, so nothing changed.",
+      "Run update_template through precheck and explicit confirmation before execution."
+    );
+  }
+
+  let stored;
+  let log;
+  try {
+    stored = await ctx.readJson("gym-log.json", null);
+    log = normalizeGymLog(stored);
+  } catch (error) {
+    return gymFailure("I could not re-read the gym templates, so nothing changed.");
+  }
+  const current = templateEditEntries(log, params);
+  if (
+    !gymRevisionIsUsable(stored) ||
+    !gymStateIsCanonical(stored, log) ||
+    log.revision !== confirmed.revision ||
+    stableJson(params) !== confirmed.paramsJson ||
+    current.templateId !== confirmed.templateId ||
+    !sameGymValue(current.oldEntry, confirmed.oldEntry)
+  ) {
+    return gymFailure("The gym log changed before you confirmed, so nothing changed.");
+  }
+  const updated = applyTemplateEdit(log, {
+    ...params,
+    expected_revision: log.revision
+  }, gymClock(ctx).toISOString());
+  const after = updated && updated.ok !== false ? templateEditEntries(updated, params) : null;
+  if (
+    !after ||
+    !sameGymValue(after.newEntry, confirmed.newEntry)
+  ) {
+    return gymFailure("The gym log changed before you confirmed, so nothing changed.");
+  }
+  await ctx.writeJson("gym-log.json", updated);
+  const summary = templateEditSummary(confirmed);
+  return {
+    ok: true,
+    summary,
+    content: exactGymContent(summary, "template result"),
+    gymLog: updated
   };
 }
 
@@ -3513,6 +3837,215 @@ const SKILLS = [
         content: exactLedgerContent(summary, "money status"),
         ledger
       };
+    }
+  },
+  {
+    name: "log_set",
+    description:
+      "Record one spoken gym set in the local gym log. Use for a named exercise with a " +
+      "kilogram weight and reps, or for 'log a set'. The parsed exercise, weight, reps, and " +
+      "set number are always spoken back for confirmation before this writes.",
+    requiresConfirmation: true,
+    paramSchema: {
+      type: "object",
+      properties: {
+        exercise: {
+          type: "string",
+          minLength: 1,
+          maxLength: 80,
+          description: "The exercise exactly as the user said it; never guess an unknown exercise."
+        },
+        weight_value: {
+          type: "string",
+          pattern: "^(0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+          description: "Kilograms as digits, with up to three decimal places; never a floating number."
+        },
+        unit: {
+          type: "string",
+          enum: ["kg", "lb"],
+          description: "The spoken weight unit. Pounds are recognized but refused in version one."
+        },
+        reps: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description: "Whole repetitions in this set."
+        },
+        set_number: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Optional explicit set number; otherwise today's next number is computed."
+        },
+        note: {
+          type: "string",
+          maxLength: 120,
+          description: "Optional short user-spoken set note."
+        },
+        raw_answer: {
+          type: "string",
+          minLength: 1,
+          maxLength: 500,
+          description: "The user's original spoken set, retained through confirmation."
+        }
+      },
+      required: ["exercise", "weight_value", "unit", "reps", "raw_answer"],
+      additionalProperties: false
+    },
+    confirmPrompt(params) {
+      const confirmed =
+        params && typeof params === "object" ? confirmedGymSets.get(params) : null;
+      if (!confirmed) {
+        return "Re-check the exercise, kilogram weight, reps, and set number before saving it?";
+      }
+      const set = confirmed.set;
+      return (
+        `${set.exerciseName}, ${spokenKg(set.weightGrams)}, ${set.reps} reps — ` +
+        `set ${set.setNumber} today. Save it?`
+      );
+    },
+    async precheck(params, ctx = skillCtx) {
+      return prepareGymSet(params, ctx);
+    },
+    async execute(params, ctx = skillCtx) {
+      return executeGymSet(params, ctx);
+    }
+  },
+  {
+    name: "gym_status",
+    description:
+      "Read a code-built gym status from the local log. With an exercise, report its last " +
+      "session, PR, and at most one careful next-rep suggestion. Without one, report today's " +
+      "sets, the recent workout count, and one most recent PR.",
+    requiresConfirmation: false,
+    paramSchema: {
+      type: "object",
+      properties: {
+        exercise: {
+          type: "string",
+          minLength: 1,
+          maxLength: 80,
+          description: "Optional known exercise for a focused progress status."
+        }
+      },
+      additionalProperties: false
+    },
+    async execute(params = {}, ctx = skillCtx) {
+      if (!params || typeof params !== "object" || Array.isArray(params)) {
+        return gymFailure("Gym status must be one structured request.");
+      }
+      const extra = Object.keys(params).find((key) => key !== "exercise");
+      if (extra) return gymFailure(`Unknown gym-status argument: ${extra}.`);
+      const exercise = params.exercise === undefined
+        ? null
+        : canonicalExercise(params.exercise);
+      if (params.exercise !== undefined && !exercise) {
+        const heard = briefText(params.exercise, "nothing", 80);
+        return gymFailure(
+          `I heard "${heard}", but I don't recognize that exercise, so no progress was guessed.`
+        );
+      }
+      let log;
+      try {
+        log = normalizeGymLog(await ctx.readJson("gym-log.json", null));
+      } catch (error) {
+        return gymFailure("I could not read the gym log right now.");
+      }
+      const today = localDateKey(gymClock(ctx));
+      const summary = exercise
+        ? gymExerciseStatus(log, exercise, today)
+        : overallGymStatus(log, today);
+      return {
+        ok: true,
+        summary,
+        content: exactGymContent(summary, "gym status"),
+        gymLog: log
+      };
+    }
+  },
+  {
+    name: "update_template",
+    description:
+      "Change one exercise or its set, rep, and rest targets in a local gym template. " +
+      "Every edit names the old and new entry and requires confirmation before it writes.",
+    requiresConfirmation: true,
+    paramSchema: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          minLength: 1,
+          maxLength: 80,
+          description: "Template id; omit to use starter-full-body."
+        },
+        exercise: {
+          type: "string",
+          minLength: 1,
+          maxLength: 80,
+          description: "The existing known exercise entry to change."
+        },
+        replacement_exercise: {
+          type: "string",
+          minLength: 1,
+          maxLength: 80,
+          description: "Optional known replacement exercise."
+        },
+        target_sets: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Optional new whole-number set target."
+        },
+        target_reps: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description: "Optional new whole-number rep target."
+        },
+        rest_seconds: {
+          type: "integer",
+          minimum: 0,
+          maximum: 600,
+          description: "Optional new whole-number rest time in seconds."
+        },
+        raw_answer: {
+          type: "string",
+          minLength: 1,
+          maxLength: 500,
+          description: "The user's original spoken template edit, retained through confirmation."
+        }
+      },
+      required: ["exercise", "raw_answer"],
+      additionalProperties: false
+    },
+    confirmPrompt(params) {
+      const selection =
+        params && typeof params === "object" ? confirmedTemplateEdits.get(params) : null;
+      if (!selection) return "Re-check the old and new gym-template entry before changing it?";
+      const oldEntry = selection.oldEntry;
+      const newEntry = selection.newEntry;
+      const oldName = selection.exercise.name.toLowerCase();
+      const newName = selection.replacement.name.toLowerCase();
+      const subject = selection.exercise.slug === selection.replacement.slug
+        ? `${oldName} targets`
+        : `${oldName} to ${newName}, with targets`;
+      let prompt =
+        `Change ${subject} from ${wholeNumberWords(String(oldEntry.targetSets))} by ` +
+        `${wholeNumberWords(String(oldEntry.targetReps))} to ` +
+        `${wholeNumberWords(String(newEntry.targetSets))} by ` +
+        `${wholeNumberWords(String(newEntry.targetReps))}`;
+      if (oldEntry.restSeconds !== newEntry.restSeconds) {
+        prompt +=
+          `, and rest from ${wholeNumberWords(String(oldEntry.restSeconds))} to ` +
+          `${wholeNumberWords(String(newEntry.restSeconds))} seconds`;
+      }
+      return `${prompt}?`;
+    },
+    async precheck(params, ctx = skillCtx) {
+      return prepareTemplateEdit(params, ctx);
+    },
+    async execute(params, ctx = skillCtx) {
+      return executeTemplateEdit(params, ctx);
     }
   },
   {
