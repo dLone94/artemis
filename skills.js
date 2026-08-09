@@ -2914,6 +2914,19 @@ const SKILLS = [
           "The Money Map is complete. Call update_money_map with one known field so the user can confirm the overwrite."
         );
       }
+      // "Finish my money map" arrives as an answer call before the user has
+      // actually said an answer. With nothing recordable in the call, asking
+      // the next question IS the right way to continue the interview —
+      // failing here burned the whole turn into a generic apology. Writes
+      // nothing, so the first-answer audit rules are untouched; a payload
+      // for the wrong field still falls through to the strict checks below.
+      const hasRecordablePayload =
+        params.integer_value !== undefined ||
+        params.choice !== undefined ||
+        params.text_value !== undefined;
+      if (!hasRecordablePayload && (params.field === undefined || params.field === nextField)) {
+        return moneyMapQuestion(store, nextField);
+      }
       if (params.field !== nextField) {
         if (MONEY_MAP_FIELD_SET.has(params.field) && store.answers[params.field]) {
           return moneyMapFailure(

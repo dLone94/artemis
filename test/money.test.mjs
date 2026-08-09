@@ -922,5 +922,36 @@ async function assertIncomePathMoneyMapExtension() {
   console.log("  ✓ income-path fields are ordered, typed, bounded, presented, and confirm-updatable");
 }
 
+{
+  // Regression: "let's finish my money map" makes models call answer with no
+  // payload. That must CONTINUE the interview, not fail the turn (2026-08-09,
+  // live turn f7477ddf ran money_map ×3 and the user heard a generic apology).
+  const ctx = memoryCtx();
+  const skill = getSkill("money_map");
+
+  const bare = await skill.execute({ action: "answer" }, ctx);
+  assert.equal(bare.ok, true, "payload-less answer on an empty map asks, not fails");
+  assert.match(bare.summary, /ship-contract month/i);
+  assert.equal(ctx.files.has("money-map.json"), false, "asking records nothing");
+
+  const fieldOnly = await skill.execute(
+    { action: "answer", field: "contract_monthly_income" }, ctx);
+  assert.equal(fieldOnly.ok, true, "next-field answer without a value asks the question");
+  assert.match(fieldOnly.summary, /ship-contract month/i);
+
+  await skill.execute({
+    action: "answer", field: "contract_monthly_income",
+    integer_value: 5000, currency: "EUR", raw_answer: "about five thousand euro"
+  }, ctx);
+  const afterFirst = await skill.execute({ action: "answer" }, ctx);
+  assert.equal(afterFirst.ok, true);
+  assert.match(afterFirst.summary, /how many whole months/i, "continues to the SECOND question");
+
+  const overwrite = await skill.execute(
+    { action: "answer", field: "contract_monthly_income" }, ctx);
+  assert.equal(overwrite.ok, false, "answered field without payload still refuses (update_money_map path)");
+  console.log("  ✓ payload-less answer calls continue the interview instead of failing the turn");
+}
+
 rmSync(DATA_DIR, { recursive: true, force: true });
 console.log("PASS ✅  money: school, map, exact arithmetic, confirmation, and integrations hold");
