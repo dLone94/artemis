@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ARTEMIS · GYM</title>
+  <style>
+    :root {
+      --bg: #0a0805; --panel: #151007; --edge: #2c2312;
+      --ink: #f6efe7; --dim: #a08556; --amber: #ffb24d; --ok: #8fce78;
+    }
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      background: var(--bg); color: var(--ink); min-height: 100vh;
+      font: 16px/1.5 ui-monospace, Menlo, monospace;
+      padding: max(20px, env(safe-area-inset-top)) 20px 20px;
+    }
+    main {
+      max-width: 520px; margin: 8vh auto 0;
+      display: grid; grid-template-columns: 100%; gap: 14px;
+    }
+    .eyebrow { font-size: 12px; letter-spacing: .35em; color: var(--amber); }
+    #card {
+      background: var(--panel); border: 1px solid var(--edge);
+      padding: 22px 20px; display: grid; gap: 10px;
+    }
+    #exercise { font-size: 42px; line-height: 1.15; font-weight: 700; letter-spacing: -.01em; }
+    #position { color: var(--dim); font-size: 15px; }
+    #lasttime { color: var(--dim); font-size: 14px; }
+    #rest {
+      font-variant-numeric: tabular-nums; font-size: 64px; font-weight: 700;
+      color: var(--amber); display: none;
+    }
+    #rest.on { display: block; }
+    #upnext { color: var(--dim); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
+    #ticks { display: flex; gap: 8px; }
+    .tick { width: 26px; height: 8px; background: var(--edge); }
+    .tick.done { background: var(--ok); }
+    #buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    button {
+      font: inherit; min-height: 52px; cursor: pointer;
+      background: var(--panel); color: var(--ink);
+      border: 1px solid var(--edge); letter-spacing: .06em;
+    }
+    button:active { background: var(--edge); }
+    button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+    #finish { grid-column: 1 / -1; color: var(--amber); border-color: var(--amber); }
+    #idle { color: var(--dim); text-align: center; padding: 40px 8px; }
+    #said { color: var(--dim); font-size: 13px; min-height: 2.6em; }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">ARTEMIS · GYM</div>
+    <section id="card" hidden>
+      <div id="exercise">—</div>
+      <div id="position">—</div>
+      <div id="ticks"></div>
+      <div id="lasttime"></div>
+      <div id="rest">0:00</div>
+      <div id="upnext"></div>
+      <div id="buttons">
+        <button data-say="next exercise">NEXT</button>
+        <button data-say="skip this one">SKIP</button>
+        <button data-say="add another set">+1 SET</button>
+        <button data-say="how long left">REST?</button>
+        <button id="finish" data-say="finish the workout">FINISH WORKOUT</button>
+      </div>
+      <div id="said" aria-live="polite"></div>
+    </section>
+    <section id="idle">
+      No workout running.<br /><br />
+      Say <b>“start my workout”</b> to Artemis — or tap:
+      <br /><br />
+      <button data-say="start my workout" style="width:100%">START WORKOUT</button>
+    </section>
+  </main>
+  <script type="module" src="gymPage.js"></script>
+</body>
+</html>
