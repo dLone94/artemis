@@ -9,7 +9,7 @@
   h1 { font-size:18px; letter-spacing:.12em; color:#7fd4ff; }
   .card { background:#0b1018; border:1px solid #1b2940; border-radius:12px; padding:16px; margin:14px 0; }
   .meter { height:14px; background:#0f1622; border-radius:7px; overflow:hidden; margin:6px 0 2px; position:relative; }
-  .meter > i { display:block; height:100%; width:0%; background:linear-gradient(90deg,#1e6fb8,#41d6ff); transition:width 80ms linear; }
+  .meter > i { display:block; height:100%; width:100%; transform:scaleX(0); transform-origin:left; background:linear-gradient(90deg,#1e6fb8,#41d6ff); transition:transform 80ms linear; }
   .meter > b { position:absolute; top:0; bottom:0; width:2px; background:#22d3ee; }
   .lbl { display:flex; justify-content:space-between; font-size:12px; color:#7d93b8; }
   button { background:#123; color:#bfe6ff; border:1px solid #2a4a72; border-radius:8px; padding:12px 18px; font-size:15px; margin:4px 6px 4px 0; }
@@ -97,9 +97,9 @@
     const d = window.__wakeDebug; if (!d) return;
     const stale = performance.now() - d.t > 1000;
     $("rmsV").textContent = stale ? "no frames!" : d.rms.toFixed(4);
-    $("rmsBar").style.width = Math.min(100, d.rms * 800) + "%";
+    $("rmsBar").style.transform = "scaleX(" + Math.min(1, d.rms * 8) + ")";
     $("floorMark").style.left = Math.min(100, d.floor * 800) + "%";
-    if (d.score !== undefined) { $("scoreV").textContent = d.score.toFixed(3); $("scoreBar").style.width = Math.min(100, d.score * 100) + "%"; }
+    if (d.score !== undefined) { $("scoreV").textContent = d.score.toFixed(3); $("scoreBar").style.transform = "scaleX(" + Math.min(1, d.score) + ")"; }
     $("modeV").textContent = stale ? "STALLED (mic frames stopped)" : d.mode;
   }, 120);
 </script>
