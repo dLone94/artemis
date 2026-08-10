@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="app.css" />
+  <link rel="stylesheet" href="constellation.css" />
 </head>
 <body class="page">
   <!-- TODO(webgl-hero): optional Phase-4 upgrade — ONE interactive WebGL hero orb
@@ -100,58 +101,22 @@
       <div class="features-head reveal">
         <div class="eyebrow">◦ SHIPPED &amp; SPOKEN</div>
         <h2 class="features-title">Not promises.<br /><span class="grad">Skills she has today.</span></h2>
-        <p class="features-sub">Everything below runs locally, asks before it saves, and is guarded by a test gate no model update can skip.</p>
+        <p class="features-sub">Every capability, with the words to say it, what stays on your machine, and where the line is. Marked honestly: what's live, what's narrower than it sounds, and what isn't built yet.</p>
       </div>
-      <div class="cards">
-        <article class="card reveal" style="--accent: #22d3ee">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Voice, first</h3>
-          <p class="card-desc">Say “<span data-wake-phrase>the wake phrase</span>” and talk. She answers out loud in real time — on the Mac or your phone over the LAN.</p>
-          <div class="card-tag">WAKE WORD · SPEAK · HANDS-FREE</div>
-        </article>
-        <article class="card reveal" style="--accent: #38bdf8">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Daily brief</h3>
-          <p class="card-desc">One spoken morning brief: the mail that matters, today's reminders, a sourced money minute, then the world. She offers — never barges.</p>
-          <div class="card-tag">MAIL · REMINDERS · MONEY · NEWS</div>
-        </article>
-        <article class="card reveal" style="--accent: #06b6d4">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Mail &amp; messages</h3>
-          <p class="card-desc">Reads your real inbox and unread messages aloud. Anything that sends or deletes is spoken back and waits for your yes.</p>
-          <div class="card-tag">GMAIL · WHATSAPP · CONFIRM-GATED</div>
-        </article>
-        <article class="card reveal" style="--accent: #67e8f9">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Second brain</h3>
-          <p class="card-desc">Your Obsidian vault, by voice: search notes, capture thoughts to today's page, file meeting notes — and watch the knowledge graph orbit the orb.</p>
-          <div class="card-tag">VAULT · APPEND-ONLY · CONSTELLATION</div>
-        </article>
-        <article class="card reveal" style="--accent: #0ea5e9">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Financial co-pilot</h3>
-          <p class="card-desc">A Money Map interview, an income-path radar ranked by what's cheapest to test, a confirm-gated ledger, bills in your brief. Never a trade, never an invented figure, never a promised return.</p>
-          <div class="card-tag">EDUCATE-FIRST · SOURCED · NO TRADES</div>
-        </article>
-        <article class="card reveal" style="--accent: #7dd3fc">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Gym coach</h3>
-          <p class="card-desc">“Bench press, eighty kilos, eight reps” — repeated back, saved on your yes. Live workout mode with rest timers at /gym, and progress math that suggests one more rep, never a miracle.</p>
-          <div class="card-tag">LOG · LIVE MODE · ZERO SHAME</div>
-        </article>
-        <article class="card reveal" style="--accent: #4096aa">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> Works at sea</h3>
-          <p class="card-desc">No internet? The brain chain falls back to a local model on this machine. Slower, honest about it, still yours.</p>
-          <div class="card-tag">OFFLINE TIER · ON-DEVICE</div>
-        </article>
-        <article class="card reveal" style="--accent: #8cecff">
-          <span class="card-orb"></span>
-          <h3 class="card-title"><span class="card-dot"></span> The safety gate</h3>
-          <p class="card-desc">Every brain candidate faces a 39-case exam first: prompt injection, acting without permission, financial and training safety. Fail one blocker, never ship.</p>
-          <div class="card-tag">EVAL-GATED · LOCAL DATA · CONFIRMED WRITES</div>
-        </article>
-      </div>
+      <!-- Generated from public/capabilities.js — one source of truth shared with
+           the index.html capability constellation. Do not hand-write cards here. -->
+      <div class="cards" id="capabilityGuide"></div>
+      <noscript>
+        <div class="cards">
+          <article class="card">
+            <h3 class="card-title">The capability guide needs JavaScript</h3>
+            <p class="card-desc">Live today: Money Map &amp; Radar, Gym Coach, Daily Brief, Notes &amp;
+            Knowledge, Email &amp; Follow-ups, Meetings, and Research. Optional: Learning Coach, which
+            today means Money School. Planned and not yet built: Home &amp; Life Admin.</p>
+            <div class="card-tag">7 LIVE · 1 OPTIONAL · 1 PLANNED</div>
+          </article>
+        </div>
+      </noscript>
     </section>
 
     <section class="brain" id="brain">
@@ -322,6 +287,12 @@
 
   <script src="celebration.js"></script>
   <script type="module" src="main.js"></script>
+  <!-- the capability guide is generated from public/capabilities.js -->
+  <script type="module">
+    import { renderCapabilityGuide, honourCapabilityHash } from "/capabilityGuide.js";
+    renderCapabilityGuide(document.getElementById("capabilityGuide"));
+    honourCapabilityHash();
+  </script>
   <script defer src="pageCinema.js"></script>
   <script defer src="pageMusic.js"></script>
 </body>

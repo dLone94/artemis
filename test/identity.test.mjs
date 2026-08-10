@@ -49,3 +49,9 @@ test("the compatibility inventory documents the retained bundle id", () => {
   const doc = read("docs/EVIE-COMPAT.md");
   assert.ok(doc.includes("com.artemis.desktop"), "docs/EVIE-COMPAT.md must mention com.artemis.desktop");
 });
+
+test("the orb wordmark spells Evie, not letters that evade string sweeps", () => {
+  const source = readFileSync(new URL("../public/voiceOrb.js", import.meta.url), "utf8");
+  assert.match(source, /WORDMARK_LETTERS = \["E","V","I","E"\]/);
+  assert.doesNotMatch(source, /\["A","R","T","E","M","I","S"\]/);
+});

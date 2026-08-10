@@ -1,0 +1,258 @@
+/* ============================================================================
+   CAPABILITY CONSTELLATION — accessible DOM layer beside the orb.
+   Two shallow elliptical shells in a full-width band. Positions come from
+   --cst-x / --cst-y (set in constellation.js); everything here is presentation.
+   ========================================================================== */
+
+.cst {
+  position: relative;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 2px 0 0;
+  container-type: inline-size;
+}
+
+.cst-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 6px;
+  font-family: "Rajdhani", var(--font-mono, ui-monospace);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.cst-head h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(103, 232, 249, 0.85);
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.4);
+}
+.cst-more {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: rgba(148, 197, 214, 0.7);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.cst-more:hover,
+.cst-more:focus-visible { color: #d9f8ff; border-bottom-color: rgba(103, 232, 249, 0.6); }
+
+/* ---- the field: absolute slots on the two shells ---- */
+.cst-field {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 150px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cst-slot {
+  position: absolute;
+  left: var(--cst-x, 50%);
+  top: var(--cst-y, 50%);
+  transform: translate(-50%, -50%);
+  /* stagger the drift so the field breathes instead of pulsing in lockstep */
+  animation: cst-drift 90s ease-in-out infinite;
+  animation-delay: calc(var(--cst-i, 0) * -7s);
+  will-change: transform;
+}
+.cst-slot[data-shell="inner"] { animation-duration: 104s; }
+
+/* one gentle revolution of a very small circle — never more than 6px of travel */
+@keyframes cst-drift {
+  0%   { transform: translate(-50%, -50%) translate(0, 0); }
+  25%  { transform: translate(-50%, -50%) translate(3px, -3px); }
+  50%  { transform: translate(-50%, -50%) translate(0, -5px); }
+  75%  { transform: translate(-50%, -50%) translate(-3px, -3px); }
+  100% { transform: translate(-50%, -50%) translate(0, 0); }
+}
+
+/* ---- an orb ---- */
+.cst-orb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 4px 6px 5px;
+  border-radius: 12px;
+  text-decoration: none;
+  color: rgba(217, 248, 255, 0.9);
+  transition: transform 0.35s var(--v2-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+              filter 0.35s ease;
+}
+
+.cst-disc {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  font-size: 17px;
+  line-height: 1;
+  border-radius: 50%;
+  color: #9fe9f8;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background:
+    radial-gradient(circle at 50% 32%, rgba(34, 211, 238, 0.22), transparent 68%),
+    rgba(8, 22, 42, 0.82);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.16), inset 0 0 14px rgba(34, 211, 238, 0.08);
+}
+
+.cst-label {
+  max-width: 10ch;
+  white-space: nowrap;
+  font-family: "Rajdhani", var(--font-mono, ui-monospace);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  text-align: center;
+  line-height: 1.15;
+  color: rgba(190, 228, 240, 0.9);
+  text-shadow: 0 1px 6px rgba(2, 8, 20, 0.9);
+}
+
+.cst-tag {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-family: "Rajdhani", var(--font-mono, ui-monospace);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+  color: #06121f;
+  background: rgba(148, 197, 214, 0.85);
+}
+
+/* ---- honest states ---- */
+.cst-orb[data-state="optional"] { filter: saturate(0.6); }
+.cst-orb[data-state="optional"] .cst-disc {
+  border-color: rgba(56, 189, 248, 0.26);
+  box-shadow: none;
+  color: rgba(159, 233, 248, 0.72);
+}
+.cst-orb[data-state="optional"] .cst-label { color: rgba(190, 228, 240, 0.62); }
+
+.cst-orb[data-state="planned"] { filter: saturate(0.25); }
+.cst-orb[data-state="planned"] .cst-disc {
+  border-style: dashed;
+  border-color: rgba(148, 163, 184, 0.42);
+  background: rgba(8, 18, 32, 0.7);
+  box-shadow: none;
+  color: rgba(203, 213, 225, 0.55);
+}
+.cst-orb[data-state="planned"] .cst-label { color: rgba(203, 213, 225, 0.5); }
+.cst-orb[data-state="planned"] .cst-tag { background: rgba(148, 163, 184, 0.7); }
+
+/* ---- interaction: hover and keyboard get the SAME treatment ---- */
+.cst-orb:hover,
+.cst-orb:focus-visible { transform: translateY(-3px); filter: none; }
+.cst-orb:hover .cst-disc,
+.cst-orb:focus-visible .cst-disc {
+  border-color: rgba(103, 232, 249, 0.9);
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.42), inset 0 0 18px rgba(34, 211, 238, 0.16);
+  color: #d9f8ff;
+}
+.cst-orb:focus-visible {
+  outline: 2px solid rgba(103, 232, 249, 0.9);
+  outline-offset: 3px;
+}
+
+/* ---- tighter geometry where the band is short ---- */
+@container (max-width: 720px) {
+  .cst-label { font-size: 9px; letter-spacing: 0.06em; }
+  .cst-disc { width: 40px; height: 40px; font-size: 15px; }
+  .cst-orb { min-width: 40px; }
+}
+
+@media (max-height: 860px) {
+  .cst-field { min-height: 112px; }
+  .cst-disc { width: 40px; height: 40px; font-size: 15px; }
+  .cst-label { font-size: 9px; }
+}
+
+/* Reduced motion: perfectly static. No drift, no lift. */
+@media (prefers-reduced-motion: reduce) {
+  .cst-slot { animation: none; }
+  .cst-orb { transition: none; }
+  .cst-orb:hover, .cst-orb:focus-visible { transform: none; }
+}
+
+/* ============================================================================
+   CAPABILITY GUIDE (about.html #skills) — generated cards from the same array.
+   Extends the existing .card grammar rather than replacing it.
+   ========================================================================== */
+
+.cap-card { scroll-margin-top: 96px; }
+
+.cap-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  vertical-align: middle;
+  font-family: "Rajdhani", var(--font-mono, ui-monospace);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #04121d;
+  background: var(--accent, #22d3ee);
+}
+.cap-chip[data-state="optional"] { background: rgba(148, 197, 214, 0.85); }
+.cap-chip[data-state="planned"]  { background: rgba(148, 163, 184, 0.75); }
+
+/* planned entries must not read as shipped */
+.cap-card[data-state="planned"] { opacity: 0.78; }
+.cap-card[data-state="planned"] .card-desc { font-style: italic; }
+
+.cap-say {
+  margin: 12px 0 10px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--accent, #22d3ee);
+  border-radius: 0 8px 8px 0;
+  background: rgba(8, 22, 42, 0.5);
+}
+.cap-say-head {
+  display: block;
+  margin-bottom: 5px;
+  font-family: "Rajdhani", var(--font-mono, ui-monospace);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(103, 232, 249, 0.85);
+}
+.cap-say ul { margin: 0; padding-left: 16px; }
+.cap-say li {
+  margin: 2px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(226, 245, 252, 0.88);
+}
+.cap-say li::marker { color: rgba(103, 232, 249, 0.55); }
+
+.cap-facts { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.cap-facts p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: rgba(198, 222, 233, 0.8);
+}
+.cap-facts strong {
+  color: rgba(103, 232, 249, 0.9);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.cap-safety { color: rgba(226, 232, 240, 0.72); }
