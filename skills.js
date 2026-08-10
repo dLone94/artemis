@@ -5803,13 +5803,16 @@ const BY_NAME = new Map(SKILLS.map((s) => [s.name, s]));
 export function getSkill(name) {
   return BY_NAME.get(name) || null;
 }
+// Skills as NEUTRAL tool declarations — {name, description, parameters}, the
+// same shape toolRegistry stores and the provider adapters translate. No wire
+// format originates here; `parameters` is plain JSON Schema.
 export function skillToolDefs({ includeDirect = false } = {}) {
   return SKILLS
     .filter((skill) => includeDirect || skill.modelVisible !== false)
     .map((skill) => ({
       name: skill.name,
       description: skill.description,
-      input_schema: skill.paramSchema
+      parameters: skill.paramSchema
     }));
 }
 export function isSkill(name) {

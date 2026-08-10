@@ -15,6 +15,8 @@
 // flags, so this module is unit-testable with no network and no env.
 
 import { skillToolDefs, getSkill } from "./skills.js";
+// Wire rendering only. The registry stores neutral defs; these translate them.
+import { openaiCompat, anthropic as anthropicWire } from "./modelProvider.js";
 
 // Tools implemented directly in server.js rather than as skills.
 const NATIVE_DEFS = [
@@ -454,7 +456,7 @@ function allEntries() {
   const skills = skillToolDefs({ includeDirect: true }).map((s) => ({
     name: s.name,
     description: s.description,
-    parameters: s.input_schema
+    parameters: s.parameters
   }));
   return [...NATIVE_DEFS, ...skills].map((def) => {
     const meta = META[def.name] || { family: "other", effect: "read" };
@@ -490,22 +492,36 @@ export function toolByName(name, caps = {}) {
   return routableTools(caps).find((e) => e.name === name) || null;
 }
 
-/** Tool schemas in OpenAI/NVIDIA function-calling format. */
-export function openaiToolDefs(caps = {}, filter) {
+/**
+ * THE tool accessor: every callable tool as a provider-neutral declaration
+ * `{name, description, parameters}`. Everything below is this list rendered
+ * into one wire format or another, and the rendering lives in the adapters —
+ * this file never spells out `function.parameters` or `input_schema` itself.
+ */
+export function neutralToolDefs(caps = {}, filter) {
   return availableTools(caps)
     .filter((entry) => (filter ? filter(entry) : true))
-    .map((e) => ({ type: "function", function: { name: e.name, description: e.description, parameters: e.parameters } }));
+    .map((e) => ({ name: e.name, description: e.description, parameters: e.parameters }));
+}
+
+/** The tools that could satisfy a given family, neutral. */
+export function neutralToolDefsForFamily(caps, family) {
+  return neutralToolDefs(caps, (e) => e.forceFamilies.includes(family));
+}
+
+/** Tool schemas in OpenAI/NVIDIA function-calling format. */
+export function openaiToolDefs(caps = {}, filter) {
+  return openaiCompat.toWireTools(neutralToolDefs(caps, filter));
 }
 
 /** Tool schemas in Anthropic format (shared prompt policy; legacy path). */
 export function anthropicToolDefs(caps = {}) {
-  return availableTools(caps)
-    .map((e) => ({ name: e.name, description: e.description, input_schema: e.parameters }));
+  return anthropicWire.toWireTools(neutralToolDefs(caps));
 }
 
 /** The tools that could satisfy a given family, as OpenAI defs. */
 export function toolDefsForFamily(caps, family) {
-  return openaiToolDefs(caps, (e) => e.forceFamilies.includes(family));
+  return openaiCompat.toWireTools(neutralToolDefsForFamily(caps, family));
 }
 
 // ---- argument validation ----------------------------------------------------

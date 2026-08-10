@@ -40,6 +40,11 @@ import * as anthropic from "./providers/anthropic.js";
  * @property {string} [system] System prompt (Anthropic takes it top-level; the
  *   OpenAI-compatible path carries it as a `system` message instead).
  * @property {NeutralTool[]} [tools] Neutral tool list.
+ * @property {Object[]} [providerTools] PROVIDER-NATIVE tools, opaque. Anthropic's
+ *   server-side `web_search` ({type, name}, no schema) has no neutral equivalent
+ *   to translate from — it is a genuine capability of that wire, not a modelling
+ *   failure. The adapter for that wire appends them verbatim after the mapped
+ *   `tools`; every other adapter ignores the field.
  * @property {string|Object} [toolChoice] "auto" | "none" | "required" | a
  *   provider-shaped forced-call object. Passed through untouched.
  * @property {number} [maxTokens]

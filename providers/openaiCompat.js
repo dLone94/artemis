@@ -22,6 +22,18 @@ function toWireTool(tool) {
 }
 
 /**
+ * A whole neutral tool list in OpenAI function-calling shape. Exported because
+ * the registry renders its defs through this adapter rather than mapping the
+ * wire shape inline — this function is the ONLY place that knows what
+ * `{type:"function", function:{…}}` looks like.
+ *
+ * @param {import("../modelProvider.js").NeutralTool[]} tools
+ */
+export function toWireTools(tools) {
+  return (tools || []).map(toWireTool);
+}
+
+/**
  * Neutral request → the object today's code JSON.stringifies for
  * /chat/completions, MINUS `model` and MINUS the per-brain extras. Keys that
  * are absent today stay absent, so an unchanged caller produces unchanged bytes.
@@ -41,7 +53,7 @@ export function toWire(req = {}) {
       : messages;
 
   const body = { messages: withSystem };
-  if (req.tools !== undefined && req.tools !== null) body.tools = req.tools.map(toWireTool);
+  if (req.tools !== undefined && req.tools !== null) body.tools = toWireTools(req.tools);
   if (req.toolChoice !== undefined && req.toolChoice !== null) body.tool_choice = req.toolChoice;
   if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens;
   if (req.temperature !== undefined) body.temperature = req.temperature;

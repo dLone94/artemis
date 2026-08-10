@@ -44,8 +44,9 @@ import {
   wrapUntrusted
 } from "./untrusted.js";
 import {
+  neutralToolDefs,
+  neutralToolDefsForFamily,
   openaiToolDefs,
-  toolDefsForFamily,
   toolByName,
   validateToolCall,
   needsConfirmation,
@@ -55,10 +56,6 @@ import { mayStreamNarration, failureLine } from "./public/ttsPolicy.js";
 // Wire-format translation only (Phase 1). Transport, retry, benching and the
 // agent loops stay here; these adapters just shape bodies and read responses.
 import { openaiCompat, anthropic as anthropicWire } from "./modelProvider.js";
-
-// Registry tool defs are stored OpenAI-shaped; the adapters take the neutral
-// {name, description, parameters} form. Same object, one hop of unwrapping.
-const asNeutralTools = (defs) => (defs || []).map((d) => d.function);
 
 // Does a post-precheck-recovery reply read as a request for missing input?
 // Interrogatives or need/provide verbs qualify; bare completion claims don't.
@@ -1053,7 +1050,12 @@ function elevenTTSResponse(text, voiceId) {
 // Final spoken answer = text after the last tool block (drops "I'll search…"
 // narration). That rule now lives in providers/anthropic.js fromWire().
 
-// Shared tool definitions (used by both the streaming and non-streaming paths)
+// Shared tool definitions (used by both the streaming and non-streaming paths).
+//
+// WEB_SEARCH_TOOL is PROVIDER-NATIVE: Anthropic runs it server-side, it carries
+// no schema, and there is nothing neutral to translate it from. It travels as
+// `providerTools` and the adapter emits it verbatim. FETCH_PAGE_TOOL is an
+// ordinary neutral tool — it has a schema and we execute it here.
 const WEB_SEARCH_TOOL = { type: "web_search_20260209", name: "web_search" };
 const FETCH_PAGE_TOOL = {
   name: "fetch_page",
@@ -1061,7 +1063,7 @@ const FETCH_PAGE_TOOL = {
     "Fetch a single webpage by URL and return its readable text content (boilerplate stripped). " +
     "Use after web_search, or when the user names a specific site. Returns cleaned text, the final " +
     "URL after redirects, and the page title.",
-  input_schema: {
+  parameters: {
     type: "object",
     properties: {
       url: { type: "string", description: "Absolute http(s) URL to fetch." },
@@ -1155,10 +1157,10 @@ async function callClaude(messages, tone, opts = {}) {
   const onToolEnd = typeof opts.onToolEnd === "function" ? opts.onToolEnd : () => {};
   const system = ARTEMIS_SYSTEM_PROMPT + (TONE[tone] || "");
   const tools = [
-    WEB_SEARCH_TOOL,
     FETCH_PAGE_TOOL,
     ...skillToolDefs({ includeDirect: false }).filter((tool) => toolByName(tool.name, caps))
   ];
+  const providerTools = [WEB_SEARCH_TOOL];
   const convo = messages.map((m) => ({ role: m.role, content: m.content }));
   const sources = [];
   const clientActions = []; // things for the browser to do (e.g. open a tab)
@@ -1184,6 +1186,11 @@ async function callClaude(messages, tone, opts = {}) {
             tools: mailUntrusted
               ? tools.filter((tool) => !blockedAfterMailRead(tool.name, true))
               : tools,
+            // the mail-taint block covers web_search too — it is a network read
+            // driven by text an attacker may control
+            providerTools: mailUntrusted
+              ? providerTools.filter((tool) => !blockedAfterMailRead(tool.name, true))
+              : providerTools,
             messages: convo
           })
         )
@@ -1375,9 +1382,10 @@ function currentCaps() {
 // without a cycle — so the capability is handed over at startup instead.
 skillCtx.webSearch = (query) => webSearch(query, 5);
 
-// OpenAI-format tool defs for NVIDIA, straight from the registry.
+// Neutral tool defs for the NVIDIA/Groq brains, straight from the registry —
+// the openai-compat adapter renders them at the call site.
 function nvidiaTools(caps = currentCaps()) {
-  return openaiToolDefs(caps);
+  return neutralToolDefs(caps);
 }
 
 // A fresh per-turn state object. Every field the reliability logic reads lives
@@ -1627,10 +1635,10 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
 
   // Narrow the model's options to the family the user actually asked about —
   // "required" alone let it satisfy the constraint with an unrelated call.
-  const familyTools = family ? toolDefsForFamily(caps, family) : nvidiaTools(caps);
+  const familyTools = family ? neutralToolDefsForFamily(caps, family) : nvidiaTools(caps);
   if (!familyTools.length) return null;
   const toolChoice =
-    familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].function.name } } : "required";
+    familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].name } } : "required";
 
   try {
     const data = await nvidiaChat(
@@ -1644,7 +1652,7 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
               "carry out my request. Tool call only — no prose."
           }
         ],
-        tools: asNeutralTools(familyTools),
+        tools: familyTools,
         toolChoice,
         maxTokens: 256,
         temperature: 0
@@ -1673,7 +1681,7 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
     const after = await nvidiaChat(
       openaiCompat.toWire({
         messages: convo,
-        tools: asNeutralTools(nvidiaTools(caps)),
+        tools: nvidiaTools(caps),
         toolChoice: "none",
         maxTokens: 300,
         temperature: 0.3
@@ -1810,8 +1818,8 @@ function logTurn(state, extra = {}) {
 // follow-up without shipping the entire registry on every round.
 const WEB_TOOL_NAMES = new Set(["web_search", "fetch_page"]);
 function narrowTools(allTools, familyTools) {
-  const keep = new Set(familyTools.map((t) => t.function.name));
-  return allTools.filter((t) => keep.has(t.function.name) || WEB_TOOL_NAMES.has(t.function.name));
+  const keep = new Set(familyTools.map((t) => t.name));
+  return allTools.filter((t) => keep.has(t.name) || WEB_TOOL_NAMES.has(t.name));
 }
 
 /** The text of the most recent user message. */
@@ -1870,7 +1878,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
 
     // Round 0 of an action turn is forced, and forced INTO THE RIGHT FAMILY —
     // plain tool_choice:"required" was satisfiable with any unrelated call.
-    const familyTools = isAction && state.intent.family ? toolDefsForFamily(caps, state.intent.family) : [];
+    const familyTools = isAction && state.intent.family ? neutralToolDefsForFamily(caps, state.intent.family) : [];
     const forcing = round === 0 && isAction && familyTools.length > 0;
     // Every schema sent costs input tokens on every round, and Groq's free tier
     // caps TOKENS per minute — so shipping all fourteen tools on a two-round
@@ -1881,7 +1889,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
     const roundTools = forcing ? familyTools
       : (isAction && familyTools.length ? narrowTools(tools, familyTools) : tools);
     let toolChoice = "auto";
-    if (forcing) toolChoice = familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].function.name } } : "required";
+    if (forcing) toolChoice = familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].name } } : "required";
     // An unresolvable request ("open it" with no referent) must produce a
     // question, never a guessed action.
     if (state.intent.intent === "needs_clarification") toolChoice = "none";
@@ -1907,7 +1915,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         const data = await nvidiaChat(
           openaiCompat.toWire({
             messages: convo,
-            tools: asNeutralTools(roundTools),
+            tools: roundTools,
             toolChoice,
             maxTokens: 1024,
             temperature: 0.3
@@ -1979,7 +1987,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
               { model: brain.model },
               openaiCompat.toWire({
                 messages: convo,
-                tools: asNeutralTools(roundTools),
+                tools: roundTools,
                 toolChoice,
                 maxTokens: 1024,
                 temperature: 0.3,
@@ -2196,17 +2204,17 @@ async function callNvidia(messages, tone, opts = {}) {
     if (signal && signal.aborted) return finishTurn("Cancelled.", { cancelled: true });
 
     // identical forcing policy to streamNvidia — same registry, same family
-    const familyTools = isAction && state.intent.family ? toolDefsForFamily(caps, state.intent.family) : [];
+    const familyTools = isAction && state.intent.family ? neutralToolDefsForFamily(caps, state.intent.family) : [];
     const forcing = round === 0 && isAction && familyTools.length > 0;
     const roundTools = forcing ? familyTools : tools;
     let toolChoice = "auto";
-    if (forcing) toolChoice = familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].function.name } } : "required";
+    if (forcing) toolChoice = familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].name } } : "required";
     if (state.intent.intent === "needs_clarification") toolChoice = "none";
 
     const data = await nvidiaChat(
       openaiCompat.toWire({
         messages: convo,
-        tools: asNeutralTools(roundTools),
+        tools: roundTools,
         toolChoice,
         maxTokens: 1024,
         temperature: 0.3
@@ -3681,15 +3689,19 @@ async function handleRequest(req, res) {
       if (historicMailTaint) send("mail_taint", { mailUntrusted: true });
       // Fast path: simple commands -> Haiku with NO tools (lowest time-to-first-token).
       // Complex -> Opus with web_search + fetch_page (Opus/Sonnet-only tools).
+      // streamFirstResponse inlines the body, so the tools are rendered here —
+      // neutral defs through the adapter, provider-native web_search verbatim.
+      const keepAfterTaint = (tool) => !blockedAfterMailRead(tool.name, historicMailTaint);
       const tools = model === ANTHROPIC_MODEL
-        ? [
-            WEB_SEARCH_TOOL,
-            FETCH_PAGE_TOOL,
-            ...skillToolDefs({ includeDirect: false }).filter((tool) =>
-              toolByName(tool.name, caps)
-            )
-          ]
-            .filter((tool) => !blockedAfterMailRead(tool.name, historicMailTaint))
+        ? anthropicWire.toWireTools(
+            [
+              FETCH_PAGE_TOOL,
+              ...skillToolDefs({ includeDirect: false }).filter((tool) =>
+                toolByName(tool.name, caps)
+              )
+            ].filter(keepAfterTaint),
+            [WEB_SEARCH_TOOL].filter(keepAfterTaint)
+          )
         : undefined;
 
       const { stop, sources } = await streamFirstResponse(convo, system, tools, model, (t) =>

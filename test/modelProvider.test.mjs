@@ -11,8 +11,8 @@ const { WIRE, adapterFor } = await import("../modelProvider.js");
 const openaiCompat = await import("../providers/openaiCompat.js");
 const anthropic = await import("../providers/anthropic.js");
 
-// Three tools in the neutral shape the registry stores (openaiToolDefs' inner
-// `function` object / anthropicToolDefs' pre-rename input).
+// Three tools in the neutral shape every def is born in — what skills.js emits
+// and neutralToolDefs() returns, before any adapter renders it.
 const NEUTRAL_TOOLS = [
   {
     name: "open_url",
@@ -246,18 +246,66 @@ test("anthropic.toWire matches the inline /v1/messages body byte for byte", () =
   assert.equal(JSON.stringify(wire), JSON.stringify(expected));
 });
 
-test("anthropic.toWire passes already-wire tools through untouched and omits an unset model", () => {
-  // Exactly what callClaude ships: the server-side web_search tool (no schema),
-  // fetch_page and the skill defs, all born in Anthropic shape.
+// Phase 1b: tools have a neutral origin, so `toWire` no longer sniffs shapes.
+// A provider-NATIVE tool (Anthropic's server-side web_search: no schema, hence
+// nothing neutral to translate from) travels in `providerTools` instead.
+
+test("anthropic.toWire emits neutral tools mapped and providerTools verbatim, in that order", () => {
+  // Exactly what callClaude ships: fetch_page + the skill defs as neutral tools,
+  // the server-side web_search as a provider-native one.
   const webSearch = { type: "web_search_20260209", name: "web_search" };
-  const fetchPage = { name: "fetch_page", description: "Fetch a page.", input_schema: { type: "object", properties: {} } };
-  const wire = anthropic.toWire({ maxTokens: 1024, system: "S", tools: [webSearch, fetchPage], messages: MESSAGES });
+  const fetchPage = { name: "fetch_page", description: "Fetch a page.", parameters: { type: "object", properties: {} } };
+  const wire = anthropic.toWire({
+    maxTokens: 1024,
+    system: "S",
+    tools: [fetchPage],
+    providerTools: [webSearch],
+    messages: MESSAGES
+  });
 
   assert.equal(
     JSON.stringify(wire),
-    JSON.stringify({ max_tokens: 1024, system: "S", tools: [webSearch, fetchPage], messages: MESSAGES })
+    JSON.stringify({
+      max_tokens: 1024,
+      system: "S",
+      tools: [
+        // provider-native FIRST — the order the inline literal shipped, kept
+        // deliberately because tool position carries selection bias
+        webSearch,
+        { name: "fetch_page", description: fetchPage.description, input_schema: fetchPage.parameters }
+      ],
+      messages: MESSAGES
+    })
   );
   assert.equal("model" in wire, false);
+  // the provider-native entry survives byte-for-byte, keys and all
+  assert.deepEqual(wire.tools[0], webSearch);
+});
+
+test("anthropic.toWire without providerTools is unchanged, and an unset model is omitted", () => {
+  const wire = anthropic.toWire({ maxTokens: 1024, system: "S", tools: NEUTRAL_TOOLS, messages: MESSAGES });
+  assert.equal(wire.tools.length, NEUTRAL_TOOLS.length);
+  assert.equal("model" in wire, false);
+  assert.ok(wire.tools.every((t) => "input_schema" in t && !("parameters" in t)));
+});
+
+test("anthropic.toWire maps every tool — no passthrough heuristic survives", () => {
+  // A neutral tool with NO `parameters` key used to satisfy the old
+  // "has parameters? map it : emit verbatim" sniff and leak through as-is.
+  const schemaless = { name: "ping", description: "No args." };
+  const wire = anthropic.toWire({ maxTokens: 8, system: "S", tools: [schemaless], messages: MESSAGES });
+
+  assert.equal(wire.tools.length, 1);
+  assert.notDeepEqual(wire.tools[0], schemaless);
+  assert.ok("input_schema" in wire.tools[0], "a schemaless neutral tool must still be mapped");
+  assert.deepEqual(wire.tools[0], { name: "ping", description: "No args.", input_schema: undefined });
+});
+
+test("anthropic.toWireTools keeps a non-array tools value untouched", () => {
+  // callClaude's Haiku fast path sends no tools at all; `undefined` must stay
+  // `undefined` rather than becoming [].
+  assert.equal(anthropic.toWireTools(undefined), undefined);
+  assert.deepEqual(anthropic.toWireTools([]), []);
 });
 
 // ---- Anthropic: response parsing --------------------------------------------

@@ -9,26 +9,37 @@
 // wire must not change in Phase 1.
 
 /**
- * Render one tool for /v1/messages.
+ * Render one NEUTRAL tool for /v1/messages: `parameters` becomes `input_schema`.
+ * Unconditional — every tool that reaches here is neutral, because skills.js and
+ * the registry now emit only the neutral shape. There is no sniffing branch.
  *
- * Two shapes arrive here today, and both must survive untouched:
- *   - NEUTRAL registry tools `{name, description, parameters}` → renamed to
- *     `input_schema`, matching anthropicToolDefs().
- *   - ALREADY-WIRE tools — the server-side `web_search` tool
- *     (`{type, name}`, no schema at all) and anything built directly in
- *     Anthropic shape (`input_schema`). Those are passed through verbatim.
- *
- * The passthrough branch is a wart, not a design: skills.js and the
- * WEB_SEARCH_TOOL constant emit Anthropic-shaped defs at the source. Phase 1b
- * should make the registry the single neutral origin and delete it.
- *
- * @param {import("../modelProvider.js").NeutralTool|Object} tool
+ * @param {import("../modelProvider.js").NeutralTool} tool
  */
 function toWireTool(tool) {
-  if (!tool || typeof tool !== "object") return tool;
-  const isNeutral = Object.prototype.hasOwnProperty.call(tool, "parameters");
-  if (!isNeutral) return tool; // already wire-shaped (input_schema, or a server tool)
   return { name: tool.name, description: tool.description, input_schema: tool.parameters };
+}
+
+/**
+ * A neutral tool list in Anthropic shape, followed by any PROVIDER-NATIVE tools
+ * verbatim. The latter are Anthropic's own server-side tools (`web_search`,
+ * `{type, name}` with no schema at all) — they have no neutral equivalent to
+ * translate from, so the caller hands them over opaquely and they are emitted
+ * exactly as given.
+ *
+ * @param {import("../modelProvider.js").NeutralTool[]} tools
+ * @param {Object[]} [providerTools] Emitted verbatim, after the mapped ones.
+ */
+// Provider-native tools come FIRST, restoring the byte order the inline
+// literals produced (web_search led the array). Anthropic does not rank tools
+// by position, but LLM tool selection carries a measurable position bias and
+// web_search is the highest-traffic tool on this path — with the live eval
+// currently unrunnable, silently moving it is a variable we cannot observe.
+// Order is a deliberate compatibility choice, not an accident.
+export function toWireTools(tools, providerTools) {
+  const mapped = Array.isArray(tools) ? tools.map(toWireTool) : tools;
+  const native = Array.isArray(providerTools) ? providerTools : [];
+  if (!native.length) return mapped;
+  return [...native, ...(Array.isArray(mapped) ? mapped : [])];
 }
 
 /**
@@ -46,7 +57,7 @@ export function toWire(req = {}) {
   body.max_tokens = req.maxTokens;
   if (req.temperature !== undefined) body.temperature = req.temperature;
   body.system = req.system;
-  body.tools = Array.isArray(req.tools) ? req.tools.map(toWireTool) : req.tools;
+  body.tools = toWireTools(req.tools, req.providerTools);
   body.messages = req.messages;
   if (req.stream !== undefined) body.stream = req.stream;
   if (req.extra) Object.assign(body, req.extra);

@@ -6,12 +6,16 @@
 import assert from "node:assert";
 import {
   availableTools,
+  neutralToolDefs,
+  neutralToolDefsForFamily,
+  anthropicToolDefs,
   openaiToolDefs,
   toolDefsForFamily,
   validateToolCall,
   needsConfirmation,
   classifyIntent
 } from "../toolRegistry.js";
+import { skillToolDefs } from "../skills.js";
 import { shouldSpeakFiller, mayStreamNarration, failureLine, INTENT } from "../public/ttsPolicy.js";
 
 const ALL = { search: true, gmail: true };
@@ -31,6 +35,63 @@ const NO_MAIL = { search: true, gmail: false };
   assert.equal(defs.length, withoutMail.length, "tool defs match the available set exactly");
   assert.ok(defs.every((d) => d.type === "function" && d.function.name && d.function.parameters), "defs are well-formed");
   console.log("  ✓ availability gates what the model is even offered");
+}
+
+// ---- Phase 1b: tools have ONE neutral origin --------------------------------
+// Every def in this codebase is born as {name, description, parameters} and is
+// rendered into a wire format only by a provider adapter. Two things must hold:
+// nothing upstream may leak a wire shape, and the OpenAI rendering must not move
+// by a single byte — server.js hashes it into `toolRegistryHash` for eval
+// provenance, so a change there silently reclassifies every past eval run.
+{
+  // 1. the origin is neutral: skills.js emits `parameters`, never `input_schema`
+  const skillDefs = skillToolDefs({ includeDirect: true });
+  assert.ok(skillDefs.length > 0, "there are skills to check");
+  assert.ok(skillDefs.every((d) => "parameters" in d), "every skill def carries `parameters`");
+  assert.ok(
+    skillDefs.every((d) => !("input_schema" in d)),
+    "no skill def carries Anthropic's `input_schema` — the origin has no wire format"
+  );
+
+  // 2. the neutral accessor is the whole registry, in neutral shape
+  const neutral = neutralToolDefs(ALL);
+  assert.equal(neutral.length, availableTools(ALL).length, "neutral defs cover every available tool");
+  assert.ok(
+    neutral.every((d) => Object.keys(d).join(",") === "name,description,parameters"),
+    "a neutral def is exactly {name, description, parameters}"
+  );
+
+  // 3. BYTE GUARD: openaiToolDefs is neutralToolDefs wrapped, and nothing else.
+  //    Built here from the neutral list so the wrapper shape AND the key order
+  //    are both asserted — JSON.stringify preserves insertion order.
+  const expectedOpenai = neutral.map((d) => ({
+    type: "function",
+    function: { name: d.name, description: d.description, parameters: d.parameters }
+  }));
+  assert.equal(
+    JSON.stringify(openaiToolDefs(ALL)),
+    JSON.stringify(expectedOpenai),
+    "openaiToolDefs is byte-identical to the pre-Phase-1b shape (protects toolRegistryHash)"
+  );
+
+  // the family slice is the same rendering, so it must hold there too
+  const expectedFamily = neutralToolDefsForFamily(ALL, "email").map((d) => ({
+    type: "function",
+    function: { name: d.name, description: d.description, parameters: d.parameters }
+  }));
+  assert.ok(expectedFamily.length > 0, "the email family is non-empty");
+  assert.equal(JSON.stringify(toolDefsForFamily(ALL, "email")), JSON.stringify(expectedFamily));
+
+  // 4. the Anthropic rendering still renames the key, and only the key
+  const anth = anthropicToolDefs(ALL);
+  assert.equal(anth.length, neutral.length, "same tools, different dialect");
+  assert.ok(
+    anth.every((d) => Object.keys(d).join(",") === "name,description,input_schema"),
+    "anthropicToolDefs entries are {name, description, input_schema}"
+  );
+  assert.deepEqual(anth.map((d) => d.input_schema), neutral.map((d) => d.parameters), "only the key name changed");
+
+  console.log("  ✓ one neutral tool origin; OpenAI defs byte-identical, Anthropic defs still input_schema");
 }
 
 // ---- validation happens before anything is recorded -------------------------
