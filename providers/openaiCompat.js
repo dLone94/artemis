@@ -1,9 +1,10 @@
 // OpenAI-compatible wire adapter (/chat/completions).
 //
 // Speaks for Groq, NVIDIA NIM and Ollama — every brain in the chain uses this
-// dialect. Pure translation: no fetch, no retry, no model selection. The caller
-// still owns `model` and any per-brain extras (brainRequestExtras), because the
-// brain chain picks those AFTER the body has been shaped.
+// dialect. Translation plus the ADDRESSING of this dialect (Phase 1c): where it
+// lives, how it authenticates, how `model` and per-brain extras join the body.
+// Still no fetch, no retry, no brain selection — which brain is healthy stays
+// server.js's business, because that is a fact about the chain, not the wire.
 //
 // The key ORDER below is load-bearing: server.js serialises these bodies with
 // JSON.stringify, and Phase 1's contract is that the bytes on the wire do not
@@ -60,6 +61,56 @@ export function toWire(req = {}) {
   if (req.stream !== undefined) body.stream = req.stream;
   if (req.extra) Object.assign(body, req.extra);
   return body;
+}
+
+/**
+ * Where this dialect lives for one brain-chain entry. Every OpenAI-compatible
+ * host — Groq, NVIDIA NIM, Ollama, and anything else that claims the dialect —
+ * serves completions at this path under its own base URL, which is exactly why
+ * one adapter can speak for all of them.
+ *
+ * @param {{base: string}} brain A brain-chain entry.
+ * @returns {string}
+ */
+export function endpoint(brain) {
+  return brain.base + "/chat/completions";
+}
+
+/**
+ * Auth + content type for one brain-chain entry. Ollama ignores the bearer
+ * token entirely and the chain hands it the literal string "ollama"; sending it
+ * anyway keeps every entry in the chain the same shape.
+ *
+ * @param {{key: string}} brain
+ * @returns {Object}
+ */
+export function headers(brain) {
+  return { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" };
+}
+
+/**
+ * The final JSON body: the chosen model, the translated request, then the
+ * per-brain extras.
+ *
+ * EXTRAS GO LAST, and that is a safety property rather than a style choice. The
+ * only extras in play are reasoning-channel controls — `reasoning_effort:"none"`
+ * for the local Ollama tier, `"low"` for the gpt-oss models — and a brain that
+ * loses that flag puts its entire answer in a reasoning channel the stream loop
+ * never reads, so she says NOTHING. Last position means no wire field can ever
+ * overwrite it.
+ *
+ * Before Phase 1c the three call sites disagreed about this order (two put
+ * extras before the body, one after). It was harmless only because the two key
+ * sets happen to be disjoint — which is asserted in test/modelProvider.test.mjs
+ * so it stays true rather than staying lucky.
+ *
+ * @param {{model: string}} brain
+ * @param {Object} wire Output of toWire().
+ * @param {Object} [extras] Per-brain request extras.
+ * @returns {Object}
+ */
+export function requestBody(brain, wire, extras) {
+  return Object.assign({ model: brain.model }, wire, extras || {});
 }
 
 /**

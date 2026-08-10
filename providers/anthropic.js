@@ -1,9 +1,17 @@
 // Anthropic wire adapter (/v1/messages).
 //
-// Pure translation: no fetch, no retry, no key handling. The caller keeps
-// owning the endpoint, the headers and the model id — server.js currently
-// inlines ANTHROPIC_MODEL, so it passes `model` in and this adapter simply
-// places it first, exactly where the inline body had it.
+// Translation plus addressing (Phase 1c): no fetch and no retry, but the
+// endpoint and the auth headers live here now instead of being retyped at every
+// call site. The model id stays the caller's — server.js inlines
+// ANTHROPIC_MODEL, so it passes `model` in and this adapter simply places it
+// first, exactly where the inline body had it.
+//
+// NOT EXERCISED LIVE. `.env` runs LLM_PROVIDER=groq, and the only automatic
+// route into this wire (server.js: openAiCompatActive() ? callNvidia :
+// callClaude) is therefore false — reaching it takes a manual .env edit. Phase
+// 1/1b/1c refactored this path under unit tests alone; the standalone meeting
+// summariser is the one caller that runs it for real. Treat a first live turn
+// on LLM_PROVIDER=anthropic as unproven, not as a regression.
 //
 // Key ORDER is load-bearing (see providers/openaiCompat.js): the bytes on the
 // wire must not change in Phase 1.
@@ -62,6 +70,32 @@ export function toWire(req = {}) {
   if (req.stream !== undefined) body.stream = req.stream;
   if (req.extra) Object.assign(body, req.extra);
   return body;
+}
+
+/**
+ * Where this dialect lives. Unlike the OpenAI-compatible adapter there is no
+ * per-brain base URL: this wire has exactly one host.
+ *
+ * @returns {string}
+ */
+export function endpoint() {
+  return "https://api.anthropic.com/v1/messages";
+}
+
+/**
+ * Auth + version + content type. The API version is pinned deliberately —
+ * it is what decides the response SHAPE this adapter's fromWire() parses, so it
+ * belongs next to the parsing rather than at three unrelated call sites.
+ *
+ * @param {string} apiKey
+ * @returns {Object}
+ */
+export function headers(apiKey) {
+  return {
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json"
+  };
 }
 
 const TOOLISH_BLOCKS = new Set(["web_search_tool_result", "server_tool_use", "tool_use", "tool_result"]);

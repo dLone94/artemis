@@ -6,9 +6,16 @@
 // This module names the neutral shapes that sit between the agent loops and
 // those two dialects, and hands out the adapter that translates.
 //
-// Deliberately NOT in scope (Phase 1b and later):
-//   - transport (fetch, timeouts, aborts)
-//   - retry / brain benching / cooldown
+// Phase 1c widened this from wire format to wire format PLUS addressing. Each
+// adapter now also answers "where does this dialect live, how does it
+// authenticate, and how do model/extras join the body" — see endpoint(),
+// headers() and (OpenAI-compat only) requestBody(). Those are facts about a
+// dialect, so they belong with the dialect.
+//
+// Deliberately still NOT in scope:
+//   - fetch, timeouts, aborts — the caller performs the I/O
+//   - retry / brain benching / cooldown — which brain is HEALTHY is a fact
+//     about the chain, not about a wire format, and stays in server.js
 //   - streaming plumbing and SSE transport
 //   - the agent loops, the safety gate, routes, prompts, the registry
 //

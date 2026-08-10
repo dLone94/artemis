@@ -1093,14 +1093,10 @@ function pickModel(messages) {
 // the agentic loop must continue for a custom fetch_page tool).
 async function streamFirstResponse(convo, system, tools, model, onText) {
   const r = await fetchWithTimeout(
-    "https://api.anthropic.com/v1/messages",
+    anthropicWire.endpoint(),
     {
       method: "POST",
-      headers: {
-        "x-api-key": anthropicApiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
+      headers: anthropicWire.headers(anthropicApiKey),
       body: JSON.stringify({ model, max_tokens: 1024, system, tools, messages: convo, stream: true })
     },
     60000
@@ -1170,14 +1166,10 @@ async function callClaude(messages, tone, opts = {}) {
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const res = await fetchWithTimeout(
-      "https://api.anthropic.com/v1/messages",
+      anthropicWire.endpoint(),
       {
         method: "POST",
-        headers: {
-          "x-api-key": anthropicApiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json"
-        },
+        headers: anthropicWire.headers(anthropicApiKey),
         body: JSON.stringify(
           anthropicWire.toWire({
             model: ANTHROPIC_MODEL,
@@ -1576,23 +1568,65 @@ function isSatisfyingCall(name, state) {
 // Against that, waiting longer is the wrong move; a stalled connection rarely
 // recovers, while a fresh one usually answers in a couple of seconds. So this
 // gives up early and tries again instead of leaving the user in silence.
+// ---- one POST, to whichever brain is currently healthy ----------------------
+//
+// Phase 1c. Three call sites used to carry their own copy of "build the URL,
+// set the auth header, merge model + extras, and walk past a brain that is
+// throttled or unreachable" — and the copies had drifted apart in ways that
+// were real bugs, not style:
+//
+//   - composeBriefing() had NO failover and NO budget recording at all. One
+//     throttled brain and the morning briefing was simply gone, on the one path
+//     where every other caller would have stepped down the chain and survived.
+//   - the streaming round benched on 429/413 but never called recordBudget, so
+//     the budget view was blind to the dominant traffic on the server.
+//
+// The adapter owns the dialect (endpoint, headers, body assembly); this owns
+// which brain answers. Returns the raw Response with its body unread, because
+// the streaming caller needs it that way.
+//
+// Rate-limit and network failover no longer cost the caller a retry attempt:
+// stepping down the chain is not a retry of the same request, it is a different
+// brain answering. Both walks terminate — benchBrain/benchNetworkBrain return
+// false once nothing healthy remains, and then the caller sees the real error.
+async function brainFetch({ wire, signal, timeoutMs }) {
+  let brain = currentBrain();
+  while (true) {
+    let res;
+    try {
+      res = await fetchWithTimeout(
+        openaiCompat.endpoint(brain),
+        {
+          method: "POST",
+          headers: openaiCompat.headers(brain),
+          body: JSON.stringify(openaiCompat.requestBody(brain, wire, brainRequestExtras(brain)))
+        },
+        brain.timeoutMs || timeoutMs,
+        signal
+      );
+    } catch (error) {
+      if (isNetworkError(error) && benchNetworkBrain(brain, error)) {
+        brain = currentBrain();
+        continue;
+      }
+      error.brain = brain; // so a timeout can name the brain and its real ceiling
+      throw error;
+    }
+    recordBudget(res);
+    if ((res.status === 429 || res.status === 413) && benchBrain(brain, res)) {
+      brain = currentBrain();
+      continue;
+    }
+    return { res, brain };
+  }
+}
+
 async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     if (signal && signal.aborted) throw new Error("cancelled");
-    const brain = currentBrain();
     try {
-      const res = await fetchWithTimeout(
-        brain.base + "/chat/completions",
-        {
-          method: "POST",
-          headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-          body: JSON.stringify(Object.assign({ model: brain.model }, brainRequestExtras(brain), body))
-        },
-        brain.timeoutMs || ms,
-        signal
-      );
-      recordBudget(res);
+      const { res } = await brainFetch({ wire: body, signal, timeoutMs: ms });
       if (!res.ok) {
         const bodyText = await res.text();
         const err = new Error("NVIDIA HTTP " + res.status + ": " + bodyText.slice(0, 300));
@@ -1603,17 +1637,11 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
       return await res.json();
     } catch (e) {
       lastErr = e;
-      // Rate limited: switch brains for the rest of this process rather than
-      // burning the user's turn. The answer still comes, from the slower one.
-      if (isRateLimit(e) && benchBrain(brain, e.res)) continue;
-      if (isNetworkError(e) && benchNetworkBrain(brain, e)) {
-        i -= 1; // network failover should not spend one of the model retry attempts
-        continue;
-      }
       // A real HTTP error (bad key, bad model) will fail identically on retry —
       // only a timeout is worth a second attempt.
       if (!/timed out/i.test(String(e.message)) || i === attempts - 1) throw e;
-      console.warn("[nvidia] attempt " + (i + 1) + " timed out after " + (brain.timeoutMs || ms) + "ms, retrying once");
+      const ceiling = (e.brain && e.brain.timeoutMs) || ms;
+      console.warn("[nvidia] attempt " + (i + 1) + " timed out after " + ceiling + "ms, retrying once");
     }
   }
   throw lastErr;
@@ -1971,47 +1999,21 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       }
     }
 
-    let brain = currentBrain();
-    let res;
-    // Walk the chain past throttled, too-small, and unreachable brains. Cloud
+    // Walks the chain past throttled, too-small, and unreachable brains. Cloud
     // entries keep the short conversational ceiling; local models bring their
     // own longer timeout.
-    while (true) {
-      try {
-        res = await fetchWithTimeout(
-          brain.base + "/chat/completions",
-          {
-            method: "POST",
-            headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-            body: JSON.stringify(Object.assign(
-              { model: brain.model },
-              openaiCompat.toWire({
-                messages: convo,
-                tools: roundTools,
-                toolChoice,
-                maxTokens: 1024,
-                temperature: 0.3,
-                stream: true
-              }),
-              brainRequestExtras(brain)
-            ))
-          },
-          brain.timeoutMs || BRAIN_STREAM_TIMEOUT_MS,
-          signal
-        );
-      } catch (error) {
-        if (isNetworkError(error) && benchNetworkBrain(brain, error)) {
-          brain = currentBrain();
-          continue;
-        }
-        throw error;
-      }
-      if ((res.status === 429 || res.status === 413) && benchBrain(brain, res)) {
-        brain = currentBrain();
-        continue;
-      }
-      break;
-    }
+    const { res, brain } = await brainFetch({
+      wire: openaiCompat.toWire({
+        messages: convo,
+        tools: roundTools,
+        toolChoice,
+        maxTokens: 1024,
+        temperature: 0.3,
+        stream: true
+      }),
+      signal,
+      timeoutMs: BRAIN_STREAM_TIMEOUT_MS
+    });
     if (!res.ok) {
       const body = await res.text();
       throw new Error("brain HTTP " + res.status + " (" + brain.name + "): " + body.slice(0, 300));
@@ -2480,14 +2482,10 @@ async function completeMeetingModel({ system, user }, signal) {
   if (!anthropicApiKey) throw new Error("no meeting summariser configured");
   bumpUsage("llm");
   const response = await fetchWithTimeout(
-    "https://api.anthropic.com/v1/messages",
+    anthropicWire.endpoint(),
     {
       method: "POST",
-      headers: {
-        "x-api-key": anthropicApiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
+      headers: anthropicWire.headers(anthropicApiKey),
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,
         max_tokens: 1600,
@@ -2653,35 +2651,29 @@ async function composeBriefing() {
   const sr = await webSearch("top world news headlines today", 6);
   if (sr.error || !sr.results || !sr.results.length) return "";
   const headlines = sr.results.map((r, i) => `${i + 1}. ${r.title} — ${(r.content || "").slice(0, 160)}`).join("\n");
-  const brain = currentBrain();
-  const res = await fetchWithTimeout(
-    brain.base + "/chat/completions",
-    {
-      method: "POST",
-      headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: brain.model,
-        ...brainRequestExtras(brain),
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are Evie, a JARVIS-style voice assistant. Summarize the most important world news " +
-              "from the provided headlines as a SPOKEN brief: 2-3 flowing sentences, max 70 words, starting " +
-              "directly with the news (no greeting, no preamble). Plain speech only — no markdown, no " +
-              "lists, no emoji, no source names. End with a short offer like 'Shall I dig into any of these?'"
-          },
-          { role: "user", content: "Today's headlines:\n" + headlines }
-        ],
-        max_tokens: 200,
-        temperature: 0.4
-      })
-    },
-    brain.timeoutMs || 25000
-  );
+  // Through the shared transport, which is the point: before Phase 1c this was
+  // the one brain call with no failover, so a single throttled model killed the
+  // briefing outright instead of stepping down the chain like everything else.
+  const { res } = await brainFetch({
+    wire: openaiCompat.toWire({
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are Evie, a JARVIS-style voice assistant. Summarize the most important world news " +
+            "from the provided headlines as a SPOKEN brief: 2-3 flowing sentences, max 70 words, starting " +
+            "directly with the news (no greeting, no preamble). Plain speech only — no markdown, no " +
+            "lists, no emoji, no source names. End with a short offer like 'Shall I dig into any of these?'"
+        },
+        { role: "user", content: "Today's headlines:\n" + headlines }
+      ],
+      maxTokens: 200,
+      temperature: 0.4
+    }),
+    timeoutMs: 25000
+  });
   if (!res.ok) throw new Error("briefing LLM HTTP " + res.status);
-  const data = await res.json();
-  return (data.choices?.[0]?.message?.content || "").trim();
+  return (openaiCompat.fromWire(await res.json()).text || "").trim();
 }
 
 async function getCachedBriefingText() {

@@ -14,6 +14,8 @@ import http from "node:http";
  *   { text, toolCalls }                      → narration AND calls
  *   { fragment: true }                       → split across many tiny SSE deltas
  *   { delayMs: n }                           → stall before responding
+ *   { status: 429, retryAfter: "0.05" }      → refuse, the way a throttled brain
+ *                                              does, so chain failover is testable
  */
 export async function startFakeBrain() {
   let script = [];
@@ -44,10 +46,17 @@ export async function startFakeBrain() {
       tool_choice: parsed.tool_choice,
       toolNames: (parsed.tools || []).map((t) => t.function.name),
       messages: parsed.messages,
-      stream: !!parsed.stream
+      stream: !!parsed.stream,
+      // which chain entry asked — the only way to see a failover from outside
+      model: parsed.model
     });
 
     const spec = script.shift() || { text: "(fake brain ran out of script)" };
+    if (spec.status) {
+      const headers = spec.retryAfter ? { "retry-after": String(spec.retryAfter) } : {};
+      res.writeHead(spec.status, headers).end(JSON.stringify({ error: { message: "rate limit" } }));
+      return;
+    }
     if (spec.delayMs) {
       const aborted = await new Promise((resolve) => {
         const t = setTimeout(() => resolve(false), spec.delayMs);

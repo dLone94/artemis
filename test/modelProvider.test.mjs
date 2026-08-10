@@ -370,3 +370,83 @@ test("anthropic.fromWire serialises a tool_use with no input as {}", () => {
   assert.equal(res.text, "");
   assert.equal(res.stopReason, null);
 });
+
+// ---- Phase 1c: transport addressing -----------------------------------------
+// These lock the values that used to be retyped at each call site. They are
+// deliberately literal: the point of the assertions is that the URL and the
+// auth headers going out today are the SAME bytes that went out before the
+// transport was unified, so a typo here cannot quietly repoint the brain.
+
+const GROQ_BRAIN = { name: "groq:llama-3.3-70b-versatile", base: "https://api.groq.com/openai/v1", key: "gsk_test", model: "llama-3.3-70b-versatile" };
+const OLLAMA_BRAIN = { name: "ollama:qwen3.5:4b", base: "http://127.0.0.1:11434/v1", key: "ollama", model: "qwen3.5:4b", timeoutMs: 90000 };
+
+test("openaiCompat.endpoint builds each brain's completions URL from its own base", () => {
+  assert.equal(openaiCompat.endpoint(GROQ_BRAIN), "https://api.groq.com/openai/v1/chat/completions");
+  assert.equal(openaiCompat.endpoint(OLLAMA_BRAIN), "http://127.0.0.1:11434/v1/chat/completions");
+});
+
+test("openaiCompat.headers matches the inline header literal exactly", () => {
+  assert.deepEqual(openaiCompat.headers(GROQ_BRAIN), {
+    Authorization: "Bearer gsk_test",
+    "Content-Type": "application/json"
+  });
+  // The local tier has no real key; the chain hands it "ollama" and the header
+  // is sent anyway so every entry in the chain has one shape.
+  assert.equal(openaiCompat.headers(OLLAMA_BRAIN).Authorization, "Bearer ollama");
+});
+
+test("openaiCompat.requestBody reproduces the streaming body byte for byte", () => {
+  const wire = openaiCompat.toWire({
+    messages: MESSAGES,
+    tools: NEUTRAL_TOOLS,
+    toolChoice: "auto",
+    maxTokens: 1024,
+    temperature: 0.3,
+    stream: true
+  });
+  const body = openaiCompat.requestBody(OLLAMA_BRAIN, wire, { reasoning_effort: "none" });
+  // model first, wire in the middle, extras last — the exact order the inline
+  // Object.assign in streamNvidia produced.
+  assert.deepEqual(Object.keys(body), [
+    "model", "messages", "tools", "tool_choice", "max_tokens", "temperature", "stream", "reasoning_effort"
+  ]);
+  assert.equal(body.model, "qwen3.5:4b");
+  assert.equal(body.reasoning_effort, "none");
+});
+
+test("openaiCompat.requestBody tolerates a brain with no extras", () => {
+  const body = openaiCompat.requestBody(GROQ_BRAIN, openaiCompat.toWire({ messages: MESSAGES, maxTokens: 200, temperature: 0.4 }));
+  assert.deepEqual(Object.keys(body), ["model", "messages", "max_tokens", "temperature"]);
+});
+
+// The invariant that made unifying the three different merge orders safe: the
+// reasoning-channel extras and the wire body never name the same key. If a
+// future toWire field collides, this fails and the precedence question becomes
+// a real decision instead of a silent one.
+test("per-brain extras and the wire body have disjoint keys", () => {
+  const wireKeys = new Set(Object.keys(openaiCompat.toWire({
+    messages: MESSAGES,
+    tools: NEUTRAL_TOOLS,
+    toolChoice: "required",
+    maxTokens: 1024,
+    temperature: 0.3,
+    stream: true
+  })));
+  for (const key of ["reasoning_effort"]) {
+    assert.ok(!wireKeys.has(key), `extras key ${key} must not also be a wire field`);
+  }
+});
+
+test("extras win over a colliding wire field, so the reasoning guard cannot be clobbered", () => {
+  const body = openaiCompat.requestBody(OLLAMA_BRAIN, { reasoning_effort: "high" }, { reasoning_effort: "none" });
+  assert.equal(body.reasoning_effort, "none");
+});
+
+test("anthropic.endpoint and headers match the inline literals exactly", () => {
+  assert.equal(anthropic.endpoint(), "https://api.anthropic.com/v1/messages");
+  assert.deepEqual(anthropic.headers("sk-ant-test"), {
+    "x-api-key": "sk-ant-test",
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json"
+  });
+});
