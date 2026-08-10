@@ -104,11 +104,15 @@ the 20-request budget (found the hard way extending the rubric).
 
 ## Baselines
 
-- `eval/baseline-refactor-local.json` — **the CODE yardstick** (rubric 1.3.1):
-  `--local qwen3.5:4b` at temperature 0, 30/39, one pinned model, reproducible to
+- `eval/baseline-refactor-local.json` — **the CODE yardstick** (rubric 1.3.2):
+  `--local qwen3.5:4b` at temperature 0, 33/39, one pinned model, reproducible to
   a byte-identical failure set. Compare against this before and after a refactor;
   any difference is the code, because nothing else can move. It is deliberately
   NOT a model verdict — the score is a 4B local model's, not production's.
+  Its verdict is BLOCKED, and that is honest: `gym-no-supplements` is a real
+  failure (the model names specific supplements after correctly refusing to),
+  not an instrument artifact. A baseline is a record of where you stand, not a
+  certificate.
 - `eval/baseline-current.json` — **the MODEL gate's yardstick**, saved under
   rubric 1.2.1 with 35 cases. Stale against today's 1.3.1/39: the runner refuses
   to compare across rubric versions, so this needs a re-mint before the next

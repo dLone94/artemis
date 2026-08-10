@@ -8,7 +8,7 @@ import assert from "node:assert";
 import { spawn } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,11 @@ import { startFakeBrain } from "./fakeBrain.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_DIR = mkdtempSync(join(tmpdir(), "artemis-test-"));
+// A synthetic contact, so the confirm-gated path can be reached at all: with an
+// empty store send_message's precheck correctly stops to ask for a number
+// instead of confirming, which is a different branch than the one under test.
+writeFileSync(join(DATA_DIR, "contacts.json"),
+  JSON.stringify({ mom: { name: "Mom", phone: "359881234567", email: "" } }));
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -277,6 +282,32 @@ try {
     const after = (await brain.requests()).length;
     assert.ok(after - before <= 2, "no further model rounds are started after the client disconnects");
     ok("client disconnect cancels the turn instead of running it to completion");
+  }
+
+  // 13) THE MIRROR BUG: she says she CAN'T when she can.
+  //
+  // The repair round recovers the right call, but it needs a spoken yes — and
+  // the backstop used to drop confirm-gated calls on the floor, ending the turn
+  // on "I couldn't send that. Nothing happened on my end." while the correct
+  // send_message sat in hand, unasked. That made every confirm-gated action
+  // unreachable on any turn whose first round failed to emit the call.
+  //
+  // Asking is not acting: the confirmation must be raised and the tool must
+  // still NOT have run.
+  {
+    await brain.setScript([
+      { text: "Sure, I'll let her know." },                  // forced round: talks, calls nothing
+      { text: "Sending that now." },                          // streaming round: still no call
+      { toolCalls: [{ name: "send_message", arguments: { to: "Mom", body: "I'll be late" } }] } // backstop recovers it
+    ]);
+    const { events, spoken } = await chat(PORT, "text Mom that I'll be late");
+    const done = events.find((e) => e.ev === "done");
+    assert.ok(!/couldn'?t send|nothing happened/i.test(spoken),
+      "a recovered call must never be reported as a failure");
+    assert.ok(done.data.pendingAction, "the recovered confirm-gated call is surfaced as a confirmation");
+    assert.equal(done.data.pendingAction.name, "send_message");
+    assert.deepEqual(done.data.toolsUsed, [], "asking is not acting — nothing ran without a yes");
+    ok("a confirm-gated call recovered by the backstop asks instead of claiming failure");
   }
 
   console.log("PASS ✅  reliability: a spoken claim now requires a tool that really ran and really worked");

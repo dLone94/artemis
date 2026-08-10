@@ -1715,12 +1715,49 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
     );
 
     const calls = openaiCompat.fromWire(data).toolCalls;
-    if (!calls.length) return null;
+    // These two dead ends used to be indistinguishable in the logs — both just
+    // `return null`, both surfacing as the same honest failure line. They mean
+    // opposite things, and telling them apart is how you know whether to blame
+    // the model or the loop.
+    if (!calls.length) {
+      console.log(`[turn ${state.id}] backstop: model called nothing even under a forced tool_choice`);
+      return null;
+    }
 
     // The safety gate still owns consequential actions — a forced round must
     // never be a way around an explicit spoken yes.
+    //
+    // But "not a way around the yes" is not the same as "throw the call away".
+    // This used to drop confirm-gated calls on the floor and let the turn end on
+    // the honest-failure line, so "text Mom that I'll be late" answered "I
+    // couldn't send that. Nothing happened on my end." — while the correct
+    // send_message call was sitting right here, unasked. That is a false
+    // statement about her own capability, and it made EVERY confirm-gated
+    // action unreachable on any turn whose first round failed to emit the call.
+    // Measured on qwen3.5:4b and llama-3.3-70b alike; it is the standing
+    // confirmation-stratum blocker.
+    //
+    // Asking is not acting. The call is surfaced as a pending confirmation and
+    // nothing runs until the user says yes — the same precheck-then-createPending
+    // path the forced round already uses.
+    const needsYes = calls.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
     const gated = calls.filter((tc) => !needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
-    if (!gated.length) return null;
+    if (!gated.length) {
+      if (!needsYes) return null;
+      let params = {};
+      try { params = JSON.parse(needsYes.arguments || "{}"); } catch (e) {}
+      const pre = await precheckSkill(needsYes.name, params, skillCtx);
+      if (!pre.ok) {
+        // Preconditions already fail, so there is nothing worth confirming —
+        // say what is missing instead of asking a question whose answer cannot
+        // help ("I don't have a number for Mom. What's the number?").
+        state.rejected.push({ name: needsYes.name, error: "precondition failed" });
+        return { text: pre.summary || null };
+      }
+      const confirmId = createPending(needsYes.name, params);
+      console.log(`[turn ${state.id}] backstop: recovered ${needsYes.name} and is asking for confirmation`);
+      return { pending: { confirmId, name: needsYes.name, params } };
+    }
 
     convo.push({
       role: "assistant",
@@ -1742,8 +1779,8 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
       opts.signal,
       20000
     );
-    const text = openaiCompat.fromWire(after).text;
-    return text.trim() || null;
+    const text = openaiCompat.fromWire(after).text.trim();
+    return text ? { text } : null;
   } catch (e) {
     const recovered = failedGenerationFrom(e);
     if (recovered) state.failedGeneration = recovered;
@@ -2004,6 +2041,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
               reply: confirmPromptFor(confirm.name, params),
               sources: dedupeSources(sources),
               clientActions,
+              toolsUsed: state.tools,
               intent: state.intent.intent,
               mailUntrusted: state.mailUntrusted,
               pendingAction: { confirmId, name: confirm.name, params }
@@ -2143,6 +2181,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
           reply: confirmPromptFor(confirm.name, params),
           sources: dedupeSources(sources),
           clientActions,
+          toolsUsed: state.tools,
           intent: state.intent.intent,
           mailUntrusted: state.mailUntrusted,
           pendingAction: { confirmId, name: confirm.name, params }
@@ -2178,13 +2217,28 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       // Everything above was narration about an action that never happened —
       // it was never spoken, and it is dropped here rather than flushed.
       const repaired = await backstopToolRound(convo, sources, clientActions, state, toolOpts);
-      if (repaired) onText(repaired);
+      // The repair round recovered a confirm-gated call: ask, don't act, and
+      // don't pretend the turn failed. Nothing runs until the user says yes.
+      if (repaired && repaired.pending) {
+        logTurn(state, { awaitingConfirm: repaired.pending.name });
+        return {
+          reply: confirmPromptFor(repaired.pending.name, repaired.pending.params),
+          sources: dedupeSources(sources),
+          clientActions,
+          toolsUsed: state.tools,
+          intent: state.intent.intent,
+          mailUntrusted: state.mailUntrusted,
+          pendingAction: repaired.pending
+        };
+      }
+      const repairedText = repaired && repaired.text;
+      if (repairedText) onText(repairedText);
       else if (state.failedGeneration && ASKING_SHAPE.test(state.failedGeneration)) {
         // the backstop's own strict-tool_choice rejection may have captured it
         onText(state.failedGeneration);
         return finishTurn({ askedForInput: true });
       } else onText(failureLine(state.intent.family));
-      return finishTurn({ repaired: !!repaired });
+      return finishTurn({ repaired: !!repairedText });
     }
     // flush anything still held back (short answers never hit the 150-char
     // live threshold), then finish the turn

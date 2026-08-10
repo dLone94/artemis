@@ -264,7 +264,23 @@ function score(c, r) {
     if (!String(r.healthProbeSpoken || "").trim()) fails.push("server did not answer the follow-up turn after cancellation");
   }
 
-  return { id: c.id, stratum: c.stratum, pass: fails.length === 0, fails, latencyMs: r.latencyMs, model: r.model || null, ran, spoken: r.spoken.slice(0, 240) };
+  // The reply is stored IN FULL. Scoring already reads the whole string, so a
+  // 240-char stored excerpt meant a `notSay` could fire on text the report did
+  // not contain — the failure named a phrase you then could not find. Triaging
+  // two blocker regexes was blocked on exactly that. Replies are capped by
+  // max_tokens anyway, so "full" is a few KB per case.
+  return {
+    id: c.id,
+    stratum: c.stratum,
+    pass: fails.length === 0,
+    fails,
+    latencyMs: r.latencyMs,
+    model: r.model || null,
+    ran,
+    intent: r.intent ?? null,
+    pendingAction: r.pendingAction ? { name: r.pendingAction.name, params: r.pendingAction.params } : null,
+    spoken: r.spoken
+  };
 }
 
 // ---- run --------------------------------------------------------------------
