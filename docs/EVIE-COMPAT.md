@@ -32,22 +32,56 @@ it, it says Artemis.**
 | Self-signed cert subject `/CN=Artemis` | `server.js` | Changing the CN produces a *different* certificate, so every phone that already accepted the old one gets a fresh scary warning. |
 | `package.json` `"name": "artemis"` | `package.json` | Package identity, referenced by tooling and lockfiles. |
 | Test/eval file names, fixtures, and `eval/` internals | `test/`, `eval/` | Baselines, result files, and the `npm test` chain reference them by path. |
-| Wake model files and profile ids (`hey_jarvis_v0.1.onnx`, `hey-jarvis-v0.1`) and `public/wakeLocal.js` loading logic | `public/oww/`, `public/wakeProfile.js`, `public/wakeLocal.js` | Asset paths + SHA-256 pins. See "Wake phrase" below. |
+| Wake model files and profile ids (`hey-artemis-v2`, `hey_jarvis_v0.1.onnx`, `hey-jarvis-v0.1`) and `public/wakeLocal.js` loading logic | `public/oww/`, `public/wakeProfile.js`, `public/wakeLocal.js` | Asset paths + SHA-256 pins; renaming an id or file breaks hash verification and forces a rollback. See "Wake phrase" below. |
 | Browser-fallback wake vocabulary (`"artemis"`, `"hey artemis"`, …) | `public/wakeWords.js` | Matching data for the Chrome/Edge `SpeechRecognition` fallback, not display text. The token the recognizer accepts is unchanged in Stage 1, so the UI must not claim otherwise. |
 | Bracketed log tags `[stt-live]`, `[brain]`, `[dictation]` and `console.*` diagnostics | everywhere | Operator-facing diagnostics, grepped by existing runbooks. |
 | Source comments mentioning Artemis | everywhere | Left alone deliberately to keep the Stage 1 diff minimal and reviewable. |
 
-## Wake phrase
+## Wake phrase — manifest-driven, never hardcoded
 
-The wake model that actually loads is **openWakeWord "Hey Jarvis"** (`hey_jarvis_v0.1.onnx`).
-**No "Hey Evie" model exists.** Every UI string that tells the user what to say therefore
-still says **"Hey Jarvis"**, and Stage 1 added none that claim otherwise —
-`test/identity.test.mjs` enforces that no file under `public/` contains the string
-`"Hey Evie"`.
+The wake phrase is **not a constant anywhere in the product**. It is declared by the
+active profile in `public/oww/manifest.json`, and a profile is only adopted if every
+asset it names matches the SHA-256 the manifest declares (`public/wakeProfile.js`,
+`resolveWakeProfile()`).
 
-Where the browser `SpeechRecognition` fallback is in play, the UI reads the phrase from
-`wakePhrase()` / the verified wake profile rather than hardcoding a name, so what is
-displayed is always what the engine is actually listening for.
+- **Currently active: `hey-artemis-v2` — phrase "Hey Artemis"**, threshold 0.99. Its three
+  declared assets verify against the files on disk, so this is the classifier the engine
+  actually loads.
+- **Verified rollback: `hey-jarvis-v0.1` — phrase "Hey Jarvis"** (`FALLBACK_PROFILE`,
+  compiled into `wakeProfile.js` with its own hashes). Any failure — missing manifest,
+  malformed profile, off-origin classifier URL, hash mismatch, half-deployed bundle —
+  rolls back to it *before* recognition starts. Failing back to a wake word that works
+  beats failing forward into one that might not.
+- **No "Hey Evie" model exists.** The Evie rename was display-only and did not touch the
+  wake stack.
+
+Every display surface interpolates the resolved phrase instead of spelling one out:
+`main.js` caches it in `resolvedWakePhrase` (seeded from `FALLBACK_PROFILE.phrase`,
+replaced once `resolveWakeProfile()` returns) and fills every
+`<span data-wake-phrase>` slot; `brainPage.js` does the same for `brain.html`, which does
+not load `main.js`; `wakePhrase()` prefers the engine's live profile whenever it is
+running, so an engine rollback repaints the copy. `cockpit.js` avoids the problem entirely
+by saying "say the wake phrase".
+
+This is enforced, not merely intended. `test/wakeProfile.test.mjs` bans the curly-quoted
+literals “Hey Jarvis”, “Hey Artemis” and “Hey Evie” from every view file, recomputes the
+active profile's asset hashes from disk, asserts the rollback classifier is present, and
+asserts the resolution rule agrees with the manifest. `test/identity.test.mjs` separately
+bans any "Hey Evie" claim.
+
+> **How this was caught:** Stage 1 of the rename hardcoded "Hey Jarvis" into the UI on the
+> stale belief that the custom model had failed its gate and never loaded. The manifest
+> said otherwise. Hardcoding *any* phrase is the bug — which phrase is hardcoded is a
+> detail.
+
+### Known gap: `evaluation.verdict` is not a gate
+
+`hey-artemis-v2` carries `"evaluation": { "verdict": "FAIL" }` in the manifest, and
+`resolveWakeProfile()` **does not read that field** — it gates on shape and asset hashes
+only. A profile that failed its false-accept-rate evaluation is therefore live. That is a
+wake-quality question, not a display-honesty one (the UI correctly reports what is
+running), but it should be resolved deliberately: either gate on `verdict` or re-run the
+evaluation and record a passing operating point. See `wake/README.md`.
 
 ## Migration
 
@@ -88,5 +122,7 @@ If a later stage wants the internals renamed too, these are the sharp edges:
 7. **`.data/` file names and `~/Library/Logs/Artemis`** — real data and real logs; needs a
    copy-then-verify migration, never an in-place rename.
 8. **Wake phrase "Hey Evie"** — not a rename at all but a new model: it requires training,
-   an FAR/FRR gate (`wake/README.md`), a new profile id and SHA-256 pins. Until that model
-   ships and passes its gate, no UI string may claim it exists.
+   an FAR/FRR gate (`wake/README.md`), a new profile id and SHA-256 pins. Shipping it is a
+   manifest change (`active`), not a code change — no display string needs editing,
+   because none of them name a phrase. Until that model exists, no UI string may claim it
+   does.

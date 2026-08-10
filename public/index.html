@@ -111,7 +111,7 @@
 
   <!-- bottom: controls + live waveform. Same ids the voice pipeline expects. -->
   <div class="dock" id="dock" data-state="expanded" aria-label="Evie controls">
-    <div class="dock-status" id="liveStatus">Say “Hey Jarvis”, or tap the mic to talk</div>
+    <div class="dock-status" id="liveStatus">Say “<span data-wake-phrase>the wake phrase</span>”, or tap the mic to talk</div>
     <canvas class="hud-wave" id="hudWave" height="36" aria-hidden="true"></canvas>
     <!-- typed command line — same pipeline as voice ("/" focuses it) -->
     <form class="hud-cmd" id="cmdForm" autocomplete="off">

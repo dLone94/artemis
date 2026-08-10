@@ -1,16 +1,18 @@
 // Local, on-device wake word via openWakeWord (ONNX Runtime Web / WASM).
-// Detects "Hey Jarvis" entirely in the browser — reliable, private (no audio
-// leaves the device), no account/key, and works on any browser INCLUDING
-// iPhone Safari (where the built-in speech recognizer doesn't exist).
+// Detects the phrase declared by the ACTIVE MANIFEST PROFILE entirely in the
+// browser — reliable, private (no audio leaves the device), no account/key, and
+// works on any browser INCLUDING iPhone Safari (where the built-in speech
+// recognizer doesn't exist). Which phrase that is comes from the verified
+// profile at runtime; nothing here — comments included — should name one.
 //
 // Pipeline (openWakeWord): 16 kHz audio → melspectrogram.onnx → 16 sliding
-// embeddings (embedding_model.onnx, 76-frame window, step 8) → hey_jarvis
+// embeddings (embedding_model.onnx, 76-frame window, step 8) → the profile's
 // classifier → score. We recompute on a ~2 s rolling window each tick, which is
 // simpler and less bug-prone than incremental buffering. Model I/O names are
 // read from the sessions so tensor shapes can never drift.
 //
 // CRUCIALLY, this engine also CAPTURES THE COMMAND itself (captureCommand):
-// the same mic stream that heard "Hey Jarvis" keeps flowing into a command
+// the same mic stream that heard the wake phrase keeps flowing into a command
 // buffer — including ~1.2 s of PRE-ROLL from before detection fired. The old
 // design closed this mic and had MediaRecorder open a new one, and the words
 // spoken during that handoff (plus the detection latency) were simply never
@@ -80,7 +82,7 @@ function loadOrt() {
 async function ensureModels() {
   if (wwSess) return;
   // Resolve and hash-verify the wake profile BEFORE loading anything. If the
-  // active profile doesn't check out this rolls back to the shipped Jarvis model
+  // active profile doesn't check out this rolls back to the shipped fallback model
   // rather than starting recognition with an unverified classifier.
   const resolved = await resolveWakeProfile();
   profile = resolved.profile;

@@ -947,7 +947,7 @@ function announceWhenQuiet(text, tries = 24) {
 })();
 
 /* ---------------- opening line in the log ---------------- */
-addLine("status", "systems online — say “Hey Jarvis”, tap the mic, or ask “what can I do?”");
+addLine("status", "systems online — tap the mic, say the wake phrase, or ask “what can I do?”");
 
 // ── HUD gauges ────────────────────────────────────────────────────────────
 // Bound to /api/telemetry. Everything shown here is something she actually

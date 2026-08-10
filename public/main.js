@@ -9,6 +9,7 @@ import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
 import { PAL, prefersReducedMotion } from "./orbShared.js";
 import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWakeRunning, captureCommand, activeWakeProfile } from "./wakeLocal.js";
+import { FALLBACK_PROFILE, resolveWakeProfile } from "./wakeProfile.js";
 import { confirmationDecision } from "./confirmDecision.js";
 import { isMeetingStartPhrase, isMeetingStopPhrase } from "./meetingCapture.js";
 
@@ -1485,7 +1486,28 @@ function wakePrefixRe() {
 // loaded — never from a constant here. Displaying one phrase while the engine
 // listens for another is worse than displaying nothing: the user says the wrong
 // words and concludes she's broken.
-function wakePhrase() { return localWakeRunning() ? activeWakeProfile().phrase : "Artemis"; }
+//
+// Before the engine starts there is still copy to render, so the manifest is
+// resolved once at boot and cached here. Every display string interpolates this
+// — no view in this repo may spell a wake phrase out literally, which is exactly
+// the mistake that shipped a UI saying "Hey Jarvis" at a "Hey Artemis" model.
+let resolvedWakePhrase = FALLBACK_PROFILE.phrase;
+function wakePhrase() { return localWakeRunning() ? activeWakeProfile().phrase : resolvedWakePhrase; }
+
+// Static copy marks its slot with <span data-wake-phrase>; this fills them all.
+// Re-run whenever the engine adopts a profile, so the page can never keep a
+// phrase the engine has since rolled back from.
+function fillWakePhrase() {
+  const phrase = wakePhrase();
+  document.querySelectorAll("[data-wake-phrase]").forEach((el) => { el.textContent = phrase; });
+}
+fillWakePhrase();
+resolveWakeProfile({ onWarn: (m) => console.info("[wake] " + m) })
+  .then((r) => {
+    resolvedWakePhrase = (r && r.profile && r.profile.phrase) || FALLBACK_PROFILE.phrase;
+    fillWakePhrase();
+  })
+  .catch(() => { /* the built-in phrase is already showing */ });
 
 function scrubWakePrefix(text) {
   return String(text || "").replace(wakePrefixRe(), "").trim();
@@ -2066,7 +2088,8 @@ function dispatchUtterance(text, { suppressClosingAck = false } = {}) {
   return true;
 }
 
-// The LOCAL wake path: openWakeWord reliably detects "Hey Jarvis" on-device
+// The LOCAL wake path: openWakeWord runs the classifier named by the VERIFIED
+// manifest profile (whatever phrase that profile declares) entirely on-device
 // (works on iPhone). On detection the ENGINE ITSELF captures the command from
 // the same mic stream — including ~1.2s of pre-roll from before detection
 // fired — so nothing you said is ever lost to a mic handoff. The WAV goes to
@@ -2150,7 +2173,7 @@ async function followUpListen() {
       if (!wav) {
         conversationLive = false;
         returnToWake = true;
-        hud("log", "status", "follow-up: closed (silence) — say \u201cHey Jarvis\u201d");
+        hud("log", "status", "follow-up: closed (silence) — say \u201c" + wakePhrase() + "\u201d");
         return false;
       }
 
@@ -2216,6 +2239,7 @@ async function startWakeLocal(
   setWakeUi(true);
   orb.setStatus("listening");
   setLiveStatus(`● Listening for “${activeWakeProfile().phrase}…”  (on-device)`);
+  fillWakePhrase(); // the engine may have adopted a different profile than boot resolved
   window.__wakeLive = true;
   return true;
 }
@@ -2499,8 +2523,10 @@ const talkBtn = $("talkBtn");
 if (talkBtn) talkBtn.addEventListener("click", startTalkGesture);
 
 // "What can you do?" — Artemis explains herself out loud.
-const EXPLAINER =
-  "I'm Evie — your voice-first AI. Tap the mic and talk, or flip on the wake word and say “Hey Jarvis”. " +
+// A function, not a constant: the wake phrase is only known after the manifest
+// resolves, so this must be built at speak time.
+const explainerText = () =>
+  `I'm Evie — your voice-first AI. Tap the mic and talk, or flip on the wake word and say “${wakePhrase()}”. ` +
   "I reply in real time, and you can pick my voice and how blunt I am. " +
   "I search the web and read pages to answer with real sources, dig through Hacker News or GitHub when you want to go deeper, and open any site for you by voice. " +
   "I keep notes, remember your contacts, and can act on your behalf — drafting and sending messages — but anything that actually sends, pays, or changes something, I always confirm with you first. " +
@@ -2710,7 +2736,7 @@ initMiniOrbs();
 
   // caption per step; {a} is replaced with the active sub-agent's name
   const CAPTIONS = [
-    "You say <strong>“Hey Jarvis.”</strong> The outer ring pulses as she wakes and starts listening.",
+    "You say <strong>“{w}.”</strong> The outer ring pulses as she wakes and starts listening.",
     "She reads your intent and <strong>routes</strong> it to {a} — that node lights up and links back to the core.",
     "{a} runs its <strong>tool</strong> — a web search, a draft, a lookup. Its node spins while the work runs.",
     "She composes the answer and <strong>speaks</strong> it — the core flares and a voice wave ripples outward."
@@ -2724,7 +2750,9 @@ initMiniOrbs();
     // guarded lookups: an out-of-range step/agent must degrade, never throw
     const name = ["Research", "Email triage", "Messaging"][brain.agent] || "the agent";
     const tpl = CAPTIONS[brain.step] || CAPTIONS[0] || "";
-    caption.innerHTML = tpl.replace(/\{a\}/g, "<strong>" + name + "</strong>");
+    caption.innerHTML = tpl
+      .replace(/\{a\}/g, "<strong>" + name + "</strong>")
+      .replace(/\{w\}/g, wakePhrase());
   }
   function showStep(step) {
     brain.setStep(step);
@@ -3040,7 +3068,7 @@ fetch("/api/status")
     // its assets, wakePhrase() takes over from the verified profile itself.
     localWakeCfg = s.localWake || null;
     if (localWakeCfg && localWakeCfg.ready) {
-      const phrase = localWakeCfg.phrase || "Hey Jarvis";
+      const phrase = localWakeCfg.phrase || FALLBACK_PROFILE.phrase;
       wakeToggle.disabled = false;
       wakeToggle.title = `On-device wake word “${phrase}” — works on any browser, including iPhone`;
       window.__wakePhrase = phrase;

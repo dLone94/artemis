@@ -26,7 +26,8 @@ If `node` isn't on your PATH, use a standalone build directly, e.g.:
 ```
 
 Open **http://localhost:4100**, tap **TAP TO ENTER** (unlocks audio), and talk to her —
-tap the mic, type in the `›` command line, or turn on the wake word and say “Hey Jarvis”.
+tap the mic, type in the `›` command line, or turn on the wake word and say the wake
+phrase shown in the app.
 
 ### …or run her as a Mac app
 
@@ -105,13 +106,20 @@ self-signed-cert warning once. The token gates every request; loopback stays ung
 node test/confirm-gate.test.mjs   # proves consequential actions can't fire without a spoken "yes"
 ```
 
-## Wake word (ships as "Hey Jarvis")
+## Wake word (manifest-driven)
 
-Say the active wake phrase — **“Hey Jarvis”** out of the box — to wake her
-hands-free. The phrase, the classifier and its threshold all come from one
-verified *wake profile* (`public/oww/manifest.json`); the UI never hardcodes it,
-so what's displayed is always what the engine actually loaded. Training and
-publishing a custom phrase is documented in [`wake/README.md`](wake/README.md).
+Say the active wake phrase to wake her hands-free. **The phrase is never hardcoded** —
+it, the classifier and its threshold all come from one *wake profile* selected by
+`active` in `public/oww/manifest.json`, and a profile is adopted only if every asset it
+declares matches its pinned SHA-256. The app reads the phrase from the profile it
+verified and renders it into the copy, so what's displayed is always what the engine
+actually loaded.
+
+If the manifest is missing, malformed, or any hash fails, the engine **rolls back** to the
+built-in profile compiled into `public/wakeProfile.js` (`hey-jarvis-v0.1`, “Hey Jarvis”)
+*before* recognition starts — and the displayed phrase rolls back with it. Training and
+publishing a custom phrase is documented in [`wake/README.md`](wake/README.md); shipping
+one is a manifest edit, not a code edit.
 
 Detection runs **fully on-device** via
 [openWakeWord](https://github.com/dscripka/openWakeWord) (ONNX Runtime Web / WASM) — no

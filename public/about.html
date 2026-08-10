@@ -106,7 +106,7 @@
         <article class="card reveal" style="--accent: #22d3ee">
           <span class="card-orb"></span>
           <h3 class="card-title"><span class="card-dot"></span> Voice, first</h3>
-          <p class="card-desc">Say “Hey Jarvis” and talk. She answers out loud in real time — on the Mac or your phone over the LAN.</p>
+          <p class="card-desc">Say “<span data-wake-phrase>the wake phrase</span>” and talk. She answers out loud in real time — on the Mac or your phone over the LAN.</p>
           <div class="card-tag">WAKE WORD · SPEAK · HANDS-FREE</div>
         </article>
         <article class="card reveal" style="--accent: #38bdf8">
@@ -169,7 +169,7 @@
             <button class="brain-step" type="button" data-step="2">3 · Tool call</button>
             <button class="brain-step" type="button" data-step="3">4 · Respond</button>
           </div>
-          <p class="brain-caption" id="brainCaption" aria-live="polite">You say “Hey Jarvis.” The outer ring pulses as she wakes and starts listening.</p>
+          <p class="brain-caption" id="brainCaption" aria-live="polite">You say “<span data-wake-phrase>the wake phrase</span>.” The outer ring pulses as she wakes and starts listening.</p>
           <div class="brain-agents-row" role="group" aria-label="Route to sub-agent">
             <span class="brain-agents-label">Route to</span>
             <button class="brain-agent is-active" type="button" data-agent="0">Research</button>
@@ -263,7 +263,7 @@
 
   <div class="dock" id="dock" data-state="idle" aria-label="Evie controls">
     <button class="dock-toggle" id="dockToggle" type="button" aria-expanded="true" aria-controls="dockBody" title="Collapse controls" aria-label="Collapse controls">▾</button>
-    <div class="dock-status" id="liveStatus">Say “Hey Jarvis”, or tap the mic to talk</div>
+    <div class="dock-status" id="liveStatus">Say “<span data-wake-phrase>the wake phrase</span>”, or tap the mic to talk</div>
     <div class="dock-row" id="dockBody">
       <button class="mic-orb" id="micToggle" aria-label="Talk to Evie">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">

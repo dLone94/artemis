@@ -9,6 +9,14 @@
 import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
 import { MOON_INFO } from "./voiceOrb.js";
+import { FALLBACK_PROFILE, resolveWakeProfile } from "./wakeProfile.js";
+
+// This page does NOT load main.js, so it resolves the wake profile itself.
+// Copy below writes {w} where the phrase goes and never spells one out — the
+// engine's phrase comes from the verified manifest, and a page that guesses it
+// tells the user to say words nothing is listening for.
+let wakePhraseText = FALLBACK_PROFILE.phrase;
+const withWake = (s) => String(s == null ? "" : s).replace(/\{w\}/g, wakePhraseText);
 
 // ---- skills section: the same registry data that labels the hero moons ----
 (function renderSkills() {
@@ -72,7 +80,7 @@ const state = {
 // `label` is the terse (redacted) line; `full` is the verbose variant shown when
 // the redact toggle is OFF. Keys are ALWAYS masked (maskKeys) either way.
 const TRACE_RESEARCH = [
-  { t: 200,  stage: "wake",   status: "done",  label: '"hey jarvis" detected · conf 0.94', latencyMs: 40 },
+  { t: 200,  stage: "wake",   status: "done",  label: '"{w}" detected · conf 0.94', latencyMs: 40 },
   { t: 700,  stage: "listen", status: "run",   label: 'deepgram interim "whats trending on…"' },
   { t: 1400, stage: "listen", status: "done",  label: 'transcript final "what\'s trending on Hacker News"', latencyMs: 570 },
   { t: 2300, stage: "route",  status: "done",  label: "intent: research · conf 0.88 → Research agent", latencyMs: 120 },
@@ -109,7 +117,7 @@ function maskKeys(s) {
 
 // ---- captions (extends the home #brainCaption pattern; aria-live reads them) ----
 const CAPTIONS = {
-  wake:    "You say <strong>“Hey Jarvis.”</strong> The outer ring pulses as she wakes and starts listening.",
+  wake:    "You say <strong>“{w}.”</strong> The outer ring pulses as she wakes and starts listening.",
   route:   "She reads your intent and <strong>routes</strong> it to {a} — that node lights up and links back to the core.",
   tool:    "{a} runs its <strong>tool</strong> — a web search, a draft, a lookup. Its node spins while the work runs.",
   respond: "She composes the answer and <strong>speaks</strong> it — the core flares and a voice wave ripples outward.",
@@ -122,7 +130,7 @@ const orb = new BrainOrb($("brainOrb"));
 // ---- EngineerGraph ----------------------------------------------------------
 const RAIL_NODES = [
   { key: "mic",    icon: "🎙", name: "MIC",    tip: "Microphone capture — raw audio frames stream in." },
-  { key: "wake",   icon: "👂", name: "WAKE",   tip: "Wake-word spotter — listens only for “Hey Jarvis”, nothing is sent until it fires." },
+  { key: "wake",   icon: "👂", name: "WAKE",   tip: "Wake-word spotter — listens only for “{w}”, nothing is sent until it fires." },
   { key: "router", icon: "🧭", name: "ROUTER", tip: "Intent router — classifies the request and picks the sub-agent." },
   { key: "agent",  icon: "🤖", name: "AGENT",  tip: "The chosen sub-agent (Research / Email triage / Messaging) takes the request." },
   { key: "tool",   icon: "🛠", name: "TOOL",   tip: "Tool call — web search, draft, lookup. Gated actions stop here without a key." },
@@ -140,9 +148,9 @@ RAIL_NODES.forEach((n) => {
   const el = document.createElement("div");
   el.className = "bp-node";
   el.dataset.node = n.key;
-  el.dataset.tip = n.tip;
+  el.dataset.tip = withWake(n.tip);
   el.tabIndex = 0; // keyboard users can focus a node to read its tooltip
-  el.setAttribute("aria-label", n.name + " — " + n.tip); // screen readers get the description too
+  el.setAttribute("aria-label", n.name + " — " + withWake(n.tip)); // screen readers get the description too
   el.innerHTML =
     '<span class="bp-node-dot" aria-hidden="true">' + n.icon + "</span>" +
     "<span>" + n.name + "</span>" +
@@ -189,7 +197,7 @@ function renderControls() {
   const thinking = key === "tool"
     ? ' <span class="bp-thinking" aria-hidden="true"><i>·</i><i>·</i><i>·</i></span>'
     : "";
-  caption.innerHTML = tpl.replace(/\{a\}/g, "<strong>" + who + "</strong>") + thinking;
+  caption.innerHTML = withWake(tpl.replace(/\{a\}/g, "<strong>" + who + "</strong>")) + thinking;
 }
 
 stepBtns.forEach((b) =>
@@ -266,7 +274,7 @@ function followLog() {
 
 const SEG_COLORS = ["#164e63", "#0e7490", "#0891b2", "#06b6d4", "#22d3ee", "#67e8f9"];
 function eventLabel(e) {
-  return maskKeys(!redactOn && e.full ? e.full : e.label);
+  return maskKeys(withWake(!redactOn && e.full ? e.full : e.label));
 }
 function lineFor(e) {
   const div = document.createElement("div");
@@ -386,7 +394,7 @@ $("bpRedact").addEventListener("click", (e) => {
 $("bpCopy").addEventListener("click", async (e) => {
   const btn = e.currentTarget; // currentTarget is null after an await — capture first
   const json = JSON.stringify(
-    state.trace.map((ev) => ({ ...ev, label: maskKeys(ev.label) })), null, 2);
+    state.trace.map((ev) => ({ ...ev, label: maskKeys(withWake(ev.label)) })), null, 2);
   try {
     await navigator.clipboard.writeText(json);
     btn.textContent = "copied ✓";
@@ -475,3 +483,18 @@ if (reduced) {
   // static frame at the route step so the page still explains itself
   seek(PHASE_MS + 50);
 }
+
+// The phrase arrives asynchronously; repaint every surface that quotes it once
+// the manifest has been verified.
+resolveWakeProfile({ onWarn: (m) => console.info("[wake] " + m) })
+  .then((r) => {
+    wakePhraseText = (r && r.profile && r.profile.phrase) || FALLBACK_PROFILE.phrase;
+    nodeEls.forEach((el, i) => {
+      const n = RAIL_NODES[i];
+      if (!n) return;
+      el.dataset.tip = withWake(n.tip);
+      el.setAttribute("aria-label", n.name + " — " + withWake(n.tip));
+    });
+    renderAll(true);
+  })
+  .catch(() => { /* the built-in phrase is already rendered */ });
