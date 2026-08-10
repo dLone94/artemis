@@ -52,6 +52,13 @@ import {
   classifyIntent
 } from "./toolRegistry.js";
 import { mayStreamNarration, failureLine } from "./public/ttsPolicy.js";
+// Wire-format translation only (Phase 1). Transport, retry, benching and the
+// agent loops stay here; these adapters just shape bodies and read responses.
+import { openaiCompat, anthropic as anthropicWire } from "./modelProvider.js";
+
+// Registry tool defs are stored OpenAI-shaped; the adapters take the neutral
+// {name, description, parameters} form. Same object, one hop of unwrapping.
+const asNeutralTools = (defs) => (defs || []).map((d) => d.function);
 
 // Does a post-precheck-recovery reply read as a request for missing input?
 // Interrogatives or need/provide verbs qualify; bare completion claims don't.
@@ -1043,23 +1050,8 @@ function elevenTTSResponse(text, voiceId) {
 // Calls Claude (Opus 4.8) with the server-side web_search tool. The web search
 // loop runs on Anthropic's side; we only resume on `pause_turn`. Returns the
 // final text plus any sources Claude consulted.
-// Final spoken answer = text after the last tool block (drops "I'll search…" narration)
-function finalText(data) {
-  const content = data.content || [];
-  let lastTool = -1;
-  content.forEach((b, i) => {
-    if (
-      b.type === "web_search_tool_result" ||
-      b.type === "server_tool_use" ||
-      b.type === "tool_use" ||
-      b.type === "tool_result"
-    )
-      lastTool = i;
-  });
-  const after = lastTool >= 0 ? content.slice(lastTool + 1) : content;
-  const pick = (blocks) => blocks.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-  return pick(after) || pick(content);
-}
+// Final spoken answer = text after the last tool block (drops "I'll search…"
+// narration). That rule now lives in providers/anthropic.js fromWire().
 
 // Shared tool definitions (used by both the streaming and non-streaming paths)
 const WEB_SEARCH_TOOL = { type: "web_search_20260209", name: "web_search" };
@@ -1184,15 +1176,17 @@ async function callClaude(messages, tone, opts = {}) {
           "anthropic-version": "2023-06-01",
           "content-type": "application/json"
         },
-        body: JSON.stringify({
-          model: ANTHROPIC_MODEL,
-          max_tokens: 1024,
-          system,
-          tools: mailUntrusted
-            ? tools.filter((tool) => !blockedAfterMailRead(tool.name, true))
-            : tools,
-          messages: convo
-        })
+        body: JSON.stringify(
+          anthropicWire.toWire({
+            model: ANTHROPIC_MODEL,
+            maxTokens: 1024,
+            system,
+            tools: mailUntrusted
+              ? tools.filter((tool) => !blockedAfterMailRead(tool.name, true))
+              : tools,
+            messages: convo
+          })
+        )
       },
       60000
     );
@@ -1203,18 +1197,13 @@ async function callClaude(messages, tone, opts = {}) {
     }
 
     const data = await res.json();
+    const parsed = anthropicWire.fromWire(data);
 
     // collect built-in web_search result URLs
-    for (const block of data.content || []) {
-      if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
-        for (const r of block.content) {
-          if (r && r.type === "web_search_result" && r.url) sources.push({ title: r.title || r.url, url: r.url });
-        }
-      }
-    }
+    for (const s of anthropicWire.sourcesFromWire(data)) sources.push(s);
 
     // tool turn: fetch_page + skills. Consequential skills are gated behind a yes.
-    if (data.stop_reason === "tool_use") {
+    if (parsed.stopReason === "tool_use") {
       const toolUses = (data.content || []).filter((b) => b.type === "tool_use");
 
       // SAFETY GATE: registry-confirmed skills (including local mutations after
@@ -1316,22 +1305,22 @@ async function callClaude(messages, tone, opts = {}) {
         }
       }
       if (toolResults.length === 0) {
-        return { reply: finalText(data) || "(no response)", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, readUntrusted), mailUntrusted };
+        return { reply: parsed.text || "(no response)", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, readUntrusted), mailUntrusted };
       }
       convo.push({ role: "assistant", content: data.content });
       convo.push({ role: "user", content: toolResults });
       continue;
     }
 
-    if (data.stop_reason === "pause_turn") {
+    if (parsed.stopReason === "pause_turn") {
       convo.push({ role: "assistant", content: data.content });
       continue; // resume the server-side tool loop
     }
-    if (data.stop_reason === "refusal") {
+    if (parsed.stopReason === "refusal") {
       return { reply: "Sorry — I can't help with that one.", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, readUntrusted), mailUntrusted };
     }
 
-    return { reply: finalText(data) || "(no response)", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, readUntrusted), mailUntrusted };
+    return { reply: parsed.text || "(no response)", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, readUntrusted), mailUntrusted };
   }
 
   return { reply: "That took too many steps — try rephrasing?", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, readUntrusted), mailUntrusted };
@@ -1622,16 +1611,8 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
   throw lastErr;
 }
 
-// Normalize an OpenAI-shaped tool_calls array into our internal form.
-function normalizeToolCalls(list) {
-  return (list || [])
-    .map((tc, i) => ({
-      id: tc.id || "call_" + i,
-      name: (tc.function && tc.function.name) || "",
-      arguments: (tc.function && tc.function.arguments) || "{}"
-    }))
-    .filter((tc) => tc.name);
-}
+// Normalizing an OpenAI-shaped tool_calls array into our internal form now
+// lives in providers/openaiCompat.js fromWire().
 
 // When an action turn produced no usable tool call, this is the repair. Unlike
 // the old best-effort version it is a REAL round: the forced call is executed,
@@ -1653,7 +1634,7 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
 
   try {
     const data = await nvidiaChat(
-      {
+      openaiCompat.toWire({
         messages: [
           ...convo,
           {
@@ -1663,16 +1644,16 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
               "carry out my request. Tool call only — no prose."
           }
         ],
-        tools: familyTools,
-        tool_choice: toolChoice,
-        max_tokens: 256,
+        tools: asNeutralTools(familyTools),
+        toolChoice,
+        maxTokens: 256,
         temperature: 0
-      },
+      }),
       opts.signal,
       20000
     );
 
-    const calls = normalizeToolCalls(data.choices?.[0]?.message?.tool_calls);
+    const calls = openaiCompat.fromWire(data).toolCalls;
     if (!calls.length) return null;
 
     // The safety gate still owns consequential actions — a forced round must
@@ -1690,11 +1671,17 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
 
     // One post-tool completion so she reports the real outcome, not a guess.
     const after = await nvidiaChat(
-      { messages: convo, tools: nvidiaTools(caps), tool_choice: "none", max_tokens: 300, temperature: 0.3 },
+      openaiCompat.toWire({
+        messages: convo,
+        tools: asNeutralTools(nvidiaTools(caps)),
+        toolChoice: "none",
+        maxTokens: 300,
+        temperature: 0.3
+      }),
       opts.signal,
       20000
     );
-    const text = after.choices?.[0]?.message?.content || "";
+    const text = openaiCompat.fromWire(after).text;
     return text.trim() || null;
   } catch (e) {
     const recovered = failedGenerationFrom(e);
@@ -1918,11 +1905,17 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         // then the backstop. Waiting the full 60s here meant a stalled model
         // cost 60s AND the fallback — which is how a turn reached 65 seconds.
         const data = await nvidiaChat(
-          { messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3 },
+          openaiCompat.toWire({
+            messages: convo,
+            tools: asNeutralTools(roundTools),
+            toolChoice,
+            maxTokens: 1024,
+            temperature: 0.3
+          }),
           signal, 12000, 2
         );
         const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
-        const forced = normalizeToolCalls(msg.tool_calls);
+        const forced = openaiCompat.fromWire(data).toolCalls;
         if (forced.length) {
           const confirm = forced.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
           if (confirm) {
@@ -1982,7 +1975,18 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
           {
             method: "POST",
             headers: { Authorization: "Bearer " + brain.key, "Content-Type": "application/json" },
-            body: JSON.stringify(Object.assign({ model: brain.model, messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3, stream: true }, brainRequestExtras(brain)))
+            body: JSON.stringify(Object.assign(
+              { model: brain.model },
+              openaiCompat.toWire({
+                messages: convo,
+                tools: asNeutralTools(roundTools),
+                toolChoice,
+                maxTokens: 1024,
+                temperature: 0.3,
+                stream: true
+              }),
+              brainRequestExtras(brain)
+            ))
           },
           brain.timeoutMs || BRAIN_STREAM_TIMEOUT_MS,
           signal
@@ -2200,12 +2204,18 @@ async function callNvidia(messages, tone, opts = {}) {
     if (state.intent.intent === "needs_clarification") toolChoice = "none";
 
     const data = await nvidiaChat(
-      { messages: convo, tools: roundTools, tool_choice: toolChoice, max_tokens: 1024, temperature: 0.3 },
+      openaiCompat.toWire({
+        messages: convo,
+        tools: asNeutralTools(roundTools),
+        toolChoice,
+        maxTokens: 1024,
+        temperature: 0.3
+      }),
       signal,
       60000
     );
     const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
-    const toolCalls = normalizeToolCalls(msg.tool_calls);
+    const toolCalls = openaiCompat.fromWire(data).toolCalls;
 
     if (toolCalls.length) {
       const confirm = toolCalls.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
@@ -2438,14 +2448,14 @@ async function completeMeetingModel({ system, user }, signal) {
   if (openAiCompatActive()) {
     bumpUsage("llm");
     const data = await nvidiaChat(
-      {
+      openaiCompat.toWire({
         messages: [
           { role: "system", content: system },
           { role: "user", content: user }
         ],
-        max_tokens: 1600,
+        maxTokens: 1600,
         temperature: 0.1
-      },
+      }),
       signal,
       30000,
       1
