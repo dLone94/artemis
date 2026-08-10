@@ -7,8 +7,21 @@
 //
 //   node eval/run.mjs --selftest              validate the harness (no API calls)
 //   node eval/run.mjs                         benchmark the configured model
-//   node eval/run.mjs --model <id>            benchmark a candidate
+//   node eval/run.mjs --model <id>            benchmark a candidate on the live provider
+//   node eval/run.mjs --local <id>            benchmark a local Ollama model (no quota)
+//   node eval/run.mjs --unpinned              measure the production failover chain
 //   node eval/run.mjs --model <id> --baseline results/<file>.json
+//
+// WHICH MODE ANSWERS WHICH QUESTION:
+//   "is this model good enough to ship?"  → --model, pinned, one model, one score.
+//   "did my REFACTOR change behaviour?"   → --local. A code regression needs a
+//     STABLE model, not the production one, and a free cloud tier gives you
+//     neither stability nor enough tokens: one action turn spends 2-3 rounds of
+//     ~6k tokens against a 12k/min pool, so a pinned 39-case run throttles
+//     itself into 39 dead turns no matter how it is paced. The local tier has
+//     no quota and no throttle, which is exactly what a regression test needs.
+//   "what do users actually get?"         → --unpinned. Real chain, real
+//     failover, mixed models — informative, never a baseline.
 //
 // A candidate is only worth switching to if it clears every stratum threshold
 // AND does not regress the baseline. Blocker strata (injection, must-not-act,
@@ -31,13 +44,16 @@ const flag = (name) => argv.includes("--" + name);
 const opt = (name) => { const i = argv.indexOf("--" + name); return i >= 0 ? argv[i + 1] : null; };
 
 const SELFTEST = flag("selftest");
-const MODEL = opt("model");
+const LOCAL_MODEL = opt("local");
+const MODEL = opt("model") || LOCAL_MODEL;
 const BASELINE = opt("baseline");
 // Measurement integrity: one model answers the whole rubric. --unpinned
 // deliberately measures the production failover chain instead (useful, but
 // never comparable to a pinned run — the report records which mode ran).
 const PIN_BRAIN = !flag("unpinned") && !SELFTEST;
-const PACE_MS = Number(opt("pace")) || 2500;
+// Pacing exists only to stay inside a cloud free tier's per-minute budget. A
+// local model has no such budget, so pacing there just makes the run slower.
+const PACE_MS = Number(opt("pace")) || (LOCAL_MODEL ? 0 : 2500);
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -146,17 +162,27 @@ async function bootServer({ baseUrl, model, gmail, vault = true, failTools = [] 
       STRIPE_SECRET_KEY: "",
       ARTEMIS_DATA_DIR: dataDir,
       ARTEMIS_FAKE_TOOLS: "1",
-      // The "nvidia" provider is the OpenAI-compatible candidate slot: the
-      // mock (selftest) and explicit --model/--base candidates run through it.
-      // A plain `node eval/run.mjs` benchmarks the LIVE brain configuration —
-      // forcing nvidia there pointed the eval at a retired endpoint and
-      // produced a fast, confident, meaningless scoreboard.
-      ...(SELFTEST || baseUrl || model ? { LLM_PROVIDER: "nvidia" } : {}),
+      // The "nvidia" provider is the OpenAI-compatible CANDIDATE SLOT, and it
+      // is claimed by an explicit --base (the mock endpoint in selftest, or a
+      // custom host). It is NOT claimed by --model.
+      //
+      // It used to be: `--model X` forced LLM_PROVIDER=nvidia and posted X to
+      // integrate.api.nvidia.com, which is retired — so benchmarking any Groq
+      // model produced 39 identical 404s and a confident 0/39 "model verdict".
+      // A model name says WHICH model, not WHICH PROVIDER; the provider stays
+      // whatever the live configuration is, and the pin below selects the model
+      // inside it.
+      ...(SELFTEST || baseUrl ? { LLM_PROVIDER: "nvidia" } : {}),
       // Only force a placeholder in self-test. Setting it otherwise would mask
       // the real key, because the .env loader only fills keys that are ABSENT.
       ...(SELFTEST ? { NVIDIA_API_KEY: "selftest" } : {}),
       ...(baseUrl ? { NVIDIA_BASE_URL: baseUrl } : {}),
-      ...(model ? { NVIDIA_MODEL: model } : {}),
+      ...(baseUrl && model ? { NVIDIA_MODEL: model } : {}),
+      // A candidate model with no --base is a model of the LIVE provider, and
+      // it must be the only entry in the chain even when unpinned — otherwise
+      // `--model X --unpinned` quietly measures the default chain and reports
+      // it under X's name.
+      ...(model && !baseUrl ? { GROQ_CHAIN: model } : {}),
       // capabilities are toggled per run so the "unavailable tool" stratum is real
       TAVILY_API_KEY: process.env.TAVILY_API_KEY || "eval",
       GOOGLE_CLIENT_ID: gmail ? "eval" : "",
@@ -174,6 +200,13 @@ async function bootServer({ baseUrl, model, gmail, vault = true, failTools = [] 
       ...(PIN_BRAIN
         ? { GROQ_CHAIN: model || process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
             OLLAMA_BRAIN_MODEL: "" }
+        : {}),
+      // --local pins to the Ollama tier and nothing else. It goes LAST because
+      // it must override the cloud pin above, including that OLLAMA_BRAIN_MODEL
+      // blanking. Blanking the cloud keys is what leaves the local entry as the
+      // only brain in the chain, so a throttle cannot silently substitute one.
+      ...(LOCAL_MODEL
+        ? { LLM_PROVIDER: "ollama", OLLAMA_BRAIN_MODEL: LOCAL_MODEL, GROQ_API_KEY: "", NVIDIA_API_KEY: "" }
         : {})
     },
     stdio: ["ignore", "ignore", SELFTEST && !process.env.EVAL_DEBUG ? "ignore" : "inherit"]
@@ -308,6 +341,28 @@ for (const [name, s] of Object.entries(strata)) {
   }
 }
 
+// INSTRUMENT FAILURE ≠ MODEL FAILURE.
+//
+// When the brain is unreachable — wrong endpoint, dead key, exhausted quota —
+// every case dies as a dead turn and the rubric prints a tidy 0% in each
+// stratum, which reads exactly like a catastrophically bad model. It is not a
+// model measurement at all, and the difference matters: one verdict says
+// "don't ship this model", the other says "go fix your harness".
+//
+// No real model produces zero output on all 39 cases; plain chat alone would
+// answer. So a run that is entirely dead turns is reported as BROKEN, and a
+// BROKEN report must never be minted as a baseline.
+const deadTurns = results.filter((r) => (r.fails || []).some((f) => /dead turn|error/i.test(f))).length;
+const instrumentDown = results.length > 0 && deadTurns / results.length >= 0.9;
+if (instrumentDown) {
+  verdict = "BROKEN";
+  notes.unshift(
+    `INSTRUMENT FAILURE — ${deadTurns}/${results.length} cases produced no output at all. ` +
+    "This is a transport/configuration fault (endpoint, key, or quota), not a model score. " +
+    "Check the server's stderr for the brain's HTTP status. Do not mint as a baseline."
+  );
+}
+
 const latencies = results.map((r) => r.latencyMs).sort((a, b) => a - b);
 // Did one model answer the whole rubric? A mixed run is still informative,
 // but it is not a model measurement and must never be minted as a baseline.
@@ -347,7 +402,7 @@ if (modelsSeen.length > 1) {
   console.log(`  answered entirely by ${modelsSeen[0]}${PIN_BRAIN ? " (pinned)" : ""}`);
 }
 
-if (BASELINE) {
+if (BASELINE && !instrumentDown) {
   const base = JSON.parse(readFileSync(BASELINE, "utf8"));
   if (base.rubricVersion !== RUBRIC_VERSION) {
     console.log(`\n  ⚠️  baseline used rubric ${base.rubricVersion}; scores are not comparable`);
