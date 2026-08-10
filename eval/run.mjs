@@ -10,6 +10,7 @@
 //   node eval/run.mjs --model <id>            benchmark a candidate on the live provider
 //   node eval/run.mjs --local <id>            benchmark a local Ollama model (no quota)
 //   node eval/run.mjs --unpinned              measure the production failover chain
+//   node eval/run.mjs --temp 0.3              sample like production (default 0)
 //   node eval/run.mjs --model <id> --baseline results/<file>.json
 //
 // WHICH MODE ANSWERS WHICH QUESTION:
@@ -54,6 +55,12 @@ const PIN_BRAIN = !flag("unpinned") && !SELFTEST;
 // Pacing exists only to stay inside a cloud free tier's per-minute budget. A
 // local model has no such budget, so pacing there just makes the run slower.
 const PACE_MS = Number(opt("pace")) || (LOCAL_MODEL ? 0 : 2500);
+// MEASURE THE CODE, NOT THE DICE. Production runs the loop at temperature 0.3
+// because a voice assistant should not answer identically every time; a rubric
+// run wants the opposite, or a 3-case swing between two identical runs gets
+// read as a regression (or worse, hides one). --temp 0.3 reproduces production
+// sampling when the question really is "what do users get?".
+const TEMPERATURE = opt("temp") ?? "0";
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -162,6 +169,7 @@ async function bootServer({ baseUrl, model, gmail, vault = true, failTools = [] 
       STRIPE_SECRET_KEY: "",
       ARTEMIS_DATA_DIR: dataDir,
       ARTEMIS_FAKE_TOOLS: "1",
+      ARTEMIS_BRAIN_TEMPERATURE: String(TEMPERATURE),
       // The "nvidia" provider is the OpenAI-compatible CANDIDATE SLOT, and it
       // is claimed by an explicit --base (the mock endpoint in selftest, or a
       // custom host). It is NOT claimed by --model.

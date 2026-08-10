@@ -35,9 +35,36 @@ npm run eval                       # benchmark the configured model (mints basel
 node eval/run.mjs --model <id>     # benchmark a candidate without the gate compare
 ```
 
-To eval a local/Ollama candidate:
-`NVIDIA_BASE_URL=http://127.0.0.1:11434/v1 NVIDIA_API_KEY=ollama node eval/run.mjs --model <tag>`
-(slow models want `ARTEMIS_BRAIN_TIMEOUT_MS=90000`).
+## Two different questions, two different modes
+
+Most confusion about this harness comes from asking it one question with the
+other one's settings. It answers two:
+
+| Question | Mode | Why |
+|---|---|---|
+| Is this MODEL good enough to ship? | `--model <id>` | One pinned model, live provider, production-shaped |
+| Did my CODE change behaviour? | `--local <tag>` | A regression test needs a stable model, not the production one |
+| What do users actually get? | `--unpinned` | Real chain, real failover — mixed models, never a baseline |
+
+`--local` pins to the Ollama tier, which has **no quota and no throttle**. That
+is not a convenience: a pinned 39-case run on a free cloud tier is *impossible*.
+One action turn spends 2–3 rounds of ~6k tokens against llama-3.3-70b's
+12k/min pool, so it throttles itself into dead turns at any pacing (measured: 61
+"every brain is rate limited", 40× HTTP 429). Pinning is what stops silent model
+blending, so before `--local` there was no runnable way to ask the code question
+at all.
+
+Runs default to **temperature 0** (`--temp 0.3` reproduces production sampling).
+Production runs warm because an assistant that answers identically every time
+sounds like a phone tree — but at 0.3, two back-to-back runs pinned to one local
+model still differed by **3 of 39 cases**, which is enough noise to hide the
+regressions the gate exists to catch. At 0 the same two runs produce byte-
+identical failure sets.
+
+A run that is ≥90% dead turns reports **BROKEN**, not a score. An unreachable
+brain used to print a tidy 0% per stratum, which reads exactly like a
+catastrophic model; one verdict means "don't ship this model", the other means
+"go fix your harness", and the difference is not cosmetic.
 
 ## Reading a result
 
@@ -77,9 +104,15 @@ the 20-request budget (found the hard way extending the rubric).
 
 ## Baselines
 
-- `eval/baseline-current.json` — **the gate's yardstick**: the live brain chain
-  saved under rubric 1.1.0. It remains unchanged for now; rubric 1.2.0 baselines
-  await the known must-not-act prompt fix and are not comparable to this file.
+- `eval/baseline-refactor-local.json` — **the CODE yardstick** (rubric 1.3.1):
+  `--local qwen3.5:4b` at temperature 0, 30/39, one pinned model, reproducible to
+  a byte-identical failure set. Compare against this before and after a refactor;
+  any difference is the code, because nothing else can move. It is deliberately
+  NOT a model verdict — the score is a 4B local model's, not production's.
+- `eval/baseline-current.json` — **the MODEL gate's yardstick**, saved under
+  rubric 1.2.1 with 35 cases. Stale against today's 1.3.1/39: the runner refuses
+  to compare across rubric versions, so this needs a re-mint before the next
+  model switch.
 - `eval/baseline-qwen3-next-80b.json` — historical (rubric 1.0.0): the retired
   NVIDIA incumbent, 15/19 BLOCKED.
 - `eval/candidate-gpt-oss-120b.json` — historical (rubric 1.0.0): the candidate

@@ -322,6 +322,31 @@ const LLM_PROVIDER = (process.env.LLM_PROVIDER ||
 // where NVIDIA ranged from 2s to not-at-all on identical requests.
 const GROQ_FALLBACK_MODEL = process.env.GROQ_FALLBACK_MODEL || "llama-3.1-8b-instant";
 const BRAIN_STREAM_TIMEOUT_MS = Number(process.env.ARTEMIS_BRAIN_TIMEOUT_MS) || 35000;
+
+// Sampling temperature for the agent loop.
+//
+// Production runs WARM (0.3) on purpose: a voice assistant that answers a
+// greeting with the same sentence every single time sounds like a phone tree.
+//
+// Measurement wants the exact opposite. Two back-to-back eval runs, pinned to
+// ONE local model with no quota and no failover, still differed by 3 of 39
+// cases purely from sampling — which is more than enough noise to hide the
+// regressions the gate exists to catch. So the harness sets this to 0 and a
+// rubric difference then means the CODE changed, not that the dice landed
+// differently. The knob is deliberately one-way in practice: nothing but the
+// eval sets it, and /api/eval/meta reports the value that actually ran.
+const BRAIN_TEMPERATURE = (() => {
+  const raw = process.env.ARTEMIS_BRAIN_TEMPERATURE;
+  if (raw === undefined || raw === "") return 0.3;
+  const n = Number(raw);
+  // A bad value must not silently become 0 — that would turn a typo into a
+  // different measurement regime and nobody would see it in the report.
+  if (!Number.isFinite(n) || n < 0 || n > 2) {
+    console.warn(`[brain] ignoring ARTEMIS_BRAIN_TEMPERATURE=${JSON.stringify(raw)} — using 0.3`);
+    return 0.3;
+  }
+  return n;
+})();
 const NVIDIA_BRAIN = { name: "nvidia:" + NVIDIA_MODEL, base: NVIDIA_BASE, key: nvidiaApiKey, model: NVIDIA_MODEL };
 
 // A chain, tried in order, rather than one brain and one spare.
@@ -1712,7 +1737,7 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
         tools: nvidiaTools(caps),
         toolChoice: "none",
         maxTokens: 300,
-        temperature: 0.3
+        temperature: BRAIN_TEMPERATURE
       }),
       opts.signal,
       20000
@@ -1946,7 +1971,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
             tools: roundTools,
             toolChoice,
             maxTokens: 1024,
-            temperature: 0.3
+            temperature: BRAIN_TEMPERATURE
           }),
           signal, 12000, 2
         );
@@ -2008,7 +2033,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         tools: roundTools,
         toolChoice,
         maxTokens: 1024,
-        temperature: 0.3,
+        temperature: BRAIN_TEMPERATURE,
         stream: true
       }),
       signal,
@@ -2219,7 +2244,7 @@ async function callNvidia(messages, tone, opts = {}) {
         tools: roundTools,
         toolChoice,
         maxTokens: 1024,
-        temperature: 0.3
+        temperature: BRAIN_TEMPERATURE
       }),
       signal,
       60000
@@ -3356,7 +3381,7 @@ async function handleRequest(req, res) {
         provider: LLM_PROVIDER,
         model: BRAIN.model,
         endpoint: BRAIN.base,
-        temperature: 0.3,
+        temperature: BRAIN_TEMPERATURE,
         systemPromptHash: sha(ARTEMIS_SYSTEM_PROMPT),
         toolRegistryHash: sha(JSON.stringify(openaiToolDefs(caps))),
         capabilities: caps,
