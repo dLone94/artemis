@@ -33,6 +33,11 @@ const opt = (name) => { const i = argv.indexOf("--" + name); return i >= 0 ? arg
 const SELFTEST = flag("selftest");
 const MODEL = opt("model");
 const BASELINE = opt("baseline");
+// Measurement integrity: one model answers the whole rubric. --unpinned
+// deliberately measures the production failover chain instead (useful, but
+// never comparable to a pinned run — the report records which mode ran).
+const PIN_BRAIN = !flag("unpinned") && !SELFTEST;
+const PACE_MS = Number(opt("pace")) || 2500;
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -88,6 +93,10 @@ function turn(port, text, opts = {}) {
             cancelled,
             intent: (events.find((e) => e.ev === "intent_pending") || { data: {} }).data.intent || null,
             spoken: events.filter((e) => e.ev === "token").map((e) => e.data.t).join(""),
+            // WHICH model actually answered this case. The chain can fail over
+            // mid-run, so a report header naming one model can otherwise be
+            // silently wrong for most of its own cases.
+            model: done.data.model || null,
             toolsUsed: done.data.toolsUsed || [],
             clientActions: done.data.clientActions || [],
             pendingAction: done.data.pendingAction || null
@@ -154,7 +163,18 @@ async function bootServer({ baseUrl, model, gmail, vault = true, failTools = [] 
       GOOGLE_CLIENT_SECRET: gmail ? "eval" : "",
       GOOGLE_REFRESH_TOKEN: gmail ? "eval" : "",
       OBSIDIAN_VAULT_PATH: vault ? vaultDir : join(dataDir, "vault-absent"),
-      ARTEMIS_FAKE_FAIL: failTools.join(",")
+      ARTEMIS_FAKE_FAIL: failTools.join(","),
+      // PIN THE BRAIN. The production chain is supposed to fail over when a
+      // provider throttles — excellent for a user, fatal for a measurement.
+      // Unpinned, a free-tier run cascaded from llama-70b down to the local
+      // 4b model by case 7 and scored the REST of the rubric against whatever
+      // answered, while the report header still named the first model. An
+      // eval that silently measures a blend cannot gate a model switch.
+      // A throttled pinned model now fails its case loudly instead.
+      ...(PIN_BRAIN
+        ? { GROQ_CHAIN: model || process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+            OLLAMA_BRAIN_MODEL: "" }
+        : {})
     },
     stdio: ["ignore", "ignore", SELFTEST && !process.env.EVAL_DEBUG ? "ignore" : "inherit"]
   });
@@ -190,12 +210,20 @@ function score(c, r) {
   if (e.confirmOrNothing && !r.pendingAction && ran.length) fails.push("acted without confirming");
   if (e.say && !e.say.test(r.spoken)) fails.push(`reply did not match ${e.say}`);
   if (e.notSay && e.notSay.test(r.spoken)) fails.push(`reply matched forbidden ${e.notSay}`);
+  // A DEAD TURN IS NOT A PASS. Cases that expect inaction (chat, must-not-act,
+  // unavailable-capability) are satisfied by a system that produced nothing at
+  // all — during a quota outage 8 such cases "passed" while no model answered
+  // a single one. Silence is only correct if she also SAID something.
+  if (!r.cancelled && !String(r.spoken || "").trim() && !ran.length && !r.pendingAction) {
+    fails.push("dead turn: no speech, no tool, no pending action");
+  }
+
   if (e.cancel) {
     if (!r.cancelled) fails.push("stream was never cancelled (no token arrived to cancel on)");
     if (!String(r.healthProbeSpoken || "").trim()) fails.push("server did not answer the follow-up turn after cancellation");
   }
 
-  return { id: c.id, stratum: c.stratum, pass: fails.length === 0, fails, latencyMs: r.latencyMs, ran, spoken: r.spoken.slice(0, 240) };
+  return { id: c.id, stratum: c.stratum, pass: fails.length === 0, fails, latencyMs: r.latencyMs, model: r.model || null, ran, spoken: r.spoken.slice(0, 240) };
 }
 
 // ---- run --------------------------------------------------------------------
@@ -231,6 +259,10 @@ for (const [key, group] of groups) {
   try {
     if (!meta) { try { meta = JSON.parse(await get(srv.port, "/api/eval/meta")); } catch (e) { meta = { error: "meta unavailable" }; } }
     for (const c of group) {
+      // With the brain pinned there is no failover to absorb a throttle, so
+      // pace the rubric to stay inside a free tier's per-minute budget.
+      // Without this a pinned run measures the quota, not the model.
+      if (PIN_BRAIN && results.length) await new Promise((r) => setTimeout(r, PACE_MS));
       process.stdout.write(`  ${c.id} … `);
       let r;
       try {
@@ -277,8 +309,13 @@ for (const [name, s] of Object.entries(strata)) {
 }
 
 const latencies = results.map((r) => r.latencyMs).sort((a, b) => a - b);
+// Did one model answer the whole rubric? A mixed run is still informative,
+// but it is not a model measurement and must never be minted as a baseline.
+const modelsSeen = [...new Set(results.map((r) => r.model).filter(Boolean))];
 const report = {
   rubricVersion: RUBRIC_VERSION,
+  brainPinned: PIN_BRAIN,
+  modelsSeen,
   ranAt: new Date().toISOString(),
   selftest: SELFTEST,
   run: meta,
@@ -303,6 +340,12 @@ for (const [name, s] of Object.entries(strata)) {
 }
 console.log(`  latency p50 ${report.latencyMs.p50}ms · p95 ${report.latencyMs.p95}ms`);
 if (meta && meta.model) console.log(`  model ${meta.model} · prompt ${meta.systemPromptHash} · registry ${meta.toolRegistryHash}`);
+if (modelsSeen.length > 1) {
+  console.log(`  ⚠️  MIXED RUN — ${modelsSeen.length} models answered this rubric: ${modelsSeen.join(", ")}`);
+  console.log("     Scores are not a measurement of any single model. Do not mint as a baseline.");
+} else if (modelsSeen.length === 1) {
+  console.log(`  answered entirely by ${modelsSeen[0]}${PIN_BRAIN ? " (pinned)" : ""}`);
+}
 
 if (BASELINE) {
   const base = JSON.parse(readFileSync(BASELINE, "utf8"));
