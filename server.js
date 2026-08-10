@@ -2196,117 +2196,35 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
   return finishTurn({ roundsExhausted: true });
 }
 
-// Artemis brain on NVIDIA NIM (OpenAI-compatible), with the same agentic loop,
-// safety gate, sources, and client actions as the Anthropic path.
+// The non-streaming brain: the SAME agent loop, with the text collected instead
+// of spoken.
+//
+// Phase 1d. This used to be a second, hand-maintained copy of streamNvidia's
+// loop — same forcing policy, same safety gate, same precheck recovery, same
+// backstop — and the copies had already drifted: this one never applied
+// narrowTools(), so an action turn here shipped every schema instead of the
+// asked-for family, and it carried none of the tool-event callbacks. Two copies
+// of the turn logic that decides whether a mutation needs a spoken yes is one
+// copy too many; the guard has to be the same guard.
+//
+// Nothing in the product calls this endpoint — public/main.js and
+// public/gymPage.js both use /api/chat/stream — so the loop that had drifted was
+// the one nobody exercised, which is exactly how it drifted. /api/chat stays as
+// an API surface, and by routing it here it now inherits every reliability
+// guarantee the streaming path has and it previously lacked.
+//
+// Deliberate small differences from the old copy, all in paths with no live
+// caller: a cancelled turn returns the collected text rather than the literal
+// "Cancelled.", and an exhausted round budget falls back to "(no response)"
+// rather than "That took too many steps" — the loop's own honest failure line
+// is spoken into the buffer before either is reached.
 async function callNvidia(messages, tone, opts = {}) {
-  const caps = opts.caps || currentCaps();
-  const signal = opts.signal;
-  // Sub-agents Phase 1: a routed action turn ships the lean specialist prompt
-  // (CORE + that family's craft) instead of the full master prompt — the
-  // master keeps chat turns, where personality earns its tokens.
-  const turnIntent = opts.intent || classifyIntent(lastUserText(messages), caps, messages);
-  const specialist = turnIntent.intent === "executable_action" ? specialistPrompt(turnIntent.family) : null;
-  const system = "detailed thinking off\n\n" + (specialist || ARTEMIS_SYSTEM_PROMPT) + (TONE[tone] || "");
-  const tools = nvidiaTools(caps);
-  const convo = [{ role: "system", content: system }, ...messages.map((m) => ({ role: m.role, content: m.content }))];
-  const sources = [];
-  const clientActions = [];
-  const state = newTurnState(turnIntent, historyHasMailTaint(messages));
-  const toolOpts = { caps, signal };
-  const isAction = state.intent.intent === "executable_action";
-
-  const finishTurn = (reply, extra = {}) => {
-    logTurn(state, extra);
-    return {
-      reply,
-      sources: dedupeSources(sources),
-      clientActions: dropTaintedOpens(clientActions, state.readUntrusted),
-      toolsUsed: state.tools,
-      intent: state.intent.intent,
-      mailUntrusted: state.mailUntrusted
-    };
-  };
-
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    if (signal && signal.aborted) return finishTurn("Cancelled.", { cancelled: true });
-
-    // identical forcing policy to streamNvidia — same registry, same family
-    const familyTools = isAction && state.intent.family ? neutralToolDefsForFamily(caps, state.intent.family) : [];
-    const forcing = round === 0 && isAction && familyTools.length > 0;
-    const roundTools = forcing ? familyTools : tools;
-    let toolChoice = "auto";
-    if (forcing) toolChoice = familyTools.length === 1 ? { type: "function", function: { name: familyTools[0].name } } : "required";
-    if (state.intent.intent === "needs_clarification") toolChoice = "none";
-
-    const data = await nvidiaChat(
-      openaiCompat.toWire({
-        messages: convo,
-        tools: roundTools,
-        toolChoice,
-        maxTokens: 1024,
-        temperature: BRAIN_TEMPERATURE
-      }),
-      signal,
-      60000
-    );
-    const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
-    const toolCalls = openaiCompat.fromWire(data).toolCalls;
-
-    if (toolCalls.length) {
-      const confirm = toolCalls.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
-      if (confirm) {
-        let params = {};
-        try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
-        const pre = await precheckSkill(confirm.name, params, skillCtx);
-        if (!pre.ok) {
-          state.rejected.push({ name: confirm.name, error: "precondition failed" });
-          if (!state.precheckRecovered && pre.content) {
-            state.precheckRecovered = true;
-            convo.push(msg);
-            convo.push({ role: "tool", tool_call_id: confirm.id, content: String(pre.content) });
-            continue;
-          }
-          return finishTurn(pre.summary, { preconditionFailed: confirm.name });
-        }
-        const confirmId = createPending(confirm.name, params);
-        logTurn(state, { awaitingConfirm: confirm.name });
-        return {
-          reply: confirmPromptFor(confirm.name, params),
-          sources: dedupeSources(sources),
-          clientActions,
-          intent: state.intent.intent,
-          mailUntrusted: state.mailUntrusted,
-          pendingAction: { confirmId, name: confirm.name, params }
-        };
-      }
-      convo.push(msg); // assistant turn carrying the tool_calls
-      await runToolCalls(toolCalls, convo, sources, clientActions, state, toolOpts);
-      continue;
-    }
-
-    const replyText = (msg.content || "").trim();
-    if (isAction && !state.requiredActionSatisfied) {
-      // Post-precheck-recovery (or strict-tool_choice rejection), an
-      // ask-shaped reply is the legitimate request for missing input —
-      // speak it. Anything else is still dropped.
-      if (state.precheckRecovered || state.failedGeneration) {
-        console.log(`[turn ${state.id}] post-recovery reply: ${JSON.stringify((replyText || state.failedGeneration || "").slice(0, 140))}`);
-      }
-      if (state.precheckRecovered || state.failedGeneration) {
-        const ask =
-          (replyText && ASKING_SHAPE.test(replyText) && replyText) ||
-          (state.failedGeneration && ASKING_SHAPE.test(state.failedGeneration) && state.failedGeneration) ||
-          null;
-        if (ask) return finishTurn(ask, { askedForInput: true });
-      }
-      // drop the narration; it describes something that never happened
-      const repaired = await backstopToolRound(convo, sources, clientActions, state, toolOpts);
-      return finishTurn(repaired || failureLine(state.intent.family), { repaired: !!repaired });
-    }
-    return finishTurn(replyText || "(no response)");
-  }
-  if (isAction && !state.requiredActionSatisfied) return finishTurn(failureLine(state.intent.family), { roundsExhausted: true });
-  return finishTurn("That took too many steps — try rephrasing?", { roundsExhausted: true });
+  let buffered = "";
+  const result = await streamNvidia(messages, tone, (t) => { buffered += t; }, opts);
+  // A confirmation prompt and a precondition summary already carry their own
+  // reply; only fill one in when the loop spoke its answer into the sink.
+  const { streamed, ...rest } = result;
+  return result.reply ? rest : { ...rest, reply: buffered.trim() || "(no response)" };
 }
 
 // Opportunity Radar's run/replay distinction changes whether the network is
