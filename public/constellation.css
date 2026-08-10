@@ -220,8 +220,8 @@
 .cap-say {
   margin: 12px 0 10px;
   padding: 10px 12px;
-  border-left: 2px solid var(--accent, #22d3ee);
-  border-radius: 0 8px 8px 0;
+  border: 1px solid color-mix(in srgb, var(--accent, #22d3ee) 22%, transparent);
+  border-radius: 8px;
   background: rgba(8, 22, 42, 0.5);
 }
 .cap-say-head {
