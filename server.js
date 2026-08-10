@@ -235,10 +235,10 @@ function originOk(req) {
 }
 const LOGIN_PAGE =
   '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">' +
-  "<title>ARTEMIS · Locked</title>" +
+  "<title>EVIE · Locked</title>" +
   '<body style="margin:0;height:100vh;display:grid;place-items:center;background:#0a0805;color:#ffb24d;font-family:ui-monospace,Menlo,monospace">' +
   "<form onsubmit=\"location.search='?key='+encodeURIComponent(this.k.value);return false\" style=\"text-align:center\">" +
-  '<div style="letter-spacing:.45em;font-size:22px;margin-bottom:20px">ARTEMIS</div>' +
+  '<div style="letter-spacing:.45em;font-size:22px;margin-bottom:20px">EVIE</div>' +
   '<input name="k" type="password" placeholder="access token" autofocus autocapitalize="off" autocorrect="off" ' +
   'style="background:transparent;border:1px solid #ffb24d55;border-radius:8px;color:#f6efe7;padding:12px 14px;font:inherit;outline:none;text-align:center;width:220px">' +
   '<div><button style="margin-top:14px;background:#ffb24d18;border:1px solid #ffb24d66;border-radius:999px;color:#ffb24d;padding:9px 24px;font:inherit;letter-spacing:.12em;cursor:pointer">ENTER</button></div>' +
@@ -541,7 +541,7 @@ export function resolveTtsProvider(requested) {
 }
 
 const ARTEMIS_SYSTEM_PROMPT =
-  "You are Artemis — a sharp, warm presence with a personality of your own, not a " +
+  "You are Evie — a sharp, warm presence with a personality of your own, not a " +
   "product reading a script. Everything you say is read ALOUD by a text-to-speech " +
   "voice, so talk the way a real person TALKS — not the way someone writes a report.\n\n" +
   "WHO YOU ARE: quick, a little playful, quietly confident. You have opinions and " +
@@ -2648,7 +2648,7 @@ async function composeBriefing() {
           {
             role: "system",
             content:
-              "You are Artemis, a JARVIS-style voice assistant. Summarize the most important world news " +
+              "You are Evie, a JARVIS-style voice assistant. Summarize the most important world news " +
               "from the provided headlines as a SPOKEN brief: 2-3 flowing sentences, max 70 words, starting " +
               "directly with the news (no greeting, no preamble). Plain speech only — no markdown, no " +
               "lists, no emoji, no source names. End with a short offer like 'Shall I dig into any of these?'"
@@ -2746,8 +2746,8 @@ async function handleGoogleCallback(url, res, exchangePort) {
       '<body style="font-family:monospace;background:#04070b;color:#e8f7fb;padding:40px;line-height:1.6">' +
       "<h2 style=\"color:#22d3ee\">Gmail connected ✓</h2>" +
       "<p>The token was saved to <code>.env</code> on this machine (never logged).</p>" +
-      "<p>You're all set — go back to <a style=\"color:#22d3ee\" href=\"https://localhost:" + PORT + "/\">Artemis</a> and say " +
-      "<strong>“Artemis, check my email.”</strong></p></body>"
+      "<p>You're all set — go back to <a style=\"color:#22d3ee\" href=\"https://localhost:" + PORT + "/\">Evie</a> and say " +
+      "<strong>“check my email.”</strong></p></body>"
     );
     closeAuthSideDoor();
   } catch (e) {
@@ -3972,7 +3972,7 @@ async function handleRequest(req, res) {
 
 server.listen(PORT, HOST, () => {
   const scheme = httpsActive ? "https" : "http";
-  console.log(`Artemis running at ${scheme}://localhost:${PORT}` + (EXPOSED ? "" : " (localhost only)"));
+  console.log(`Evie running at ${scheme}://localhost:${PORT}` + (EXPOSED ? "" : " (localhost only)"));
   if (EXPOSED) {
     console.log("Reachable on your network:");
     for (const ip of lanIPs()) {
@@ -3990,7 +3990,7 @@ server.listen(PORT, HOST, () => {
     // Bound to loopback, but a tunnel/reverse proxy can still forward remote
     // clients — those now must authenticate (see requestIsRemote).
     console.log("  (loopback only — any tunneled/remote client must present the access token;");
-    console.log("   set ARTEMIS_ACCESS_TOKEN + ARTEMIS_ALLOWED_HOSTS before exposing Artemis.)");
+    console.log("   set ARTEMIS_ACCESS_TOKEN + ARTEMIS_ALLOWED_HOSTS before exposing Evie.)");
   }
   if (stripeSecretKey) {
     console.log("Revenue celebration: Stripe polling enabled.");

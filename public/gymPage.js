@@ -123,7 +123,7 @@ async function sayCommand(text) {
       speak(tokens);
     }
   } catch (e) {
-    $("said").textContent = "couldn't reach Artemis — try again";
+    $("said").textContent = "couldn't reach Evie — try again";
   }
   await poll();
 }

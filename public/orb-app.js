@@ -4,7 +4,7 @@ import { VoiceOrb } from "./voiceOrb.js";
 const stage = document.getElementById("orbStage");
 const label = document.getElementById("statusLabel");
 const LABELS = {
-  idle: "◦ ARTEMIS · STANDBY",
+  idle: "◦ EVIE · STANDBY",
   listening: "◦ LISTENING",
   thinking: "◦ THINKING",
   speaking: "◦ SPEAKING"
@@ -15,7 +15,7 @@ window.__orb = orb; // exposed for verification
 
 function setState(s) {
   orb.setStatus(s);
-  label.textContent = LABELS[s] || "◦ ARTEMIS";
+  label.textContent = LABELS[s] || "◦ EVIE";
   document.querySelectorAll("[data-state]").forEach((b) => b.classList.toggle("active", b.dataset.state === s));
 }
 

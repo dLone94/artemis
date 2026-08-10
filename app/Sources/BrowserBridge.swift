@@ -73,7 +73,7 @@ final class BrowserBridge: NSObject, WKUIDelegate, WKScriptMessageHandler {
     func webView(_ wv: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let a = NSAlert()
-        a.messageText = "Artemis"
+        a.messageText = "Evie"
         a.informativeText = message
         a.addButton(withTitle: "OK")
         a.runModal()

@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Artemis</string>
-  <key>CFBundleDisplayName</key><string>Artemis</string>
+  <key>CFBundleName</key><string>Evie</string>
+  <key>CFBundleDisplayName</key><string>Evie</string>
   <key>CFBundleIdentifier</key><string>com.artemis.desktop</string>
   <key>CFBundleVersion</key><string>1.0</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
@@ -13,7 +13,7 @@
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Artemis uses the microphone for wake-word commands and hold-to-talk dictation.</string>
+  <string>Evie uses the microphone for wake-word commands and hold-to-talk dictation.</string>
   <key>ArtemisRoot</key><string>__ARTEMIS_ROOT__</string>
 </dict>
 </plist>

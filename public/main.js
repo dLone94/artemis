@@ -203,7 +203,7 @@ function addMsg(role, text, sources) {
   row.className = "t-msg t-" + (role === "user" ? "user" : "artemis");
   const who = document.createElement("span");
   who.className = "t-who";
-  who.textContent = role === "user" ? "You" : "Artemis";
+  who.textContent = role === "user" ? "You" : "Evie";
   const bubble = document.createElement("div");
   bubble.className = "t-bubble";
   bubble.textContent = text;
@@ -349,7 +349,7 @@ async function speak(text) {
   pauseWakeForSpeech();
   orb.connectMediaElement(ttsEl); // route Artemis's voice into the orb's analyser
   orb.setStatus("speaking");
-  setLiveStatus("Artemis is responding…  (Esc to stop)");
+  setLiveStatus("Evie is responding…  (Esc to stop)");
   speaking = true;
   startBargeIn(generation);
   const settle = () => {
@@ -490,10 +490,10 @@ function restoreConversation() {
 let thinkTimer = null;
 function startThinking() {
   let n = 0;
-  setLiveStatus("Artemis is thinking");
+  setLiveStatus("Evie is thinking");
   thinkTimer = setInterval(() => {
     n = (n + 1) % 4;
-    setLiveStatus("Artemis is thinking" + ".".repeat(n));
+    setLiveStatus("Evie is thinking" + ".".repeat(n));
   }, 420);
 }
 function stopThinking() {
@@ -649,7 +649,7 @@ function addAssistantStreaming() {
     row.className = "t-msg t-artemis";
     const who = document.createElement("span");
     who.className = "t-who";
-    who.textContent = "Artemis";
+    who.textContent = "Evie";
     bubble = document.createElement("div");
     bubble.className = "t-bubble";
     row.appendChild(who);
@@ -1454,7 +1454,7 @@ function armWake() {
   wakeArmedTimer = setTimeout(() => {
     wakeArmed = false;
     if (wakeOn && !busy && !speaking && !meetingVoiceActive()) {
-      setLiveStatus("Listening for “Artemis…”");
+      setLiveStatus("Listening for “" + wakePhrase() + "…”");
     }
   }, 12000); // listen ~12s for the follow-up (the greeting eats a second or two)
 }
@@ -1851,7 +1851,7 @@ async function finalizeMeetingCapture(session) {
 
   if (session.stopPromise) await session.stopPromise;
   micToggle.classList.remove("recording");
-  micToggle.setAttribute("aria-label", session.micAriaLabel || "Talk to Artemis");
+  micToggle.setAttribute("aria-label", session.micAriaLabel || "Talk to Evie");
   orb.setStatus("thinking");
   setLiveStatus("Structuring and saving meeting notes…");
 
@@ -1904,8 +1904,8 @@ async function finalizeMeetingCapture(session) {
     deferredMeetingReply = reply;
     orb.setStatus("idle");
     setLiveStatus(groupedPending
-      ? "Meeting notes saved — return to Artemis to confirm the reminders."
-      : "Meeting capture finished — return to Artemis for details.");
+      ? "Meeting notes saved — return to Evie to confirm the reminders."
+      : "Meeting capture finished — return to Evie for details.");
     return;
   }
   orb._ensureAudio();
@@ -1960,7 +1960,7 @@ function beginMeetingCapture() {
     return false;
   }
   if (document.hidden) {
-    hud("log", "error", "notes: open the Artemis tab before recording");
+    hud("log", "error", "notes: open the Evie tab before recording");
     return false;
   }
 
@@ -2150,7 +2150,7 @@ async function followUpListen() {
       if (!wav) {
         conversationLive = false;
         returnToWake = true;
-        hud("log", "status", "follow-up: closed (silence) — say \u201cHey Artemis\u201d");
+        hud("log", "status", "follow-up: closed (silence) — say \u201cHey Jarvis\u201d");
         return false;
       }
 
@@ -2354,7 +2354,7 @@ async function startWake({ resumeBrowser = false } = {}) {
   };
   setWakeUi(true);
   orb.setStatus("listening");
-  setLiveStatus("● Listening for “Artemis…”");
+  setLiveStatus("● Listening for “" + wakePhrase() + "…”");
   startWakeWatchdog();
   safeStartRec();
   return true;
@@ -2500,7 +2500,7 @@ if (talkBtn) talkBtn.addEventListener("click", startTalkGesture);
 
 // "What can you do?" — Artemis explains herself out loud.
 const EXPLAINER =
-  "I'm Artemis — your voice-first AI. Tap the mic and talk, or flip on the wake word and just say my name. " +
+  "I'm Evie — your voice-first AI. Tap the mic and talk, or flip on the wake word and say “Hey Jarvis”. " +
   "I reply in real time, and you can pick my voice and how blunt I am. " +
   "I search the web and read pages to answer with real sources, dig through Hacker News or GitHub when you want to go deeper, and open any site for you by voice. " +
   "I keep notes, remember your contacts, and can act on your behalf — drafting and sending messages — but anything that actually sends, pays, or changes something, I always confirm with you first. " +
@@ -2710,7 +2710,7 @@ initMiniOrbs();
 
   // caption per step; {a} is replaced with the active sub-agent's name
   const CAPTIONS = [
-    "You say <strong>“Artemis.”</strong> The outer ring pulses as she wakes and starts listening.",
+    "You say <strong>“Hey Jarvis.”</strong> The outer ring pulses as she wakes and starts listening.",
     "She reads your intent and <strong>routes</strong> it to {a} — that node lights up and links back to the core.",
     "{a} runs its <strong>tool</strong> — a web search, a draft, a lookup. Its node spins while the work runs.",
     "She composes the answer and <strong>speaks</strong> it — the core flares and a voice wave ripples outward."

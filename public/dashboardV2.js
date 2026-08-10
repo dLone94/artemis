@@ -34,7 +34,7 @@ function initializeDashboardV2() {
 
   const shell = document.createElement("main");
   shell.className = "v2-shell";
-  shell.setAttribute("aria-label", "Artemis command center");
+  shell.setAttribute("aria-label", "Evie command center");
   shell.innerHTML = shellMarkup();
   body.appendChild(shell);
 
@@ -378,7 +378,7 @@ function initializeDashboardV2() {
 function shellMarkup() {
   return `
     <div class="v2-header-slot" data-v2-slot="header"></div>
-    <section class="v2-map" aria-label="Artemis subsystem architecture">
+    <section class="v2-map" aria-label="Evie subsystem architecture">
       <svg class="v2-spokes" aria-hidden="true" preserveAspectRatio="none">
         <defs>
           ${["system", "neural", "comms", "context"].map(spokeGradientMarkup).join("")}
@@ -416,7 +416,7 @@ function shellMarkup() {
       </section>
 
       <div class="v2-center-column">
-        <section class="v2-hub" data-v2-hub aria-label="Artemis orchestration core">
+        <section class="v2-hub" data-v2-hub aria-label="Evie orchestration core">
           <div class="v2-stage-slot" data-v2-slot="stage"></div>
           ${hubRingMarkup()}
           <div class="v2-hub-readouts" data-v2-slot="hub-readouts"></div>

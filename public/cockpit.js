@@ -77,7 +77,7 @@ function deliverBriefing(spoken) {
     return;
   }
   const SCRIPT = [
-    "ARTEMIS OS v2.1",
+    "EVIE OS v2.1",
     "› voice pipeline ........ ✓",
     "› brain (NVIDIA NIM) .... ✓",
     "› tools registry ........ ✓",
@@ -160,7 +160,7 @@ function addLine(kind, text) {
   const div = document.createElement("div");
   div.className = "hud-line";
   div.dataset.kind = kind;
-  const label = { you: "YOU", artemis: "ARTEMIS", tool: "TOOL", action: "ACTION", status: "SYS", error: "ERROR", confirm: "CONFIRM" }[kind] || kind.toUpperCase();
+  const label = { you: "YOU", artemis: "EVIE", tool: "TOOL", action: "ACTION", status: "SYS", error: "ERROR", confirm: "CONFIRM" }[kind] || kind.toUpperCase();
   div.innerHTML = '<span class="t"></span><span class="k"></span><span class="m"></span>';
   div.querySelector(".t").textContent = stamp();
   div.querySelector(".k").textContent = label;
@@ -937,7 +937,7 @@ function announceWhenQuiet(text, tries = 24) {
     const div = document.createElement("div");
     div.className = "hud-line shown hud-earlier";
     div.dataset.kind = m.role === "user" ? "you" : "artemis";
-    const label = m.role === "user" ? "YOU" : "ARTEMIS";
+    const label = m.role === "user" ? "YOU" : "EVIE";
     const text = String(m.content || "");
     div.innerHTML = '<span class="t"></span><span class="k"></span><span class="m"></span>';
     div.querySelector(".k").textContent = label;
@@ -947,7 +947,7 @@ function announceWhenQuiet(text, tries = 24) {
 })();
 
 /* ---------------- opening line in the log ---------------- */
-addLine("status", "systems online — say “Artemis”, tap the mic, or ask “what can I do?”");
+addLine("status", "systems online — say “Hey Jarvis”, tap the mic, or ask “what can I do?”");
 
 // ── HUD gauges ────────────────────────────────────────────────────────────
 // Bound to /api/telemetry. Everything shown here is something she actually

@@ -685,7 +685,7 @@ function legacyMapStore() {
   assert.match(researchResult.content, /PERSONAL MONEY MAP CONTEXT/);
   assert.match(researchResult.content, /Current stage: Stage 1/);
   assert.match(researchResult.content, /stored total permanent-loss cap is USD 1,000/i);
-  assert.match(researchResult.content, /not an amount Artemis recommends investing/i);
+  assert.match(researchResult.content, /not an amount Evie recommends investing/i);
   const researchPolicy = researchResult.content.slice(
     researchResult.content.indexOf("</UNTRUSTED_RESEARCH_CONTENT>")
   );

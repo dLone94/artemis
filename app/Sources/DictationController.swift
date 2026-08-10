@@ -133,8 +133,8 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
         if let first = mainMenu.items.first, let existing = first.submenu {
             appMenu = existing
         } else {
-            let rootItem = NSMenuItem(title: "Artemis", action: nil, keyEquivalent: "")
-            appMenu = NSMenu(title: "Artemis")
+            let rootItem = NSMenuItem(title: "Evie", action: nil, keyEquivalent: "")
+            appMenu = NSMenu(title: "Evie")
             rootItem.submenu = appMenu
             mainMenu.insertItem(rootItem, at: 0)
         }

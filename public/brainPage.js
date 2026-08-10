@@ -72,7 +72,7 @@ const state = {
 // `label` is the terse (redacted) line; `full` is the verbose variant shown when
 // the redact toggle is OFF. Keys are ALWAYS masked (maskKeys) either way.
 const TRACE_RESEARCH = [
-  { t: 200,  stage: "wake",   status: "done",  label: '"artemis" detected · conf 0.94', latencyMs: 40 },
+  { t: 200,  stage: "wake",   status: "done",  label: '"hey jarvis" detected · conf 0.94', latencyMs: 40 },
   { t: 700,  stage: "listen", status: "run",   label: 'deepgram interim "whats trending on…"' },
   { t: 1400, stage: "listen", status: "done",  label: 'transcript final "what\'s trending on Hacker News"', latencyMs: 570 },
   { t: 2300, stage: "route",  status: "done",  label: "intent: research · conf 0.88 → Research agent", latencyMs: 120 },
@@ -109,7 +109,7 @@ function maskKeys(s) {
 
 // ---- captions (extends the home #brainCaption pattern; aria-live reads them) ----
 const CAPTIONS = {
-  wake:    "You say <strong>“Artemis.”</strong> The outer ring pulses as she wakes and starts listening.",
+  wake:    "You say <strong>“Hey Jarvis.”</strong> The outer ring pulses as she wakes and starts listening.",
   route:   "She reads your intent and <strong>routes</strong> it to {a} — that node lights up and links back to the core.",
   tool:    "{a} runs its <strong>tool</strong> — a web search, a draft, a lookup. Its node spins while the work runs.",
   respond: "She composes the answer and <strong>speaks</strong> it — the core flares and a voice wave ripples outward.",
@@ -122,7 +122,7 @@ const orb = new BrainOrb($("brainOrb"));
 // ---- EngineerGraph ----------------------------------------------------------
 const RAIL_NODES = [
   { key: "mic",    icon: "🎙", name: "MIC",    tip: "Microphone capture — raw audio frames stream in." },
-  { key: "wake",   icon: "👂", name: "WAKE",   tip: "Wake-word spotter — listens only for “Artemis”, nothing is sent until it fires." },
+  { key: "wake",   icon: "👂", name: "WAKE",   tip: "Wake-word spotter — listens only for “Hey Jarvis”, nothing is sent until it fires." },
   { key: "router", icon: "🧭", name: "ROUTER", tip: "Intent router — classifies the request and picks the sub-agent." },
   { key: "agent",  icon: "🤖", name: "AGENT",  tip: "The chosen sub-agent (Research / Email triage / Messaging) takes the request." },
   { key: "tool",   icon: "🛠", name: "TOOL",   tip: "Tool call — web search, draft, lookup. Gated actions stop here without a key." },

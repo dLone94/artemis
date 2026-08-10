@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             contentRect: webView.frame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        window.title = "Artemis"
+        window.title = "Evie"
         window.contentView = webView
         window.setFrameAutosaveName("ArtemisMain")
         window.center()
@@ -153,37 +153,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private func presentStartupFailure(_ error: Error) {
         switch error {
         case ServerError.nodeMissing:
-            fatalAlert("Artemis can't find Node.",
+            fatalAlert("Evie can't find Node.",
                        "Looked in:\n" + NodeLocator.searched.joined(separator: "\n") +
                        "\n\nSet ARTEMIS_NODE to the full path of your node binary and try again.")
         case ServerError.rootMissing(let path):
-            fatalAlert("Artemis can't find its files.",
+            fatalAlert("Evie can't find its files.",
                        "Expected server.js in:\n\(path)\n\n" +
                        "If you moved the project, rebuild with app/build.sh, " +
                        "or set ARTEMIS_ROOT to the new location.")
         case ServerError.staleServer:
-            fatalAlert("Artemis is running old code.",
+            fatalAlert("Evie is running old code.",
                        "A server on port \(config.port) started before the current files were saved, " +
-                       "so it is still serving the previous behaviour.\n\nStop it and reopen Artemis:\n" +
+                       "so it is still serving the previous behaviour.\n\nStop it and reopen Evie:\n" +
                        "  kill $(lsof -nP -iTCP:\(config.port) -sTCP:LISTEN -t)\n\n" +
-                       "Artemis won't attach to it, because doing so would silently give you stale behaviour.")
+                       "Evie won't attach to it, because doing so would silently give you stale behaviour.")
         case ServerError.foreignServer:
             fatalAlert("Port \(config.port) is already in use.",
-                       "Something is answering on that port, but it isn't Artemis. " +
-                       "Stop it and reopen Artemis, or set ARTEMIS_PORT to a free port.")
+                       "Something is answering on that port, but it isn't Evie. " +
+                       "Stop it and reopen Evie, or set ARTEMIS_PORT to a free port.")
         case ServerError.timeout(let log):
-            fatalAlert("The Artemis server didn't start.",
+            fatalAlert("The Evie server didn't start.",
                        (log.isEmpty ? "It produced no output." : "Last output:\n\n" + log) +
                        "\n\nFull log: \(server.logURL.path)")
         default:
-            fatalAlert("Artemis failed to start.", "\(error)\n\nLog: \(server.logURL.path)")
+            fatalAlert("Evie failed to start.", "\(error)\n\nLog: \(server.logURL.path)")
         }
     }
 
     private func presentLoadFailure(_ error: Error) {
         let a = NSAlert()
         a.alertStyle = .warning
-        a.messageText = "Couldn't load the Artemis interface."
+        a.messageText = "Couldn't load the Evie interface."
         a.informativeText = "\(error.localizedDescription)\n\nLog: \(server.logURL.path)"
         a.addButton(withTitle: "Retry")
         a.addButton(withTitle: "Quit")

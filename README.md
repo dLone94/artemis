@@ -1,4 +1,10 @@
-# Artemis — a voice-first, JARVIS-style AI assistant
+# Evie — a voice-first, JARVIS-style AI assistant
+
+> **Naming:** *Evie* is the product's display name. Internal identifiers stay `Artemis`
+> on purpose — bundle id `com.artemis.desktop`, `ARTEMIS_*` env vars, the `artemis_auth`
+> cookie, `.data/` stores, `~/Library/Logs/Artemis`, and the built `Artemis.app` file name
+> are all compatibility-critical (renaming them would void macOS TCC permission grants and
+> orphan user data). Full inventory: [`docs/EVIE-COMPAT.md`](docs/EVIE-COMPAT.md).
 
 A local, **zero-dependency** voice assistant with a cinematic command-center UI: a live
 3D orb, a HUD command log, and a real agent behind it that can search the web, open
@@ -25,7 +31,7 @@ tap the mic, type in the `›` command line, or turn on the wake word and say �
 ### …or run her as a Mac app
 
 ```bash
-bash app/build.sh && open app/build/Artemis.app
+bash app/build.sh && open app/build/Artemis.app   # file name stays Artemis.app; it shows as "Evie"
 ```
 
 A real windowed app that starts the server for you, with no terminal and no
@@ -59,7 +65,7 @@ Draco), free Microsoft Edge neural (Sonia/Libby/Ryan — most human), and Eleven
 
 ## Gmail (optional)
 
-Artemis implements Gmail read + recoverable Trash and no Gmail draft/send
+Evie implements Gmail read + recoverable Trash and no Gmail draft/send
 endpoint. Follow-up nudges only open a browser compose that you review and send.
 The required Google `gmail.modify` OAuth grant is broader than those implemented
 operations and technically authorizes sending, so protect the refresh token.
@@ -69,7 +75,7 @@ One-time setup:
    **Desktop app**; set **Publishing status → In production** (so the token never expires).
 2. Put `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env`, restart.
 3. Open **http://localhost:4100/auth/google** once, approve (Advanced → “go to … (unsafe)”
-   if warned). The refresh token is saved to `.env` automatically. Then: “Artemis, check my email.”
+   if warned). The refresh token is saved to `.env` automatically. Then: “check my email.”
 
 ## Access from your phone / another computer (optional)
 
@@ -127,8 +133,9 @@ Get ORT from the `onnxruntime-web@1.14.0` npm package's `dist/` folder, and the 
 `.onnx` files from the openWakeWord **v0.5.1** GitHub release assets. `mic-worklet.js`
 is already committed. When these files are present, `/api/status` reports
 `localWake.ready:true` and the wake toggle enables on every browser. If they're absent,
-Artemis falls back to the Chrome/Edge `SpeechRecognition` recognizer (which listens for
-“Artemis” and is disabled on Safari/WebKit).
+Evie falls back to the Chrome/Edge `SpeechRecognition` recognizer (which still listens for
+the legacy token “Artemis” — unchanged in the display-only rename — and is disabled on
+Safari/WebKit).
 
 ## Known limitations
 - **Edge neural voices** use an unofficial Microsoft endpoint; if it breaks, she falls back

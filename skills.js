@@ -185,7 +185,7 @@ const FOLLOWUP_QUERIES = {
   sent: "in:sent newer_than:14d"
 };
 const GMAIL_DELETE_REAUTH =
-  "I can read your mail but I'm not authorized to delete yet — open Artemis's Gmail settings link to re-authorize, then try again.";
+  "I can read your mail but I'm not authorized to delete yet — open Evie's Gmail settings link to re-authorize, then try again.";
 // last list_reminders listing, so "cancel the second one" can resolve an id
 let lastReminderList = [];
 
@@ -1920,7 +1920,7 @@ function schoolLessonResult(lesson, progress) {
       `Money School lesson ${lesson.id}: ${lesson.title}\n` +
       lesson.beats.join("\n") +
       `\nEnd with this one check question: ${lesson.check}\n` +
-      "Teach this conversationally in Artemis's voice, one beat at a time if that feels natural. " +
+      "Teach this conversationally in Evie's voice, one beat at a time if that feels natural. " +
       "Do not add products, market figures, forecasts, or return promises."
   };
 }
@@ -2436,7 +2436,7 @@ function moneyResearchStageContext(personalMap) {
         : "The stored emergency-reserve target is met, so core-building is current.\n") +
       `The user's stored total permanent-loss cap is ` +
       `${userMoney(currency, maxPermanentLoss)}; ` +
-      "this is not an amount Artemis recommends investing. " +
+      "this is not an amount Evie recommends investing. " +
       "No allocation balance is tracked, so do not infer unused capacity.\n" +
       "If the researched idea is materially riskier or Africa-linked, describe it only as a " +
       "candidate for the optional risky sidecar. User-supplied map amounts need no market source.\n" +
@@ -4393,7 +4393,7 @@ const SKILLS = [
   {
     name: "set_reminder",
     description:
-      "Set a REAL timed reminder that Artemis announces OUT LOUD when it's due. Use for 'remind me in 20 " +
+      "Set a REAL timed reminder that Evie announces OUT LOUD when it's due. Use for 'remind me in 20 " +
       "minutes to X' (pass minutes) or 'remind me at 6:30 to Y' (pass time as 24h HH:MM). Exactly one of " +
       "minutes/time is required. This actually fires — never use remember_note for timed reminders.",
     requiresConfirmation: false,
@@ -5402,7 +5402,7 @@ const SKILLS = [
       });
       if (report.count == null) {
         let summary =
-          "I can't check WhatsApp's unread count. Grant Artemis access in " +
+          "I can't check WhatsApp's unread count. Grant Evie access in " +
           "System Settings → Privacy & Security → Accessibility.";
         if (degraded.has("notifications_unreadable")) {
           summary +=
@@ -5779,7 +5779,7 @@ const SKILLS = [
           to: displayName,
           body: p.body,
           summary: tcc
-            ? `macOS is blocking me from pressing send — enable Artemis under System Settings → ` +
+            ? `macOS is blocking me from pressing send — enable Evie under System Settings → ` +
               `Privacy & Security → Accessibility, then ask me again. Meanwhile WhatsApp is open ` +
               `with your message to ${displayName} typed in; press Enter to send it.`
             : `I couldn't press send myself — WhatsApp is open with your message to ` +
