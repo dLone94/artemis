@@ -1,9 +1,11 @@
-// Draws the Artemis app icon and writes an .icns.
+// Draws the Evie app icon and writes an .icns.
 //
-// Procedural rather than a pasted bitmap: the icon is the same object the app
-// draws on screen — an amber core inside thin orbital rings on near-black — and
-// generating it means every size is rendered at its own resolution instead of
-// being downsampled into mush at 32px.
+// Procedural rather than a pasted bitmap: every size is rendered at its own
+// resolution instead of being downsampled into mush at 32px. The mark: a calm
+// indigo-to-teal sphere, ONE thin platinum ring on a gentle tilt (behind the
+// sphere at the top, in front at the bottom — the depth cue that makes it an
+// object, not a logo), and a single bright morning-star point riding the near
+// side of the ring. At 16px it reads as a ringed dot.
 //
 //   swiftc -O -o /tmp/makeicon app/makeicon.swift && /tmp/makeicon app/AppIcon.icns
 import AppKit
@@ -11,10 +13,13 @@ import Foundation
 
 let outPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "AppIcon.icns"
 
-// Palette lifted from the cockpit UI (cyan reactor HUD).
-let amber = NSColor(srgbRed: 0.13, green: 0.83, blue: 0.93, alpha: 1)   // cyan: matches the HUD
-let amberDim = NSColor(srgbRed: 0.05, green: 0.45, blue: 0.57, alpha: 1)
-let ink = NSColor(srgbRed: 0.016, green: 0.027, blue: 0.043, alpha: 1)
+// Evie palette: dawn, not cockpit.
+let ink = NSColor(srgbRed: 0.020, green: 0.024, blue: 0.055, alpha: 1)        // indigo-black
+let lift = NSColor(srgbRed: 0.070, green: 0.090, blue: 0.220, alpha: 1)        // background glow
+let sphereLight = NSColor(srgbRed: 0.480, green: 0.860, blue: 0.910, alpha: 1) // lit teal
+let sphereMid = NSColor(srgbRed: 0.180, green: 0.310, blue: 0.760, alpha: 1)   // indigo-blue
+let sphereDeep = NSColor(srgbRed: 0.070, green: 0.095, blue: 0.340, alpha: 1)  // shadowed edge
+let platinum = NSColor(srgbRed: 0.890, green: 0.905, blue: 0.945, alpha: 1)    // the ring
 
 func drawIcon(size S: CGFloat) -> NSImage {
     let img = NSImage(size: NSSize(width: S, height: S))
@@ -32,68 +37,96 @@ func drawIcon(size S: CGFloat) -> NSImage {
     ctx.saveGState()
     plate.addClip()
 
-    // background: near-black with a warm lift toward the centre
+    // background: indigo-black with a soft dawn lift behind the sphere
     ink.setFill()
     rect.fill()
     let c = CGPoint(x: rect.midX, y: rect.midY)
     if let glow = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                             colors: [NSColor(srgbRed: 0.03, green: 0.20, blue: 0.26, alpha: 1).cgColor,
-                                      ink.cgColor] as CFArray,
+                             colors: [lift.cgColor, ink.cgColor] as CFArray,
                              locations: [0, 1]) {
         ctx.drawRadialGradient(glow, startCenter: c, startRadius: 0,
-                               endCenter: c, endRadius: rect.width * 0.62,
+                               endCenter: c, endRadius: rect.width * 0.60,
                                options: [])
     }
 
-    // orbital rings — ellipses at different tilts, thin and slightly translucent
-    let ringSpecs: [(rx: CGFloat, ry: CGFloat, angle: CGFloat, alpha: CGFloat)] = [
-        (0.46, 0.17, -0.30, 0.85),
-        (0.40, 0.13,  0.55, 0.55),
-        (0.34, 0.30,  0.10, 0.30)
-    ]
-    for spec in ringSpecs {
+    // ONE ring, gently tilted. Geometry shared by both passes; the ring is
+    // stroked fully here (behind), then its near half again after the sphere.
+    let ringAngle: CGFloat = -0.35
+    let ringRX = rect.width * 0.455
+    let ringRY = rect.width * 0.150
+    let ringWidth = max(S * 0.011, 0.7)
+    func strokeRing(nearHalfOnly: Bool) {
         ctx.saveGState()
         ctx.translateBy(x: c.x, y: c.y)
-        ctx.rotate(by: spec.angle)
-        let r = CGRect(x: -rect.width * spec.rx, y: -rect.width * spec.ry,
-                       width: rect.width * spec.rx * 2, height: rect.width * spec.ry * 2)
-        ctx.setStrokeColor(amber.withAlphaComponent(spec.alpha).cgColor)
-        ctx.setLineWidth(max(S * 0.006, 0.6))
-        ctx.strokeEllipse(in: r)
+        ctx.rotate(by: ringAngle)
+        if nearHalfOnly {
+            // in ring coordinates the near (front) side is the lower half
+            ctx.clip(to: CGRect(x: -rect.width, y: -rect.width,
+                                width: rect.width * 2, height: rect.width))
+        }
+        ctx.setStrokeColor(platinum.withAlphaComponent(nearHalfOnly ? 0.95 : 0.55).cgColor)
+        ctx.setLineWidth(ringWidth)
+        ctx.strokeEllipse(in: CGRect(x: -ringRX, y: -ringRY, width: ringRX * 2, height: ringRY * 2))
         ctx.restoreGState()
     }
+    strokeRing(nearHalfOnly: false)
 
-    // the core: a soft amber sphere
-    let coreR = rect.width * 0.235
-    if let core = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                             colors: [NSColor.white.withAlphaComponent(0.95).cgColor,
-                                      amber.cgColor,
-                                      amberDim.withAlphaComponent(0.0).cgColor] as CFArray,
-                             locations: [0, 0.45, 1]) {
-        ctx.drawRadialGradient(core, startCenter: CGPoint(x: c.x, y: c.y + coreR * 0.12), startRadius: 0,
-                               endCenter: c, endRadius: coreR * 1.75, options: [])
+    // the sphere: indigo-to-teal, lit from the upper left like morning
+    let coreR = rect.width * 0.295
+    if let halo = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                             colors: [sphereMid.withAlphaComponent(0.55).cgColor,
+                                      sphereMid.withAlphaComponent(0).cgColor] as CFArray,
+                             locations: [0, 1]) {
+        ctx.drawRadialGradient(halo, startCenter: c, startRadius: coreR * 0.8,
+                               endCenter: c, endRadius: coreR * 1.9, options: [])
     }
-    ctx.setFillColor(amber.cgColor)
-    ctx.fillEllipse(in: CGRect(x: c.x - coreR * 0.62, y: c.y - coreR * 0.62,
-                               width: coreR * 1.24, height: coreR * 1.24))
+    ctx.saveGState()
+    let sphereRect = CGRect(x: c.x - coreR, y: c.y - coreR, width: coreR * 2, height: coreR * 2)
+    ctx.addEllipse(in: sphereRect)
+    ctx.clip()
+    if let body = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                             colors: [sphereLight.cgColor, sphereMid.cgColor, sphereDeep.cgColor] as CFArray,
+                             locations: [0, 0.52, 1]) {
+        let lightC = CGPoint(x: c.x - coreR * 0.42, y: c.y + coreR * 0.48)
+        ctx.drawRadialGradient(body, startCenter: lightC, startRadius: 0,
+                               endCenter: lightC, endRadius: coreR * 2.05, options: [])
+    }
+    // specular kiss
+    if let spec = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                             colors: [NSColor.white.withAlphaComponent(0.85).cgColor,
+                                      NSColor.white.withAlphaComponent(0).cgColor] as CFArray,
+                             locations: [0, 1]) {
+        let sp = CGPoint(x: c.x - coreR * 0.38, y: c.y + coreR * 0.44)
+        ctx.drawRadialGradient(spec, startCenter: sp, startRadius: 0,
+                               endCenter: sp, endRadius: coreR * 0.55, options: [])
+    }
+    ctx.restoreGState()
 
-    // two travelling points on the rings — the detail that reads as "orbit"
-    for (dx, dy, rr) in [(0.40, 0.10, 0.028), (-0.30, -0.16, 0.020)] {
-        let p = CGPoint(x: c.x + rect.width * CGFloat(dx), y: c.y + rect.width * CGFloat(dy))
-        let pr = rect.width * CGFloat(rr)
-        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                              colors: [NSColor.white.cgColor, amber.withAlphaComponent(0).cgColor] as CFArray,
-                              locations: [0, 1]) {
-            ctx.drawRadialGradient(g, startCenter: p, startRadius: 0, endCenter: p, endRadius: pr * 3, options: [])
-        }
-        ctx.setFillColor(NSColor.white.cgColor)
-        ctx.fillEllipse(in: CGRect(x: p.x - pr / 2, y: p.y - pr / 2, width: pr, height: pr))
+    // ring again — only the near half, passing in front of the sphere
+    strokeRing(nearHalfOnly: true)
+
+    // the morning star: one bright point riding the near side of the ring
+    let t: CGFloat = -0.62                      // parametric angle on the ellipse (near side)
+    let starLocal = CGPoint(x: ringRX * cos(t), y: ringRY * sin(t))
+    let star = CGPoint(
+        x: c.x + starLocal.x * cos(ringAngle) - starLocal.y * sin(ringAngle),
+        y: c.y + starLocal.x * sin(ringAngle) + starLocal.y * cos(ringAngle))
+    let starR = rect.width * 0.026
+    if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                          colors: [NSColor.white.cgColor,
+                                   sphereLight.withAlphaComponent(0).cgColor] as CFArray,
+                          locations: [0, 1]) {
+        ctx.drawRadialGradient(g, startCenter: star, startRadius: 0,
+                               endCenter: star, endRadius: starR * 1.9, options: [])
     }
+    ctx.setFillColor(NSColor.white.cgColor)
+    ctx.fillEllipse(in: CGRect(x: star.x - starR / 2, y: star.y - starR / 2,
+                               width: starR, height: starR))
 
     ctx.restoreGState()
 
     // a hairline edge so the plate reads as an object on light wallpapers
-    ctx.setStrokeColor(amber.withAlphaComponent(0.22).cgColor)
+    ctx.setStrokeColor(platinum.withAlphaComponent(0.18).cgColor)
     ctx.setLineWidth(max(S * 0.004, 0.5))
     plate.lineWidth = max(S * 0.004, 0.5)
     plate.stroke()
