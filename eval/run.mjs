@@ -11,6 +11,7 @@
 //   node eval/run.mjs --local <id>            benchmark a local Ollama model (no quota)
 //   node eval/run.mjs --unpinned              measure the production failover chain
 //   node eval/run.mjs --temp 0.3              sample like production (default 0)
+//   node eval/run.mjs --only <stratum|id>     run part of the rubric (never a baseline)
 //   node eval/run.mjs --model <id> --baseline results/<file>.json
 //
 // WHICH MODE ANSWERS WHICH QUESTION:
@@ -48,6 +49,13 @@ const SELFTEST = flag("selftest");
 const LOCAL_MODEL = opt("local");
 const MODEL = opt("model") || LOCAL_MODEL;
 const BASELINE = opt("baseline");
+// Scope a run to one stratum or case. This exists for the cloud tier: a pinned
+// 39-case run there throttles itself into dead turns (see the note below), so
+// asking "did this one fix hold on the big model?" was previously unanswerable
+// without spending the whole quota to find out. A partial run answers that one
+// question and nothing else — it is not a rubric score and must never be minted
+// as a baseline, which the report and the console banner both say out loud.
+const ONLY = opt("only");
 // Measurement integrity: one model answers the whole rubric. --unpinned
 // deliberately measures the production failover chain instead (useful, but
 // never comparable to a pinned run — the report records which mode ran).
@@ -294,8 +302,16 @@ const bootKey = (c) => JSON.stringify({
   vault: !(c.capsOff || []).includes("vault"),
   fail: [...(c.failTools || [])].sort()
 });
+const SELECTED = ONLY
+  ? CASES.filter((c) => c.stratum === ONLY || c.id === ONLY)
+  : CASES;
+if (ONLY && SELECTED.length === 0) {
+  console.error(`--only "${ONLY}" matched no case or stratum. Nothing to run.`);
+  process.exit(2);
+}
+
 const groups = new Map();
-for (const c of CASES) {
+for (const c of SELECTED) {
   const key = bootKey(c);
   if (!groups.has(key)) groups.set(key, []);
   groups.get(key).push(c);
@@ -377,13 +393,22 @@ for (const [name, s] of Object.entries(strata)) {
 // answer. So a run that is entirely dead turns is reported as BROKEN, and a
 // BROKEN report must never be minted as a baseline.
 const deadTurns = results.filter((r) => (r.fails || []).some((f) => /dead turn|error/i.test(f))).length;
-const instrumentDown = results.length > 0 && deadTurns / results.length >= 0.9;
+// The threshold is half, not 0.9. The 0.9 rule assumed a whole-rubric run,
+// where a transport fault kills all 39 cases; it is the wrong shape for a small
+// one. Measured: a 4-case --only cross-check lost 3 cases to a 429, landed at
+// 75%, slipped under the guard, and printed "BLOCKED — gym_safety 25%" about a
+// model that had never been asked the question. The original argument already
+// justifies the lower line — no real model produces zero output on half its
+// cases, because plain chat alone would answer — so a throttled or unreachable
+// brain is caught at any run size instead of only the large ones.
+const instrumentDown = results.length > 0 && deadTurns / results.length >= 0.5;
 if (instrumentDown) {
   verdict = "BROKEN";
   notes.unshift(
     `INSTRUMENT FAILURE — ${deadTurns}/${results.length} cases produced no output at all. ` +
     "This is a transport/configuration fault (endpoint, key, or quota), not a model score. " +
-    "Check the server's stderr for the brain's HTTP status. Do not mint as a baseline."
+    "Check the server's stderr for the brain's HTTP status; if it is a rate limit, " +
+    "re-run with --pace matched to the provider's per-minute budget. Do not mint as a baseline."
   );
 }
 
@@ -397,6 +422,9 @@ const report = {
   modelsSeen,
   ranAt: new Date().toISOString(),
   selftest: SELFTEST,
+  // Non-null means only part of the rubric ran. A consumer that compares this
+  // to a full run is comparing two different measurements.
+  partial: ONLY || null,
   run: meta,
   verdict,
   notes,
@@ -413,12 +441,16 @@ mkdirSync(RESULTS_DIR, { recursive: true });
 const file = join(RESULTS_DIR, `${SELFTEST ? "selftest" : (meta && meta.model ? meta.model.replace(/[^\w.-]+/g, "_") : "run")}-${Date.now()}.json`);
 writeFileSync(file, JSON.stringify(report, null, 2));
 
-console.log("\n─── rubric " + RUBRIC_VERSION + " ───");
+console.log("\n─── rubric " + RUBRIC_VERSION + (ONLY ? ` · PARTIAL (--only ${ONLY})` : "") + " ───");
 for (const [name, s] of Object.entries(strata)) {
   console.log(`  ${name.padEnd(18)} ${s.passed}/${s.total}  ${(s.rate * 100).toFixed(0)}%${s.blocker ? "  [blocker]" : ""}`);
 }
 console.log(`  latency p50 ${report.latencyMs.p50}ms · p95 ${report.latencyMs.p95}ms`);
 if (meta && meta.model) console.log(`  model ${meta.model} · prompt ${meta.systemPromptHash} · registry ${meta.toolRegistryHash}`);
+if (ONLY) {
+  console.log(`  ⚠️  PARTIAL RUN — ${SELECTED.length} of ${CASES.length} cases ran (--only ${ONLY}).`);
+  console.log("     This answers one question, not the rubric. Do not mint as a baseline.");
+}
 if (modelsSeen.length > 1) {
   console.log(`  ⚠️  MIXED RUN — ${modelsSeen.length} models answered this rubric: ${modelsSeen.join(", ")}`);
   console.log("     Scores are not a measurement of any single model. Do not mint as a baseline.");
