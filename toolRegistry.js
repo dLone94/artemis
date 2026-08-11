@@ -165,7 +165,15 @@ const EMAIL_DELETE_PATTERN = new RegExp(
     // other deletable nouns (reminders, contacts, notes) out of this family.
     String.raw`\b(?:delete|trash)\b(?![^.?!]{0,80}\b(?:reminders?|contacts?|notes?|alarms?|messages?|files?|history|${FOLLOWUP_NOUN}|nudges?|threads?)\b)[^.?!]{0,30}\b${EMAIL_LIST_POSITION}\b(?:\s+one(?:s)?)?` +
     "|" +
-    String.raw`\bmove\b[^.?!]{0,60}\b(?:e-?mails?|mail)\b[^.?!]{0,60}\b(?:to\s+)?trash\b`,
+    String.raw`\bmove\b[^.?!]{0,60}\b(?:e-?mails?|mail)\b[^.?!]{0,60}\b(?:to\s+)?trash\b` +
+    "|" +
+    // "delete the unread ones" — what a person says right after she has read the
+    // inbox aloud, where neither the word "email" nor a list position appears.
+    // Measured: this routed to the plain email family, which does not offer
+    // delete_email at all, so the deletion was impossible before any model saw
+    // it. "unread" carries the email sense on its own; the lookahead still keeps
+    // other unread-able nouns out.
+    String.raw`\b(?:delete|trash|remove|bin|clear|get\s+rid\s+of)\b(?![^.?!]{0,80}\b(?:reminders?|contacts?|notes?|alarms?|messages?|files?|history|${FOLLOWUP_NOUN}|nudges?|threads?)\b)[^.?!]{0,30}\bunread\b`,
   "i"
 );
 

@@ -147,6 +147,27 @@ const NO_MAIL = { search: true, gmail: false };
 
   assert.equal(classifyIntent("play some lofi", ALL).family, "media");
   assert.equal(classifyIntent("check my email", ALL).family, "email");
+
+  // Deleting mail is only OFFERED on the email_delete route (delete_email is
+  // forceFamilies-gated), so a phrasing that misses this pattern makes deletion
+  // impossible before any model is involved. Measured against a real report:
+  // "delete the unread ones" — what a person says right after she reads the
+  // inbox aloud — routed to plain "email" and the tool was never on the table.
+  for (const phrase of [
+    "delete the unread emails", "delete the unread ones", "trash the unread ones",
+    "get rid of the unread ones", "clear the unread ones",
+    "delete the first one", "delete number 2", "clear my inbox"
+  ]) {
+    assert.equal(classifyIntent(phrase, ALL).family, "email_delete", `"${phrase}" must reach delete_email`);
+  }
+  // ...without swallowing the other things a person deletes.
+  for (const [phrase, family] of [
+    ["delete the unread messages", "messages"],
+    ["delete my reminders", "reminder"],
+    ["clear my notes", "memory"]
+  ]) {
+    assert.equal(classifyIntent(phrase, ALL).family, family, `"${phrase}" is not email deletion`);
+  }
   assert.equal(classifyIntent("remind me in ten minutes to stretch", ALL).family, "reminder");
 
   // conversation must NOT be forced into a tool — that was the other half of
