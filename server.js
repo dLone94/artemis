@@ -1819,6 +1819,33 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
       tool_calls: gated.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } }))
     });
     await runToolCalls(gated, convo, sources, clientActions, state, opts);
+
+    // A MIXED round — reads plus a confirm-gated mutation — is the shape
+    // delete_email's own description asks for: list first, then delete from that
+    // listing. Running the reads and dropping the mutation is how "delete the
+    // unread emails" ended as "I couldn't do that. Nothing happened on my end.":
+    // check_email ran, the delete was discarded without a word, and the turn had
+    // nothing to show for itself. The branch above only rescued the case where
+    // EVERY call needed confirmation, which is the one shape this flow never
+    // takes.
+    //
+    // The confirmation is raised AFTER the reads on purpose: the listing is what
+    // makes the mutation's preconditions checkable at all.
+    if (needsYes) {
+      let params = {};
+      try { params = JSON.parse(needsYes.arguments || "{}"); } catch (e) {}
+      const pre = await precheckSkill(needsYes.name, params, skillCtx);
+      if (pre.ok) {
+        const confirmId = createPending(needsYes.name, params);
+        console.log(`[turn ${state.id}] backstop: ran ${gated.length} read(s), now asking to confirm ${needsYes.name}`);
+        return { pending: { confirmId, name: needsYes.name, params } };
+      }
+      // Nothing worth confirming — say what is missing rather than ask a
+      // question whose answer cannot help.
+      state.rejected.push({ name: needsYes.name, error: "precondition failed" });
+      if (pre.summary) return { text: pre.summary };
+    }
+
     if (!state.requiredActionSatisfied) return null; // it ran and still failed — say so honestly
 
     // One post-tool completion so she reports the real outcome, not a guess.
