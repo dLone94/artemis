@@ -299,7 +299,7 @@ function renderBrain() {
   if (Array.isArray(brain?.chain)) {
     setRow("brain-chain", `${brain.chain.length} MODEL${brain.chain.length === 1 ? "" : "S"}`, connected ? "online" : "configured", connected ? "LIVE" : "CONFIGURED");
     const chainRow = root.querySelector('[data-about-row="brain-chain"]');
-    chainRow.title = brain.chain.join(" → ") || "No configured fallback models";
+    chainRow.title = brain.chain.map((b) => (typeof b === "string" ? b : b.name)).join(" → ") || "No configured fallback models";
   } else {
     setRow("brain-chain", "—", "unknown", telemetrySource.phase === "pending" ? "WAITING" : "UNAVAILABLE");
   }

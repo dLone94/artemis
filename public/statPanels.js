@@ -11,6 +11,13 @@ const POLL_MS = 3000;
 const HIST = 40; // samples kept per sparkline
 const REDUCED_MOTION = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 
+/** Seconds as the coarsest useful unit: "2H13M", "45M", "30S". */
+function shortWait(sec) {
+  if (sec >= 3600) return Math.floor(sec / 3600) + "H" + String(Math.round((sec % 3600) / 60)).padStart(2, "0") + "M";
+  if (sec >= 60) return Math.round(sec / 60) + "M";
+  return Math.max(1, Math.round(sec)) + "S";
+}
+
 function el(tag, cls, html) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -219,8 +226,15 @@ export function mountOpsWall() {
     if (t.brain) {
       const chain = t.brain.chain || [];
       if (chain.length) { brain.num.textContent = chain.length; delete brain.num.dataset.dim; }
-      brain.sub.textContent = (t.brain.benched ? "FALLBACK · " : "PRIMARY · ") + (t.brain.name || "").replace("groq:", "").slice(0, 24).toUpperCase();
-      glowBars(brain.cv, brain.cvEl, chain.map((c, i) => (t.brain.name === c ? 1 : 0.45 - i * 0.05)), t.brain.benched ? VIOLET : CYAN);
+      // Which brain is answering, and — when it is not her first choice — when
+      // the good one comes back. Being served by a fallback is something you
+      // should read here, not infer from her getting worse at things.
+      const active = (t.brain.current || t.brain.name || "").replace("groq:", "").replace("ollama:", "LOCAL ");
+      const head = chain[0];
+      const onFallback = chain.length > 0 && !chain[0].current;
+      const wait = onFallback && head && head.availableInSec ? " · BEST BACK IN " + shortWait(head.availableInSec) : "";
+      brain.sub.textContent = (onFallback ? "FALLBACK · " : "PRIMARY · ") + active.slice(0, 24).toUpperCase() + wait;
+      glowBars(brain.cv, brain.cvEl, chain.map((c, i) => (c.current ? 1 : 0.45 - i * 0.05)), onFallback ? VIOLET : CYAN);
     }
     if (t.budget && t.budget.limitTokens) {
       const left = Math.round((t.budget.remainingTokens / t.budget.limitTokens) * 100);

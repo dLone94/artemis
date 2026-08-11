@@ -443,21 +443,69 @@ const BRAIN = BRAIN_CHAIN[0] || NVIDIA_BRAIN;
 // reset-tokens hint) on a 429 — believe it, and fall back to a small default
 // only when it says nothing.
 const RATE_LIMIT_COOLDOWN_MS = 5000;
-function cooldownFrom(res) {
+/**
+ * How long the provider says to wait, in ms — uncapped and unrounded.
+ *
+ * Parses both the plain forms (`12`, `12.5s`, `800ms`) and the compound one a
+ * DAILY limit answers with (`2h14m47.04s`). The compound form used to fall
+ * through to the 5s default, which is how a two-hour exhaustion looked
+ * identical to a two-second throttle.
+ */
+export function retryHintMs(res) {
   const ra = res && res.headers && (res.headers.get("retry-after") || res.headers.get("x-ratelimit-reset-tokens"));
-  if (!ra) return RATE_LIMIT_COOLDOWN_MS;
-  const m = String(ra).trim().match(/^([\d.]+)\s*(ms|s)?$/i);
-  if (!m) return RATE_LIMIT_COOLDOWN_MS;
-  const n = parseFloat(m[1]);
-  const ms = /ms/i.test(m[2] || "") ? n : n * 1000;
+  if (!ra) return null;
+  const raw = String(ra).trim();
+  const plain = raw.match(/^([\d.]+)\s*(ms|s)?$/i);
+  if (plain) {
+    const n = parseFloat(plain[1]);
+    return /ms/i.test(plain[2] || "") ? n : n * 1000;
+  }
+  const compound = raw.match(/^(?:([\d.]+)h)?(?:([\d.]+)m)?(?:([\d.]+)s)?$/i);
+  if (compound && (compound[1] || compound[2] || compound[3])) {
+    return (parseFloat(compound[1] || 0) * 3600 + parseFloat(compound[2] || 0) * 60 + parseFloat(compound[3] || 0)) * 1000;
+  }
+  return null;
+}
+// The RETRY cooldown stays short on purpose — see the note above; a blanket long
+// bench keeps a model sidelined after its limit has already reset.
+function cooldownFrom(res) {
+  const ms = retryHintMs(res);
+  if (ms == null) return RATE_LIMIT_COOLDOWN_MS;
   return Math.max(500, Math.min(ms + 250, 60000));
 }
 const brainCooldown = new Map();
+// When each brain is honestly expected back, uncapped. Separate from the
+// cooldown because they answer different questions: the cooldown decides when to
+// TRY again, this decides what to TELL the user. Clamping the second to 60s is
+// how "your best brain is gone until this evening" got displayed as a blip.
+const brainAvailableAt = new Map();
 function currentBrain() {
   const now = Date.now();
   return BRAIN_CHAIN.find((b) => (brainCooldown.get(b.name) || 0) <= now) || BRAIN;
 }
+/** Chain state for the dashboard: who is answering, and when the rest return. */
+function brainChainState() {
+  const now = Date.now();
+  const current = currentBrain();
+  return {
+    current: current.name,
+    chain: BRAIN_CHAIN.map((b) => {
+      const until = brainAvailableAt.get(b.name) || 0;
+      const waiting = Math.max(0, until - now);
+      return {
+        name: b.name,
+        current: b.name === current.name,
+        available: (brainCooldown.get(b.name) || 0) <= now,
+        // Omitted rather than zeroed when nothing is known: "back in 0s" and
+        // "I have no idea when" are different facts.
+        ...(waiting > 0 ? { availableInSec: Math.round(waiting / 1000) } : {})
+      };
+    })
+  };
+}
 function benchBrain(brain, res) {
+  const hint = retryHintMs(res);
+  if (hint != null) brainAvailableAt.set(brain.name, Date.now() + hint);
   brainCooldown.set(brain.name, Date.now() + cooldownFrom(res));
   const next = currentBrain();
   if (next === brain) {
@@ -3385,10 +3433,15 @@ async function handleRequest(req, res) {
       if (total) out.memory = { usedBytes: total - free, totalBytes: total };
     } catch (e) {}
     const brain = currentBrain();
+    const state = brainChainState();
     out.brain = {
       name: brain.name,
       benched: (brainCooldown.get(brain.name) || 0) > Date.now(),
-      chain: BRAIN_CHAIN.map((b) => b.name)
+      // The chain carries per-entry state now, not just names: which one is
+      // answering, and when the preferred ones come back. A user who is being
+      // served by a fallback deserves to know that before the quality tells them.
+      current: state.current,
+      chain: state.chain
     };
     if (lastBudget.limitTokens) out.budget = lastBudget;
     if (lastFirstWordMs != null) out.latency = { lastFirstWordMs };

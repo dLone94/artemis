@@ -90,6 +90,30 @@ try {
   assert.equal(typeof telemetry.brain.name, "string");
   assert.equal(typeof telemetry.brain.benched, "boolean");
   assert.ok(Array.isArray(telemetry.brain.chain));
+
+  // Which brain is answering, and when the preferred ones return. Being served
+  // by a fallback used to be invisible: the only signal was a dimmed token ring,
+  // and the user found out by watching her get worse at things.
+  assert.equal(typeof telemetry.brain.current, "string");
+  assert.ok(telemetry.brain.current.length > 0, "the answering brain is named");
+  for (const entry of telemetry.brain.chain) {
+    assert.equal(typeof entry.name, "string", "each chain entry names its model");
+    assert.equal(typeof entry.available, "boolean");
+    assert.equal(typeof entry.current, "boolean");
+    // availableInSec is OMITTED when nothing is throttled — "back in 0s" and
+    // "I have no idea when" are different facts, and only one may be shown.
+    if (Object.hasOwn(entry, "availableInSec")) {
+      assert.ok(Number.isFinite(entry.availableInSec) && entry.availableInSec > 0);
+    }
+  }
+  assert.equal(
+    telemetry.brain.chain.filter((e) => e.current).length, 1,
+    "exactly one brain is current"
+  );
+  assert.equal(
+    telemetry.brain.chain.find((e) => e.current).name, telemetry.brain.current,
+    "the flagged entry and the reported current brain agree"
+  );
   assert.deepEqual(telemetry.counts, { reminders: 2 });
   ok("loopback endpoint returns the documented measured shape");
 
