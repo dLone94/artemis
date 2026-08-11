@@ -104,19 +104,54 @@ the 20-request budget (found the hard way extending the rubric).
 
 ## Baselines
 
-- `eval/baseline-refactor-local.json` — **the CODE yardstick** (rubric 1.3.2):
-  `--local qwen3.5:4b` at temperature 0, 33/39, one pinned model, reproducible to
-  a byte-identical failure set. Compare against this before and after a refactor;
-  any difference is the code, because nothing else can move. It is deliberately
-  NOT a model verdict — the score is a 4B local model's, not production's.
-  Its verdict is BLOCKED, and that is honest: `gym-no-supplements` is a real
-  failure (the model names specific supplements after correctly refusing to),
-  not an instrument artifact. A baseline is a record of where you stand, not a
-  certificate.
+- `eval/baseline-refactor-local.json` — **the CODE yardstick** (rubric 1.3.3):
+  `--local qwen3.5:4b` at temperature 0, 36/39 PASS, one pinned model,
+  reproducible to a byte-identical failure set. Compare against this before and
+  after a refactor; any difference is the code, because nothing else can move. It
+  is deliberately NOT a model verdict — the score is a 4B local model's, not
+  production's. Three standing non-blocker failures: `ms-mail-read`,
+  `bad-args-reminder`, `follow-read-second`. A baseline is a record of where you
+  stand, not a certificate.
+
+  **It cannot see provider-strictness bugs.** Ollama does not validate tool
+  schemas server-side; Groq does. `log_set` once declared `reps` as an integer,
+  llama-3.3-70b emitted `"reps": "8"`, and Groq rejected the whole call with HTTP
+  400 — a dead turn in production that scored a clean pass here, every time. Use
+  `--only <stratum>` against the live model to check that class.
 - `eval/baseline-current.json` — **the MODEL gate's yardstick**, saved under
-  rubric 1.2.1 with 35 cases. Stale against today's 1.3.1/39: the runner refuses
+  rubric 1.2.1 with 35 cases. Stale against today's 1.3.3/39: the runner refuses
   to compare across rubric versions, so this needs a re-mint before the next
-  model switch.
+  model switch. See below for how to afford one.
+
+## Minting a model baseline on a free tier
+
+A pinned 39-case run costs roughly **250-320k tokens** (~6-8k per case). Groq's
+free tier meters **100k per day**, so the model gate cannot be run in one
+sitting, and no amount of `--pace` changes that — pacing spreads spend over time,
+it does not reduce it. The spend is per case.
+
+Split the rubric across days and merge the pieces:
+
+```bash
+# day 1 — a few strata, well inside the daily budget
+node eval/run.mjs --model llama-3.3-70b-versatile --only core_action --pace 62000
+node eval/run.mjs --model llama-3.3-70b-versatile --only chat --pace 62000
+# ... day 2, day 3, until every stratum has run once ...
+
+node eval/merge.mjs --out eval/baseline-current.json \
+  eval/results/llama-3.3-70b-versatile-<each>.json
+```
+
+`--pace 62000` is still needed *within* a day: the per-minute ceiling (12k TPM)
+is a separate limit from the daily one, and a single action turn can request ~9.7k.
+
+The merge is strict, because a baseline is a claim that one model answered this
+rubric under this code. It refuses to write if the segments disagree on model,
+`rubricVersion`, `systemPromptHash`, `toolRegistryHash`, or `temperature`; if any
+case is missing, duplicated, or unknown to the rubric; if a segment was unpinned,
+a selftest, or itself BROKEN. **Do not edit the prompt, a tool schema, or a case
+mid-collection** — any of those invalidates every segment taken before it, and
+the merge will tell you so rather than average across the change.
 - `eval/baseline-qwen3-next-80b.json` — historical (rubric 1.0.0): the retired
   NVIDIA incumbent, 15/19 BLOCKED.
 - `eval/candidate-gpt-oss-120b.json` — historical (rubric 1.0.0): the candidate

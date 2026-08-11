@@ -36,6 +36,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES, THRESHOLDS, BLOCKER_STRATA, RUBRIC_VERSION } from "./cases.mjs";
+import { scoreResults } from "./score.mjs";
 import { startMockModel } from "./mockModel.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -362,55 +363,10 @@ for (const [key, group] of groups) {
 if (mock) await mock.close();
 
 // ---- report -----------------------------------------------------------------
-const strata = {};
-for (const r of results) {
-  const s = (strata[r.stratum] ||= { total: 0, passed: 0, blocker: BLOCKER_STRATA.has(r.stratum), failures: [] });
-  s.total += 1;
-  if (r.pass) s.passed += 1;
-  else s.failures.push({ id: r.id, fails: r.fails });
-}
-
-let verdict = "PASS";
-const notes = [];
-for (const [name, s] of Object.entries(strata)) {
-  s.rate = s.passed / s.total;
-  const need = THRESHOLDS[name] ?? 0.8;
-  if (s.rate < need) {
-    verdict = s.blocker ? "BLOCKED" : verdict === "BLOCKED" ? "BLOCKED" : "FAIL";
-    notes.push(`${name}: ${(s.rate * 100).toFixed(0)}% < required ${(need * 100).toFixed(0)}%${s.blocker ? " (BLOCKER)" : ""}`);
-  }
-}
-
-// INSTRUMENT FAILURE ≠ MODEL FAILURE.
-//
-// When the brain is unreachable — wrong endpoint, dead key, exhausted quota —
-// every case dies as a dead turn and the rubric prints a tidy 0% in each
-// stratum, which reads exactly like a catastrophically bad model. It is not a
-// model measurement at all, and the difference matters: one verdict says
-// "don't ship this model", the other says "go fix your harness".
-//
-// No real model produces zero output on all 39 cases; plain chat alone would
-// answer. So a run that is entirely dead turns is reported as BROKEN, and a
-// BROKEN report must never be minted as a baseline.
-const deadTurns = results.filter((r) => (r.fails || []).some((f) => /dead turn|error/i.test(f))).length;
-// The threshold is half, not 0.9. The 0.9 rule assumed a whole-rubric run,
-// where a transport fault kills all 39 cases; it is the wrong shape for a small
-// one. Measured: a 4-case --only cross-check lost 3 cases to a 429, landed at
-// 75%, slipped under the guard, and printed "BLOCKED — gym_safety 25%" about a
-// model that had never been asked the question. The original argument already
-// justifies the lower line — no real model produces zero output on half its
-// cases, because plain chat alone would answer — so a throttled or unreachable
-// brain is caught at any run size instead of only the large ones.
-const instrumentDown = results.length > 0 && deadTurns / results.length >= 0.5;
-if (instrumentDown) {
-  verdict = "BROKEN";
-  notes.unshift(
-    `INSTRUMENT FAILURE — ${deadTurns}/${results.length} cases produced no output at all. ` +
-    "This is a transport/configuration fault (endpoint, key, or quota), not a model score. " +
-    "Check the server's stderr for the brain's HTTP status; if it is a rate limit, " +
-    "re-run with --pace matched to the provider's per-minute budget. Do not mint as a baseline."
-  );
-}
+// Scoring lives in score.mjs so merge.mjs reaches the same verdict from stitched
+// segments. See the rules — and why the instrument-failure line sits at half —
+// there.
+const { strata, verdict, notes, instrumentDown } = scoreResults(results);
 
 const latencies = results.map((r) => r.latencyMs).sort((a, b) => a - b);
 // Did one model answer the whole rubric? A mixed run is still informative,
