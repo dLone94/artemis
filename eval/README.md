@@ -147,7 +147,30 @@ days one and two. Until then the standing coverage is `--local` for code
 regressions plus targeted `--only` runs against the live model for the
 provider-strictness class that `--local` cannot see.
 
-When it is time, split the rubric across days and merge the pieces:
+### Driving it: `collect.mjs`
+
+One command does the whole thing, one stratum at a time, and is safe to call on
+a schedule:
+
+```bash
+node eval/collect.mjs --model llama-3.3-70b-versatile
+```
+
+Each invocation works out which strata are already measured under the current
+prompt and registry, runs the smallest unmeasured one, and exits. When the daily
+budget is gone it prints `WAITING` and exits 0, so a scheduler can keep calling
+it without piling up failures. When nothing is left it merges every segment and
+mints the baseline itself.
+
+It counts a stratum as measured only when one segment holds every case in it and
+none of them died. A real failure counts — that is a measurement. A dead turn
+does not: the model was never asked, so there is nothing to score, and letting it
+count would end the collection early and mint a baseline full of assertions
+nobody tested.
+
+### Doing it by hand
+
+Split the rubric across days and merge the pieces:
 
 ```bash
 # day 1 — a few strata, well inside the daily budget
