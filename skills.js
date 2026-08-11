@@ -3875,17 +3875,27 @@ const SKILLS = [
           enum: ["kg", "lb"],
           description: "The spoken weight unit. Pounds are recognized but refused in version one."
         },
+        // Digits as text are accepted alongside the integer because weight_value
+        // above is a string, and a model that has just been told to quote one
+        // number quotes the one next to it: llama-3.3-70b emitted "reps": "8",
+        // which the provider rejected against an integer-only schema, killing
+        // the turn with a 400 before any of our code ran. validateSet is what
+        // enforces the range on either form.
         reps: {
-          type: "integer",
+          type: ["integer", "string"],
           minimum: 1,
           maximum: 50,
-          description: "Whole repetitions in this set."
+          pattern: "^\\d{1,2}$",
+          description: "Whole repetitions in this set, 1 through 50; digits only, never a decimal."
         },
         set_number: {
-          type: "integer",
+          type: ["integer", "string"],
           minimum: 1,
           maximum: 20,
-          description: "Optional explicit set number; otherwise today's next number is computed."
+          pattern: "^\\d{1,2}$",
+          description:
+            "Optional explicit set number, 1 through 20, as digits; otherwise today's " +
+            "next number is computed."
         },
         note: {
           type: "string",

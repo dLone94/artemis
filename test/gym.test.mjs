@@ -219,6 +219,46 @@ test("validated sets auto-number per exercise and apply as one immutable audited
   assert.equal(explicit.set.setNumber, 7, "an explicit set number wins");
 });
 
+// llama-3.3-70b, told to write the weight as a digit string, wrote the reps as
+// one too. An integer-only schema made the provider reject the whole call with
+// HTTP 400 before any of this ran, and the user heard "I couldn't do that."
+test("a set logs whether the model quotes its numbers or not", () => {
+  const quoted = validateSet({
+    exercise: "bench press",
+    weight_value: "80",
+    unit: "kg",
+    reps: "8",
+    set_number: "3",
+    raw_answer: "bench press eighty kilos eight reps"
+  }, gymFixture(), "2026-08-09");
+  assert.equal(quoted.ok, true, quoted.message);
+  assert.equal(quoted.set.reps, 8, "quoted reps are stored as a number");
+  assert.equal(quoted.set.setNumber, 3, "a quoted set number is stored as a number");
+
+  const plain = validateSet({
+    exercise: "bench press",
+    weight_value: "80",
+    unit: "kg",
+    reps: 8,
+    set_number: 3,
+    raw_answer: "bench press eighty kilos eight reps"
+  }, gymFixture(), "2026-08-09");
+  assert.deepEqual(quoted.set, plain.set, "both shapes produce the identical set");
+
+  // Tolerating quotes must not tolerate nonsense: these stay spoken errors.
+  for (const reps of ["eight", "8.5", "-8", "", " ", "0", "51", true, null]) {
+    const bad = validateSet({
+      exercise: "bench press",
+      weight_value: "80",
+      unit: "kg",
+      reps,
+      raw_answer: "bench press eighty kilos eight reps"
+    }, gymFixture(), "2026-08-09");
+    assert.equal(bad.ok, false, `reps ${JSON.stringify(reps)} must not log`);
+    assert.match(bad.message, /whole number from 1 through 50/);
+  }
+});
+
 test("progress reports the prior session, exact PR, and at most one bounded suggestion", () => {
   const log = gymFixture({
     workouts: [

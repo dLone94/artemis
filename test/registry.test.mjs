@@ -103,6 +103,26 @@ const NO_MAIL = { search: true, gmail: false };
   assert.equal(validateToolCall("open_url", "{not json", ALL).ok, false, "unparseable arguments are rejected");
   assert.equal(validateToolCall("no_such_tool", {}, ALL).ok, false, "unknown tool is rejected");
 
+  // A union-typed argument accepts either shape. log_set declares reps that way
+  // because a provider validates the model's generation against the schema we
+  // publish, and an integer-only reps cost a live turn a 400 when the model
+  // quoted the number next to its string-typed sibling.
+  const quotedReps = validateToolCall("log_set", {
+    exercise: "bench press", weight_value: "80", unit: "kg", reps: "8",
+    raw_answer: "bench press eighty kilos eight reps"
+  }, ALL);
+  assert.equal(quotedReps.ok, true, "a quoted whole number passes the union type");
+  const plainReps = validateToolCall("log_set", {
+    exercise: "bench press", weight_value: "80", unit: "kg", reps: 8,
+    raw_answer: "bench press eighty kilos eight reps"
+  }, ALL);
+  assert.equal(plainReps.ok, true, "an integer still passes the union type");
+  const badReps = validateToolCall("log_set", {
+    exercise: "bench press", weight_value: "80", unit: "kg", reps: true,
+    raw_answer: "bench press eighty kilos eight reps"
+  }, ALL);
+  assert.equal(badReps.ok, false, "a union type is not a free pass for any shape");
+
   // string arguments arrive from the model as JSON text — that must work
   const parsed = validateToolCall("play_media", '{"query":"lofi"}', ALL);
   assert.equal(parsed.ok, true, "JSON-string arguments are parsed");

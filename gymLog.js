@@ -489,6 +489,22 @@ export function finishSession(log, isoNow) {
   return { log: current, summary: { exercises, sets, minutes } };
 }
 
+/**
+ * A whole count from either an integer or the digit string a model emits.
+ *
+ * log_set publishes reps and set_number as integer-or-string because a provider
+ * validates the model's tool call against that schema and kills the turn with a
+ * 400 when it disagrees. Nothing downstream should carry that compromise, so
+ * both shapes collapse to a number here; anything else is null and the caller
+ * speaks a real error. Deliberately strict: no decimals, no signs, no spelled
+ * words, so "eight" and "8.5" stay mistakes rather than becoming a logged set.
+ */
+function wholeCount(value) {
+  if (Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^\d{1,3}$/.test(value.trim())) return Number(value.trim());
+  return null;
+}
+
 export function validateSet(params, log, today) {
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     return { ok: false, message: "A set must be one structured entry." };
@@ -516,7 +532,8 @@ export function validateSet(params, log, today) {
 
   const parsedWeight = parseWeightToGrams(params.weight_value, params.unit);
   if (!parsedWeight.ok) return parsedWeight;
-  if (!Number.isInteger(params.reps) || params.reps < 1 || params.reps > 50) {
+  const reps = wholeCount(params.reps);
+  if (reps === null || reps < 1 || reps > 50) {
     return { ok: false, message: "Reps must be a whole number from 1 through 50." };
   }
   if (!cleanText(params.raw_answer, 500)) {
@@ -533,8 +550,8 @@ export function validateSet(params, log, today) {
     : [];
   const setNumber = params.set_number === undefined
     ? matchingSets.length + 1
-    : params.set_number;
-  if (!Number.isInteger(setNumber) || setNumber < 1 || setNumber > 20) {
+    : wholeCount(params.set_number);
+  if (setNumber === null || setNumber < 1 || setNumber > 20) {
     return { ok: false, message: "A set number must be a whole number from 1 through 20." };
   }
 
@@ -543,7 +560,7 @@ export function validateSet(params, log, today) {
     exerciseName: exercise.name,
     weightGrams: parsedWeight.grams,
     unit: "kg",
-    reps: params.reps,
+    reps,
     setNumber
   };
   const note = cleanText(params.note, 120);

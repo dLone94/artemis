@@ -529,6 +529,13 @@ export function toolDefsForFamily(caps, family) {
 // reject a malformed call BEFORE it is executed or recorded, so a bad call can
 // never look like a completed action.
 function typeOk(value, type) {
+  // A union type says the wire genuinely accepts either shape. It exists because
+  // a provider validates the model's generation against the schema we publish:
+  // llama-3.3-70b, told to write log_set's weight as a digit string, wrote the
+  // neighbouring reps as "8" too, and Groq rejected the whole call with HTTP 400
+  // before it ever reached this function. Accepting both here keeps the local
+  // check meaningful instead of falling through to "unconstrained".
+  if (Array.isArray(type)) return type.some((t) => typeOk(value, t));
   if (type === "string") return typeof value === "string";
   if (type === "integer") return Number.isInteger(value);
   if (type === "number") return typeof value === "number" && Number.isFinite(value);
