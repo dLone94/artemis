@@ -130,7 +130,24 @@ free tier meters **100k per day**, so the model gate cannot be run in one
 sitting, and no amount of `--pace` changes that — pacing spreads spend over time,
 it does not reduce it. The spend is per case.
 
-Split the rubric across days and merge the pieces:
+**The daily limit is a rolling window, not a midnight reset.** Measured
+2026-08-11: with the budget exhausted, the `Used` figure fell 99,631 → 99,559 →
+99,487 over two minutes — **~72 tokens/minute, ~4.3k/hour**, which clears 100k in
+about 23 hours. Two consequences worth knowing before starting:
+
+- Sustainable throughput is **~10-11 cases/day**. A whole rubric is ~4 days.
+- Spending the budget in one burst costs the whole next day, not the next hour.
+  A 30-minute diagnostic session can consume the day's collection budget.
+
+**Start a collection only when a model switch is actually on the table.** The
+window is long enough that collecting speculatively freezes the branch: every
+segment is bound to `systemPromptHash`, `toolRegistryHash` and `rubricVersion`,
+so a prompt edit, a tool-schema change, or a case edit on day three invalidates
+days one and two. Until then the standing coverage is `--local` for code
+regressions plus targeted `--only` runs against the live model for the
+provider-strictness class that `--local` cannot see.
+
+When it is time, split the rubric across days and merge the pieces:
 
 ```bash
 # day 1 — a few strata, well inside the daily budget
