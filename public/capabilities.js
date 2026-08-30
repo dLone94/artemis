@@ -1,4 +1,4 @@
-// What Evie can actually do — ONE source of truth.
+// What Artemis can actually do — ONE source of truth.
 //
 // Both the index.html capability constellation and the About guide render from
 // this array. They used to be hand-written in two places, which is how a UI

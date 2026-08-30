@@ -5,6 +5,14 @@
 // choreography and subtle UI ticks. All motion honors prefers-reduced-motion.
 
 import { PAL, prefersReducedMotion } from "./orbShared.js";
+import {
+  BACKGROUND_MUSIC_GAIN,
+  BACKGROUND_MUSIC_DUCK_GAIN,
+  musicGainFor,
+  musicRampMs,
+  SHUTDOWN_FADE_MS
+} from "./musicLevels.js";
+import { rememberPosition } from "./musicPosition.js";
 
 const reduced = prefersReducedMotion();
 const $ = (id) => document.getElementById(id);
@@ -41,10 +49,13 @@ function deliverBriefing(spoken) {
         window.ArtemisSpeak(ask);
       }
     } else if (b.inspire) {
-      // mail state + a line for the day — no question, no monologue
+      // An inbox announcement carries the inbox and nothing else: the line for
+      // the day is a separate feature and must not ride along with it, or a
+      // simple "2 new emails" turns into a monologue. It still gets spoken on
+      // a quiet-inbox launch, and it always stays visible on the TODAY card.
       const parts = [b.greeting];
       if (b.mail) parts.push(b.mail);
-      parts.push(b.inspire);
+      else parts.push(b.inspire);
       const say = parts.join(" ");
       addLine("artemis", say);
       addCard({ title: "TODAY", lines: [b.mail || "", b.inspire].filter(Boolean) });
@@ -77,7 +88,7 @@ function deliverBriefing(spoken) {
     return;
   }
   const SCRIPT = [
-    "EVIE OS v2.1",
+    "ARTEMIS OS v2.1",
     "› voice pipeline ........ ✓",
     "› brain (NVIDIA NIM) .... ✓",
     "› tools registry ........ ✓",
@@ -160,7 +171,7 @@ function addLine(kind, text) {
   const div = document.createElement("div");
   div.className = "hud-line";
   div.dataset.kind = kind;
-  const label = { you: "YOU", artemis: "EVIE", tool: "TOOL", action: "ACTION", status: "SYS", error: "ERROR", confirm: "CONFIRM" }[kind] || kind.toUpperCase();
+  const label = { you: "YOU", artemis: "ARTEMIS", tool: "TOOL", action: "ACTION", status: "SYS", error: "ERROR", confirm: "CONFIRM" }[kind] || kind.toUpperCase();
   div.innerHTML = '<span class="t"></span><span class="k"></span><span class="m"></span>';
   div.querySelector(".t").textContent = stamp();
   div.querySelector(".k").textContent = label;
@@ -203,7 +214,7 @@ function addCard(card) {
       b.type = "button";
       b.textContent = labelText;
       b.addEventListener("click", () => {
-        if (window.ArtemisConfirm) window.ArtemisConfirm(yes);
+        if (window.ArtemisConfirm) window.ArtemisConfirm(yes, card.confirmId);
         div.remove();
       });
       return b;
@@ -367,13 +378,40 @@ window.__ambient = ambient; // debug/test handle
 
 /* ---------------- background music (your own file) ---------------- */
 // Loops a track you drop at assets/music.mp3 (any file you legally own — the
-// path is gitignored so nothing copyrighted gets committed). Ducks to ~28%
+// path is gitignored so nothing copyrighted gets committed). Ducks to ~18%
 // under her voice so she's always audible, persists on/off, and is mutually
 // exclusive with the synthesized ambient hum (they'd clash).
 const music = (() => {
   const KEY = "artemisMusic";
   let el = null, available = false, ready = false;
-  const FULL = 0.42;
+  // Levels live in musicLevels.js — one definition for every page. FULL is the
+  // resting gain, DUCKED is the absolute gain while she speaks (not a fraction
+  // of a louder number, which is how the bed used to end up at 0.42).
+  const FULL = BACKGROUND_MUSIC_GAIN;
+  const DUCKED = BACKGROUND_MUSIC_DUCK_GAIN;
+  let fadeTimer = 0;
+
+  // Ramp, don't jump. A step change in gain reads as the track dropping out
+  // rather than making room, and it clicks. Down fast so the first syllable is
+  // already clear; back up slowly so the bed doesn't pump between sentences.
+  function fadeTo(target, ms) {
+    if (!el) return;
+    clearInterval(fadeTimer);
+    const from = el.volume, span = target - from, t0 = performance.now();
+    if (Math.abs(span) < 0.002) { el.volume = target; return; }
+    fadeTimer = setInterval(() => {
+      const k = Math.min(1, (performance.now() - t0) / ms);
+      el.volume = Math.max(0, Math.min(1, from + span * k));
+      if (k >= 1) clearInterval(fadeTimer);
+    }, 16);
+  }
+  // ONLY "speaking" ducks. "listening" is the resting state whenever the wake
+  // word is armed — restoreWakeListening() parks the orb there between turns —
+  // so ducking it too pinned the bed at the quiet level forever and the duck
+  // was never audible. The whole effect depends on this staying speech-only.
+  function levelFor(s) {
+    return musicGainFor(s);
+  }
 
   function ensure() {
     if (el) return el;
@@ -382,27 +420,40 @@ const music = (() => {
     el.preload = "none";
     el.volume = FULL;
     el.addEventListener("error", () => { available = false; label(); });
+    // Pick the track up where the previous page left it. preload="none" means
+    // duration is unknown here, so the seek waits for loadedmetadata — which
+    // lands before audio starts, so the resume is inaudible rather than a jump.
+    rememberPosition(el);
     return el;
   }
   function play() {
     ensure();
     if (ambient.running) { ambient.stop(); window.__ambientLabel && window.__ambientLabel(); } // one bed at a time
-    el.volume = FULL;
+    clearInterval(fadeTimer);
+    el.volume = levelFor(document.body.dataset.aiState);
     const p = el.play();
     if (p && p.catch) p.catch(() => {});
     label();
   }
-  function stop() { if (el) { el.pause(); el.volume = FULL; } label(); }
+  function stop() { if (el) { clearInterval(fadeTimer); el.pause(); el.volume = FULL; } label(); }
+  // Shutdown: fade to silence, then stop. Never a hard cut mid-track.
+  function fadeOut() {
+    if (!el || el.paused) return;
+    fadeTo(0, SHUTDOWN_FADE_MS);
+    setTimeout(() => { try { el.pause(); } catch (e) {} }, SHUTDOWN_FADE_MS + 60);
+  }
+  // Any in-flight ramp is cancelled before a new one starts (fadeTo clears the
+  // timer), so repeated speak/stop turns cannot stack or drift the gain.
   const btn = $("musicToggle");
   function label() {
     if (!btn) return;
     btn.textContent = "MUSIC: " + (!available ? "ADD FILE" : el && !el.paused ? "ON" : "OFF");
     btn.classList.toggle("is-na", !available);
   }
-  // duck under any voice
+  // duck under her voice, and only under her voice
   function onState(s) {
     if (!el || el.paused) return;
-    el.volume = s === "speaking" || s === "listening" ? FULL * 0.28 : FULL;
+    fadeTo(levelFor(s), musicRampMs(s));
   }
   // is a file actually there? (startIfWanted waits on this so the boot-tap
   // restore doesn't lose a race with the probe and play the wrong bed)
@@ -421,6 +472,7 @@ const music = (() => {
 
   return {
     onState,
+    fadeOut,          // shutdown: fade the bed to silence, then stop
     get playing() { return !!(el && !el.paused); },
     get volume() { return el ? el.volume : -1; }, // debug/verification
     // opt-in; needs the boot gesture. Waits for the file probe, THEN decides:
@@ -937,7 +989,7 @@ function announceWhenQuiet(text, tries = 24) {
     const div = document.createElement("div");
     div.className = "hud-line shown hud-earlier";
     div.dataset.kind = m.role === "user" ? "you" : "artemis";
-    const label = m.role === "user" ? "YOU" : "EVIE";
+    const label = m.role === "user" ? "YOU" : "ARTEMIS";
     const text = String(m.content || "");
     div.innerHTML = '<span class="t"></span><span class="k"></span><span class="m"></span>';
     div.querySelector(".k").textContent = label;

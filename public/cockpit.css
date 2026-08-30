@@ -116,6 +116,30 @@
   color: var(--teal);
   font-size: 10px;
 }
+/* SYSTEM HEALTH — one real readout in the status header the page already has.
+   Deliberately the same chip vocabulary as .hud-ttfw rather than a new visual
+   language: this is a fact added to the SYSTEM area, not a redesign of it. */
+.hud-health {
+  padding: 3px 10px;
+  border: 1px solid rgba(88, 124, 136, 0.5);
+  border-radius: var(--radius-pill);
+  color: rgba(88, 124, 136, 0.9);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.3s, border-color 0.3s;
+}
+.hud-health[data-tone="ok"] { color: var(--teal); border-color: rgba(34, 211, 238, 0.55); }
+.hud-health[data-tone="warn"] { color: #e8973c; border-color: rgba(232, 151, 60, 0.6); }
+/* A critical fault is the one thing in this header allowed to draw the eye. */
+.hud-health[data-tone="critical"] {
+  color: #ff6b5e;
+  border-color: rgba(255, 107, 94, 0.7);
+  text-shadow: 0 0 8px rgba(255, 107, 94, 0.45);
+}
+.hud-health:focus-visible { outline: 1px solid var(--teal); outline-offset: 2px; }
+
 .hud-clock { color: var(--text-bright); font-size: 12px; letter-spacing: 0.18em; }
 .hud-links a { color: var(--gray); text-decoration: none; margin-left: 14px; font-size: 13px; letter-spacing: 0.12em; }
 .hud-links a:hover { color: var(--teal); }

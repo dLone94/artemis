@@ -953,6 +953,9 @@ body.dashboard-v2 .v2-skill:last-child:focus-visible .v2-skill-tooltip { transfo
 
 /* One octagonal command strip; internal rows keep every control at 1440px. */
 body.dashboard-v2 .v2-dock-slot { min-width: 0; min-height: 0; }
+/* v3 command bar: one calm flex row — status · mic · input · controls, with
+   the toggle drawer beneath on demand. The old angular clip-path chrome is
+   retired; v3.css owns the visual skin. */
 body.dashboard-v2 .cockpit .dock,
 body.dashboard-v2 .cockpit .dock[data-state="idle"],
 body.dashboard-v2 #dock,
@@ -965,39 +968,57 @@ body.dashboard-v2 #dock[data-state="idle"] {
   max-width: none;
   min-width: 0;
   min-height: 0;
-  padding: clamp(7px, 0.65vh, 11px) clamp(12px, 1.1vw, 24px);
-  display: grid;
-  grid-template-columns: minmax(155px, 0.6fr) minmax(220px, 1fr) minmax(320px, 1.7fr);
-  grid-template-rows: minmax(26px, 0.72fr) minmax(46px, 1fr);
+  padding: 10px clamp(14px, 1.6vw, 26px) 12px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   align-items: center;
-  gap: clamp(4px, 0.45vh, 7px) clamp(10px, 0.9vw, 20px);
-  border: 0;
-  border-radius: 0;
-  clip-path: polygon(13px 0, calc(100% - 13px) 0, 100% 13px, 100% calc(100% - 13px), calc(100% - 13px) 100%, 13px 100%, 0 calc(100% - 13px), 0 13px);
-  background: rgba(103, 232, 249, 0.42);
+  align-content: center;
+  gap: 6px 16px;
+  clip-path: none;
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   isolation: isolate;
 }
 
-body.dashboard-v2 #dock::before {
-  content: "";
-  position: absolute;
-  inset: 1px;
-  z-index: -1;
-  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
-  background: linear-gradient(90deg, rgba(4, 13, 31, 0.96), rgba(8, 26, 51, 0.96), rgba(4, 13, 31, 0.96));
+/* one calm row: status ribbon on top, then mic · input (grows) · controls */
+body.dashboard-v2 #dock .dock-status,
+body.dashboard-v2 #dock[data-state="idle"] .dock-status {
+  flex: 1 1 100%;
+  order: 1;
+  max-width: none;
+  width: auto;
 }
-
-body.dashboard-v2 #dock::after {
-  content: "";
-  position: absolute;
-  inset: 6px;
-  z-index: -1;
-  border: 1px solid rgba(103, 232, 249, 0.18);
-  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
-  pointer-events: none;
+body.dashboard-v2 #dock #micToggle,
+body.dashboard-v2 #dock[data-state="idle"] #micToggle {
+  flex: 0 0 auto;
+  order: 2;
+  margin: 0;
+}
+body.dashboard-v2 #dock .hud-cmd,
+body.dashboard-v2 #dock[data-state="idle"] .hud-cmd {
+  flex: 1 1 320px;
+  order: 3;
+  grid-column: auto;
+  grid-row: auto;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+}
+body.dashboard-v2 #dock .v3-dock-controls,
+body.dashboard-v2 #dock[data-state="idle"] .v3-dock-controls {
+  flex: 0 0 auto;
+  order: 4;
+}
+body.dashboard-v2 #dock .dock-row,
+body.dashboard-v2 #dock[data-state="idle"] .dock-row {
+  flex: 1 1 100%;
+  order: 5;
+  grid-column: auto;
+  grid-row: auto;
 }
 
 body.dashboard-v2 #dock .dock-status {

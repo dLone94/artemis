@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "revision": 0,
+  "themes": [
+    "Africa-linked opportunities",
+    "global macro"
+  ],
+  "runAt": "2026-08-26T10:07:24.775Z",
+  "report": {
+    "version": 1,
+    "generatedAt": "2026-08-26T10:07:24.775Z",
+    "findings": [
+      {
+        "theme": "Africa-linked opportunities",
+        "sourceUrl": "https://www.youtube.com/watch?v=nbKGKRPRwHc",
+        "effort": "unknown",
+        "startupCost": "unknown",
+        "timeToFirstRevenue": "unknown",
+        "riskLevel": "unknown",
+        "confidence": "low",
+        "nextAction": "Review this source this week and write down one claim to verify."
+      },
+      {
+        "theme": "global macro",
+        "sourceUrl": "https://www.morganstanley.com/im/en-us/individual-investor/insights/articles/opportunities-across-shifting-global-macro-climates.html",
+        "effort": "unknown",
+        "startupCost": "unknown",
+        "timeToFirstRevenue": "unknown",
+        "riskLevel": "unknown",
+        "confidence": "low",
+        "nextAction": "Review this source this week and write down one claim to verify."
+      },
+      {
+        "theme": "Africa-linked opportunities",
+        "sourceUrl": "https://www.eiu.com/n/campaigns/africa-2026-outlook",
+        "effort": "unknown",
+        "startupCost": "unknown",
+        "timeToFirstRevenue": "unknown",
+        "riskLevel": "unknown",
+        "confidence": "low",
+        "nextAction": "Review this source this week and write down one claim to verify."
+      },
+      {
+        "theme": "global macro",
+        "sourceUrl": "https://www.columbiathreadneedle.com/en/insights/2026-macroeconomic-outlook-treading-a-finer-line",
+        "effort": "unknown",
+        "startupCost": "unknown",
+        "timeToFirstRevenue": "unknown",
+        "riskLevel": "unknown",
+        "confidence": "low",
+        "nextAction": "Review this source this week and write down one claim to verify."
+      }
+    ],
+    "figures": [
+      {
+        "kind": "fx",
+        "quoteCurrency": "KES",
+        "figure": {
+          "value": 129.455985,
+          "unit": "KES per 1 USD",
+          "asOf": "2026-08-26",
+          "source": "Verified exchange-rate source",
+          "url": "https://open.er-api.com/v6/latest/USD",
+          "stale": false
+        }
+      }
+    ],
+    "omittedFindings": 0,
+    "marketContextOmitted": true,
+    "stage": null
+  }
+}

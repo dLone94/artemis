@@ -1,0 +1,24 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "public/pill.html"
+        ],
+        "createdAt": "2026-08-26T05:38:59.885Z"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "public/state-preview.html"
+        ],
+        "createdAt": "2026-08-26T05:38:59.914Z"
+      }
+    ]
+  }
+}

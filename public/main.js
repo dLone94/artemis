@@ -2,8 +2,10 @@
 // Wires the audio-reactive VoiceOrb to the real backend: mic → Deepgram STT →
 // Claude (+ web search) → Deepgram TTS, plus an "Artemis …" wake word. The orb
 // reacts to YOUR voice (listening) and ARTEMIS's voice (speaking) via real audio.
-import { VoiceOrb, MOON_INFO } from "./voiceOrb.js";
+import { ArtemisCore } from "./artemisCore.js";
+import { MOON_INFO } from "./coreCapabilities.js";
 import { resolveOpenIntent } from "./siteRegistry.js";
+import { voiceSuspended } from "./presentationPolicy.js";
 import { isClosingPhrase, loadFollowUpEnabled, matchWake, saveFollowUpEnabled } from "./wakeWords.js";
 import { initMiniOrbs } from "./miniOrb.js";
 import { BrainOrb } from "./brainOrb.js";
@@ -12,6 +14,8 @@ import { startLocalWake, stopLocalWake, pauseLocalWake, resumeLocalWake, localWa
 import { FALLBACK_PROFILE, resolveWakeProfile } from "./wakeProfile.js";
 import { confirmationDecision } from "./confirmDecision.js";
 import { isMeetingStartPhrase, isMeetingStopPhrase } from "./meetingCapture.js";
+import { takeVoiceboxChunks } from "./ttsChunking.js";
+import { startHealthClient } from "./healthClient.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -72,9 +76,10 @@ function meetingVoiceActive() {
 window.celebrationVoiceActive = () =>
   speaking || recording || talkStarting || followUpInFlight || busy || meetingVoiceActive();
 
-// On the cockpit page the orb sits dead-center; on the landing it offsets
-// right to make room for the hero copy (VoiceOrb's default).
-const orb = new VoiceOrb($("sceneStage"), { center: document.body.classList.contains("cockpit") });
+// The Artemis Core — the hero visualization. Still bound to `orb` because the
+// whole app talks to it through that name (and window.__orb); it is a drop-in
+// for the retired VoiceOrb, so renaming the binding would be pure churn.
+const orb = new ArtemisCore($("sceneStage"), { center: document.body.classList.contains("cockpit") });
 
 // Clickable skill moons: a click near a moon opens its info card. The stage
 // sits behind the HUD panels, so only clicks that reach it (the open middle
@@ -98,9 +103,144 @@ const orb = new VoiceOrb($("sceneStage"), { center: document.body.classList.cont
 })();
 window.__orb = orb;
 
+// ---- ActiveTaskIndicator: the one place a Core view-model reaches the DOM ----
+// The Core owns the canvas; this owns the accessible text line under it. Both
+// render the SAME derived view, so the picture and the words can never disagree
+// about what Artemis is doing.
+(function activeTaskIndicator() {
+  const el = $("coreTask");
+  if (!el || !orb.onView) return;
+  orb.onView((view) => {
+    const detail = view.detail && view.detail !== view.task ? view.detail : "";
+    el.textContent = detail ? view.task + " · " + detail : view.task;
+    el.dataset.state = view.state;
+    el.dataset.empty = view.state === "standby" ? "1" : "0";
+  });
+})();
+
 // The cockpit HUD (cockpit.js) listens on window.ArtemisHUD; on pages without
 // it every emit is a guarded no-op.
 const hud = (fn, ...a) => { try { window.ArtemisHUD && window.ArtemisHUD[fn] && window.ArtemisHUD[fn](...a); } catch (e) {} };
+
+// ---- presence bus (feeds the floating pill with REAL dashboard state) ------
+// The dashboard is the single source of truth; the pill only renders what we
+// publish here. We push the orb's actual state, active task, and live mic/TTS
+// amplitude — never an invented waveform — and receive the pill's quick-control
+// commands back over the same bus.
+// Presentation mode is runtime state, not just window dressing: in PILL mode
+// (native shell only) the dashboard window is hidden by design and the voice
+// runtime must keep running — the pill is the visible open-mic indicator.
+// voiceHidden() is the ONLY visibility question the voice paths may ask;
+// document.hidden alone would silence Artemis the moment the shell orders the
+// window out, which is exactly the bug this replaces.
+const inArtemisShell = /ArtemisShell/.test(navigator.userAgent);
+let presentationMode = "full";
+function voiceHidden() {
+  return voiceSuspended(document.hidden, presentationMode, inArtemisShell);
+}
+
+const presencePub = (() => {
+  let mode = "full";
+  let last = { state: "", task: "", capability: "", amplitude: -1 };
+  let latestView = null;
+  let pending = null;
+  // The orb eases cur.amp inside its render loop, which stops with the hidden
+  // window. Mirror the raw fed amplitude here (with its own decay) so the pill
+  // keeps seeing REAL levels while the dashboard is ordered out.
+  let fedAmp = 0;
+  const origFeed = orb.feed && orb.feed.bind(orb);
+  if (origFeed) {
+    orb.feed = (a) => {
+      const v = Math.max(0, Math.min(1, Number(a) || 0));
+      if (v > fedAmp) fedAmp = v;
+      origFeed(a);
+    };
+  }
+
+  function post(patch) {
+    try {
+      fetch("/api/presence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      }).catch(() => {});
+    } catch (e) {}
+  }
+  function publish(patch) {
+    if (patch.mode) mode = patch.mode;
+    post({ mode, ...patch });
+  }
+  function setPending(obj) {
+    pending = obj; // { name, prompt } or null
+    post({ mode, pendingConfirm: pending });
+  }
+
+  if (orb.onView) orb.onView((view) => { latestView = view; });
+
+  // One lightweight loop: publish state/task changes immediately, and stream
+  // amplitude only while it moves (the server throttles further).
+  function tick() {
+    const view = latestView;
+    if (view) {
+      const state = view.state === "standby" ? "idle" : view.state;
+      const detail = view.detail && view.detail !== view.task ? view.detail : "";
+      const task = detail ? view.task + " · " + detail : (view.state === "standby" ? "" : view.task);
+      const capability = Number.isInteger(view.capability) && view.capability >= 0
+        ? (MOON_INFO[view.capability]?.title || "")
+        : "";
+      const eased = orb.cur ? orb.cur.amp : 0;
+      const amp = Math.min(1, Math.max(eased, fedAmp) * 1.7);
+      fedAmp *= 0.55; // decays here because the orb's own decay is rAF-bound
+      const active = state === "listening" || state === "speaking";
+      const patch = {};
+      if (state !== last.state) patch.state = last.state = state;
+      if (task !== last.task) patch.task = last.task = task || "";
+      if (capability !== last.capability) patch.capability = last.capability = capability;
+      if (active) { patch.amplitude = amp; patch.listening = state === "listening"; patch.speaking = state === "speaking"; }
+      else if (last.amplitude !== 0) { patch.amplitude = last.amplitude = 0; patch.listening = false; patch.speaking = false; }
+      if (Object.keys(patch).length) publish(patch);
+    }
+    setTimeout(tick, 180);
+  }
+  tick();
+
+  // Receive the pill's commands. The pill is presentation only — the actual
+  // action still runs through the dashboard's authoritative paths here.
+  function connect() {
+    const es = new EventSource("/api/presence/events");
+    es.addEventListener("state", (e) => {
+      let snap = {};
+      try { snap = JSON.parse(e.data); } catch (err) { return; }
+      if (snap.approvalState && snap.approvalState.confirmId) {
+        const id = snap.approvalState.confirmId;
+        if (!pendingConfirm || pendingConfirm.confirmId !== id) {
+          pendingConfirm = { confirmId: id, name: snap.approvalState.tool };
+          pendingConfirmPrompt = snap.approvalState.prompt || pendingConfirmPrompt;
+          syncConfirmToCore();
+        }
+      }
+    });
+    es.addEventListener("command", (e) => {
+      let cmd = "";
+      try { cmd = JSON.parse(e.data).command; } catch (err) {}
+      if (cmd === "cancel") {
+        try { window.ArtemisBargeIn && window.ArtemisBargeIn.interrupt(); } catch (err) {}
+        cancelPendingConfirmation();
+      }
+      else if (cmd === "mute") setAssistantMuted(true);
+      else if (cmd === "unmute") setAssistantMuted(false);
+      else if (cmd === "restore") setPresentationMode("full");
+      else if (cmd === "pill" || cmd === "background") setPresentationMode(cmd);
+      else if (cmd === "approve") { try { window.ArtemisConfirm && window.ArtemisConfirm(true); } catch (err) {} }
+      else if (cmd === "deny") { try { window.ArtemisConfirm && window.ArtemisConfirm(false); } catch (err) {} }
+    });
+    es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+  }
+  connect();
+
+  return { publish, setPending, getMode: () => mode };
+})();
+function publishPresence(patch) { presencePub.publish(patch); }
 
 // Mirror the orb's voice state onto the equalizer in the control dock so the
 // voice bars animate during LISTENING/SPEAKING. Wrapping setStatus catches
@@ -130,6 +270,11 @@ orb.setStatus = (s) => {
   if (active) startAmpBars();
   else stopAmpBars();
   hud("state", s); // the whole cockpit HUD choreographs with the voice state
+  // Broadcast the same state to anything that isn't the cockpit HUD. The music
+  // bed needs it to duck, and on about.html the HUD does not exist — hud() is a
+  // no-op there, so a listener that went through it would never hear a word.
+  document.body.dataset.aiState = s;
+  try { window.dispatchEvent(new CustomEvent("artemis-voice-state", { detail: s })); } catch (e) {}
 };
 
 const liveStatus = $("liveStatus");
@@ -151,6 +296,10 @@ function setLiveStatus(t) {
 // fully hands-free.
 let openPill = null;
 function openUrl(url, label) {
+  let parsed;
+  try { parsed = new URL(url, location.href); } catch (e) { return false; }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  url = parsed.href;
   let w = null;
   try { w = window.open(url, "_blank"); } catch (e) {}
   if (w) return true; // opened in a new tab — Artemis stays put
@@ -179,6 +328,50 @@ function showOpenPill(url, label) {
 
 // One consumer for browser actions, whether they came from a normal tool turn
 // or from the confirmation endpoint after an explicitly approved nudge.
+/**
+ * Clean shutdown, in the order that avoids stranding anything:
+ * stop taking work → disarm wake → release the microphone → stop speaking →
+ * fade the music → close the pill → ask the native shell to quit (which stops
+ * the Node server and dictation it owns via applicationWillTerminate).
+ *
+ * Outside the native shell there is no app to quit, so it stops at "quiet".
+ */
+let shuttingDown = false;
+async function shutdownArtemis() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try { window.__artemisShuttingDown = true; } catch (e) {}
+  hud("log", "status", "shutting down");
+
+  // 1. no new work, and no follow-up window reopening behind us
+  try { await abortFollowUp({ endConversation: true }); } catch (e) {}
+  conversationLive = false;
+
+  // 2 + 3. disarm wake and release the mic it holds
+  try { await stopLocalWake(); } catch (e) {}
+  try { if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; } } catch (e) {}
+  try { orb.stopAudio(); } catch (e) {}
+
+  // 4. stop speaking — but only AFTER the goodbye line has had its moment
+  const quiet = () => {
+    try { resetTtsPipe(); } catch (e) {}
+    try { if (ttsEl) { ttsEl.pause(); ttsEl.src = ""; } } catch (e) {}
+  };
+
+  // 5. fade the bed rather than cutting it
+  try { window.__music && window.__music.fadeOut && window.__music.fadeOut(); } catch (e) {}
+  try {
+    const bed = window.__pageMusic;
+    if (bed && !bed.paused) { bed.volume = 0; bed.pause(); }
+  } catch (e) {}
+
+  // Give the spoken "Shutting down." ~1.2s to land, then go.
+  setTimeout(() => {
+    quiet();
+    try { window.webkit.messageHandlers.artemisPresentation.postMessage("quit"); } catch (e) {}
+  }, 1200);
+}
+
 function applyClientActions(actions) {
   if (!Array.isArray(actions)) return;
   for (const action of actions) {
@@ -195,7 +388,27 @@ function applyClientActions(actions) {
         links: [{ title: action.label || action.url, url: action.url }]
       });
     }
+    if (action.type === "presentation" && action.mode) {
+      setPresentationMode(action.mode);
+    }
+    if (action.type === "shutdown") {
+      void shutdownArtemis();
+    }
   }
+}
+
+// Presentation: full dashboard / floating pill / background. The mode is shared
+// via the presence bus (so the pill knows) and handed to the native shell,
+// which owns the actual window show/hide. In a plain browser the shell bridge
+// is absent and the mode is still broadcast for any listener.
+function setPresentationMode(mode) {
+  presentationMode = String(mode || "full");
+  publishPresence({ mode: presentationMode });
+  try { window.webkit.messageHandlers.artemisPresentation.postMessage(String(presentationMode)); } catch (e) {}
+  try { window.dispatchEvent(new CustomEvent("artemis-presentation", { detail: presentationMode })); } catch (e) {}
+  // Mode changes can flip the voice policy WITHOUT a visibilitychange event
+  // (pill → background while the window stays hidden), so re-apply it here.
+  if (voiceHidden()) suspendHiddenVoice();
 }
 
 function addMsg(role, text, sources) {
@@ -204,7 +417,7 @@ function addMsg(role, text, sources) {
   row.className = "t-msg t-" + (role === "user" ? "user" : "artemis");
   const who = document.createElement("span");
   who.className = "t-who";
-  who.textContent = role === "user" ? "You" : "Evie";
+  who.textContent = role === "user" ? "You" : "Artemis";
   const bubble = document.createElement("div");
   bubble.className = "t-bubble";
   bubble.textContent = text;
@@ -235,12 +448,17 @@ let speaking = false;
 let ttsGeneration = 0;
 
 // Streaming TTS URL — the browser plays it progressively (first frames ~0.5s).
-// Voice values: "aura-*" → Deepgram; "eleven:<id>" → that ElevenLabs voice;
+// Voice values: "voicebox:<profile>" → a local Voicebox clone;
+// "aura-*" → Deepgram; "eleven:<id>" → that ElevenLabs voice;
 // "edge:<AzureVoiceName>" → free Edge neural voice (e.g. en-GB-SoniaNeural);
 // legacy "elevenlabs" → the server's default eleven voice.
 function ttsUrl(text) {
   const v = settings.voice || "";
-  const p = v.startsWith("eleven:")
+  const p = v.startsWith("voicebox:")
+    ? { text, provider: "voicebox", profile: v.slice(9) }
+    : v === "voicebox"
+      ? { text, provider: "voicebox" }
+    : v.startsWith("eleven:")
     ? { text, provider: "elevenlabs", voice: v.slice(7) }
     : v.startsWith("edge:")
       ? { text, provider: "edge", voice: v.slice(5) }
@@ -248,6 +466,11 @@ function ttsUrl(text) {
         ? { text, provider: "elevenlabs" }
         : { text, provider: "deepgram", voice: v };
   return "/api/tts?" + new URLSearchParams(p).toString();
+}
+
+function voiceboxVoiceSelected() {
+  const voice = String(settings.voice || "");
+  return voice === "voicebox" || voice.startsWith("voicebox:");
 }
 
 // ---- hands-free barge-in: interrupt Artemis just by speaking while she talks ----
@@ -350,7 +573,7 @@ async function speak(text) {
   pauseWakeForSpeech();
   orb.connectMediaElement(ttsEl); // route Artemis's voice into the orb's analyser
   orb.setStatus("speaking");
-  setLiveStatus("Evie is responding…  (Esc to stop)");
+  setLiveStatus("Artemis is responding…  (Esc to stop)");
   speaking = true;
   startBargeIn(generation);
   const settle = () => {
@@ -368,12 +591,27 @@ async function speak(text) {
   }
 }
 
+// The ONLY repairs the health system can ask this page to perform. An explicit
+// allowlist of two local actions: re-arm the listener we own, resume the audio
+// context we own. Nothing here can touch a permission, a process or a file.
+window.__artemisRecover = {
+  wake: () => { restoreWakeListening(); return true; },
+  audio: async () => {
+    const ctx = window.__orb && window.__orb.audioCtx;
+    if (ctx && ctx.state !== "running") { try { await ctx.resume(); } catch (e) { return false; } }
+    return true;
+  }
+};
+// Whether the wake word is SUPPOSED to be armed — the difference between
+// "switched off" (DISABLED) and "stopped working" (FAILED).
+Object.defineProperty(window, "__wakeExpected", { get: () => wakeOn && !voiceHidden(), configurable: true });
+
 function restoreWakeListening() {
   if (meetingVoiceActive()) {
     showMeetingPhaseUi(meetingSession);
     return;
   }
-  if (document.hidden) {
+  if (voiceHidden()) {
     window.__wakeLive = false;
     return;
   }
@@ -401,13 +639,13 @@ async function abortFollowUp({ endConversation = false, resumeWakeAfter = false 
     await stopLocalWake();
   }
   if (resumeWakeAfter && wakeOn && !meetingVoiceActive() &&
-      !document.hidden && !recording && !talkStarting && !speaking && !busy) {
+      !voiceHidden() && !recording && !talkStarting && !speaking && !busy) {
     restoreWakeListening();
   }
 }
 
 function canStartFollowUp() {
-  return wakeOn && conversationLive && followUpEnabled && !document.hidden &&
+  return wakeOn && conversationLive && followUpEnabled && !voiceHidden() &&
     !recording && !talkStarting && !busy && !speaking &&
     !ttsPlaying && !ttsQueue.length && !wakeCapturing && !followUpInFlight &&
     !meetingVoiceActive() && localWakeRunning();
@@ -426,8 +664,8 @@ async function afterSpeak() {
   orb.stopAudio();
   micStream = null; // stopAudio killed the tracks; resumeWake must reacquire
   if (followUpInFlight || followUpStarting) return;
-  if (!wakeOn || !conversationLive || !followUpEnabled || document.hidden || busy) {
-    if (conversationLive && (!wakeOn || !followUpEnabled || document.hidden || busy)) conversationLive = false;
+  if (!wakeOn || !conversationLive || !followUpEnabled || voiceHidden() || busy) {
+    if (conversationLive && (!wakeOn || !followUpEnabled || voiceHidden() || busy)) conversationLive = false;
     restoreWakeListening();
     return;
   }
@@ -452,19 +690,27 @@ async function afterSpeak() {
 
 // ---- persistence + settings ----
 const CONV_KEY = "artemisConversationV1";
-const SETTINGS_KEY = "artemisSettingsV2";
+const SETTINGS_KEY = "artemisSettingsV3";
+const LEGACY_SETTINGS_KEY = "artemisSettingsV2";
 let settings = loadSettings();
 function loadSettings() {
   try {
-    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-    return { voice: s.voice || "aura-2-thalia-en", tone: s.tone || "balanced" }; // natural Aura-2
+    const current = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+    if (current) {
+      return { voice: current.voice || "voicebox", tone: current.tone || "balanced" };
+    }
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_SETTINGS_KEY) || "{}");
+    // One-time V2 → V3 migration intentionally selects the locally cloned voice.
+    // The old tone survives, and every previous provider remains in the picker.
+    return { voice: "voicebox", tone: legacy.tone || "balanced" };
   } catch (e) {
-    return { voice: "aura-2-thalia-en", tone: "balanced" };
+    return { voice: "voicebox", tone: "balanced" };
   }
 }
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
 }
+saveSettings();
 function saveConversation() {
   try { localStorage.setItem(CONV_KEY, JSON.stringify(conversation.slice(-20))); } catch (e) {}
 }
@@ -491,10 +737,10 @@ function restoreConversation() {
 let thinkTimer = null;
 function startThinking() {
   let n = 0;
-  setLiveStatus("Evie is thinking");
+  setLiveStatus("Artemis is thinking");
   thinkTimer = setInterval(() => {
     n = (n + 1) % 4;
-    setLiveStatus("Evie is thinking" + ".".repeat(n));
+    setLiveStatus("Artemis is thinking" + ".".repeat(n));
   }, 420);
 }
 function stopThinking() {
@@ -517,8 +763,7 @@ function handleOpenIntent(text) {
   if (!r) return false;
   // new tab if pop-ups are allowed, else the one-tap Open pill (never this tab)
   const opened = openUrl(r.url, r.label);
-  const target = r.kind === "search" ? `a Google search for ${r.term}` : r.label;
-  const phrase = opened ? `Opening ${target}.` : `My pop-up was blocked — tap Open and I'll bring up ${target}.`;
+  const phrase = opened ? `Opening ${r.label}.` : `My pop-up was blocked — tap Open and I'll bring up ${r.label}.`;
   addMsg("user", text);
   addMsg("artemis", phrase, [{ title: `Open ${r.label}`, url: r.url }]);
   conversation.push({ role: "user", content: text });
@@ -532,10 +777,27 @@ function handleOpenIntent(text) {
 // ---- confirm-before-act: intercept the user's yes/no for a pending action ----
 let pendingConfirm = null;
 let confirmCompletionGeneration = 0;
+// WAITING is a real Core state: while a yes/no gate is open, that IS what
+// Artemis is doing. Called after every assignment rather than replacing them —
+// the confirm gate is delicate and this stays purely additive. setPendingConfirm
+// early-returns when nothing changed, so calling it liberally is free.
+function syncConfirmToCore() {
+  if (orb.setPendingConfirm) orb.setPendingConfirm(!!pendingConfirm);
+  // Mirror the approval to the floating pill so it can surface Allow/Deny. The
+  // pill is presentation only; the real gate stays here (ArtemisConfirm).
+  try {
+    presencePub.setPending(pendingConfirm
+      ? { name: pendingConfirm.name, prompt: pendingConfirmPrompt || pendingConfirm.name }
+      : null);
+  } catch (e) {}
+}
+let pendingConfirmPrompt = "";
 function cancelPendingConfirmation() {
   if (!pendingConfirm) return;
   const pendingAction = pendingConfirm;
   pendingConfirm = null;
+  pendingConfirmPrompt = "";
+  syncConfirmToCore();
   fetch("/api/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -549,11 +811,12 @@ function handleConfirmIfPending(text) {
   // "shall I move these to trash?" previously counted as ambiguous, cancelled
   // the confirmation, and re-ran the command — an infinite loop from the
   // user's side.
-  const decision = confirmationDecision(text);
+  const pa = pendingConfirm;
+  const decision = confirmationDecision(text, pa.name);
   const yes = decision === "yes";
   const no = decision === "no";
-  const pa = pendingConfirm;
   pendingConfirm = null;
+  syncConfirmToCore();
   if (!yes && !no) {
     // Ambiguous is NOT consent and NOT refusal — and it must not cancel.
     // The old path cancelled the pending action and re-ran the words as a
@@ -564,6 +827,7 @@ function handleConfirmIfPending(text) {
     if (!pa.ambiguousOnce) {
       pa.ambiguousOnce = true;
       pendingConfirm = pa;
+      syncConfirmToCore();
       addMsg("user", text);
       const reprompt = "Just to be safe — is that a yes or a no?";
       addMsg("artemis", reprompt);
@@ -635,8 +899,9 @@ function handleConfirmIfPending(text) {
 
 // Cockpit confirm buttons ([EXECUTE]/[ABORT] on the CONFIRM card) resolve the
 // SAME pending action as the spoken yes/no — one gate, two inputs.
-window.ArtemisConfirm = (yes) => {
+window.ArtemisConfirm = (yes, confirmId) => {
   if (!pendingConfirm) return false;
+  if (confirmId && pendingConfirm.confirmId && pendingConfirm.confirmId !== confirmId) return false;
   hud("log", "you", yes ? "confirm (button)" : "abort (button)");
   return handleConfirmIfPending(yes ? "yes" : "no");
 };
@@ -650,7 +915,7 @@ function addAssistantStreaming() {
     row.className = "t-msg t-artemis";
     const who = document.createElement("span");
     who.className = "t-who";
-    who.textContent = "Evie";
+    who.textContent = "Artemis";
     bubble = document.createElement("div");
     bubble.className = "t-bubble";
     row.appendChild(who);
@@ -703,6 +968,13 @@ function resetTtsPipe() {
 function feedTts(t) {
   if (meetingVoiceActive()) return;
   sentenceBuf += t;
+  if (voiceboxVoiceSelected()) {
+    const split = takeVoiceboxChunks(sentenceBuf, { firstChunkPending });
+    sentenceBuf = split.remainder;
+    firstChunkPending = split.firstChunkPending;
+    for (const chunk of split.chunks) enqueueTts(chunk);
+    return;
+  }
   let m;
   while ((m = sentenceBuf.match(/^([\s\S]*?[.!?…]+["')\]]?)(\s|$)/))) {
     const sent = m[1] + (m[2] || "");
@@ -730,6 +1002,13 @@ function feedTts(t) {
 }
 function flushTts() {
   if (meetingVoiceActive()) { sentenceBuf = ""; return; }
+  if (voiceboxVoiceSelected()) {
+    const split = takeVoiceboxChunks(sentenceBuf, { firstChunkPending, flush: true });
+    sentenceBuf = split.remainder;
+    firstChunkPending = split.firstChunkPending;
+    for (const chunk of split.chunks) enqueueTts(chunk);
+    return;
+  }
   const r = sentenceBuf.trim();
   sentenceBuf = "";
   if (r) enqueueTts(r);
@@ -810,6 +1089,8 @@ if (cmdForm && cmdInput) {
     if (!t) return;
     cmdInput.value = "";
     orb._ensureAudio(); // Enter is a gesture — unlocks audio for the spoken reply
+    if (handleConfirmIfPending(t)) return;
+    if (recording || talkStarting) return;
     ask(t);
   });
   // "/" focuses the command line from anywhere (unless already typing somewhere)
@@ -882,6 +1163,14 @@ async function ask(text) {
   // means SILENT. Speaking "let me check" on a turn that turns out to execute
   // nothing is exactly how she used to sound busy while doing nothing.
   let intentClass = null;
+  // The shared UI state (alive.js) tracks turns through these events — same
+  // validated SSE lifecycle, no second stream. Every event carries this
+  // stream's own key so a late event from an aborted turn can never be
+  // attributed to the newer one.
+  const turnKey = (window.__artemisTurnKey = (window.__artemisTurnKey || 0) + 1);
+  window.dispatchEvent(new CustomEvent("artemis-turn", { detail: { phase: "begin", key: turnKey } }));
+  const turnEvent = (event, data) =>
+    window.dispatchEvent(new CustomEvent("artemis-turn", { detail: { phase: "event", key: turnKey, event, data } }));
   const execTimer = setTimeout(() => {
     if (!busy || gotToken || !ownsTurn()) return;
     hud("state", "executing");
@@ -927,12 +1216,19 @@ async function ask(text) {
         if (event === "intent_pending") {
           intentClass = data.intent || null;
           hud("log", "status", "intent: " + intentClass);
+          turnEvent(event, data);
+        } else if (event === "interpreting") {
+          // The contextual interpreter is resolving the utterance against the
+          // live screen — show the thought, don't speak it.
+          hud("log", "status", "understanding…");
+          setLiveStatus("Understanding…");
+          turnEvent(event, data);
         } else if (event === "tool") {
           hud("tool", data);
           orb.toolEvent(data);
           // The dashboard reuses the exact validated SSE lifecycle that drives
           // the orb; it never opens a second stream or guesses that a tool ran.
-          window.dispatchEvent(new CustomEvent("artemis-tool", { detail: data }));
+          window.dispatchEvent(new CustomEvent("artemis-tool", { detail: { ...data, turnKey } }));
         } else if (event === "mail_taint") {
           // Monotonic within the turn: provenance must survive even if the
           // stream drops before terminal metadata.
@@ -945,6 +1241,7 @@ async function ask(text) {
             clearTimeout(execTimer);
             const ttfw = performance.now() - t0;
             hud("ttfw", ttfw); // real, measured, this turn
+            turnEvent("token", {}); // first token only — the state cares, not the text
             // Share it with the server so the HUD gauge and the logs quote the
             // same number instead of each keeping a private one.
             fetch("/api/telemetry/ttfw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ms: ttfw }) }).catch(() => {});
@@ -961,7 +1258,9 @@ async function ask(text) {
           clientActions = data.clientActions || null;
           toolsUsed = data.toolsUsed || null;
           mailUntrusted = mailUntrusted || data.mailUntrusted === true;
+          turnEvent(event, data);
         } else if (event === "error") {
+          turnEvent(event, data);
           setLiveStatus(data.error || "Chat failed.");
           hud("state", "error");
           hud("log", "error", data.error || "chat failed");
@@ -997,9 +1296,11 @@ async function ask(text) {
     }
     if (pendingAction) {
       pendingConfirm = pendingAction;
+      pendingConfirmPrompt = replyText || pendingAction.name;
+      syncConfirmToCore();
       setLiveStatus("Say “yes” to confirm, or “no” to cancel.");
       hud("log", "confirm", "awaiting your yes / no");
-      hud("context", { title: "CONFIRM REQUIRED", lines: [replyText || pendingAction.name], confirm: true });
+      hud("context", { title: "CONFIRM REQUIRED", lines: [replyText || pendingAction.name], confirm: true, confirmId: pendingAction.confirmId });
     }
     // execute anything Artemis chose to open (maps location, a site, etc.)
     // + render structured tool panels (e.g. the inbox) as context cards
@@ -1021,6 +1322,9 @@ async function ask(text) {
   } finally {
     clearTimeout(timer);
     clearTimeout(execTimer);
+    // The shared UI state must see every turn end — including fetch failures
+    // and aborts that never produced a server `done`. Idempotent by design.
+    turnEvent("done", {});
     if (currentAbort === turnAbort) {
       currentAbort = null;
       busy = false;
@@ -1034,8 +1338,22 @@ let chunks = [];
 let micStream = null;
 let talkMeetingGeneration = 0;
 
+let assistantMuted = false;
+function setAssistantMuted(on) {
+  assistantMuted = !!on;
+  if (assistantMuted) {
+    if (recording) stopTalk();
+    pauseWakeForSpeech();
+    setLiveStatus("Muted.");
+  } else if (wakeOn) {
+    void resumeWake();
+    setLiveStatus("");
+  }
+  try { presencePub.publish({ muted: assistantMuted }); } catch (e) {}
+}
+
 async function startTalk({ suppressClosingAck = false } = {}) {
-  if (busy || recording || talkStarting || meetingVoiceActive()) return;
+  if (assistantMuted || busy || recording || talkStarting || meetingVoiceActive()) return;
   wakeStartGeneration++;
   talkStarting = true;
   const turnMeetingGeneration = meetingGeneration;
@@ -1073,6 +1391,7 @@ async function startTalk({ suppressClosingAck = false } = {}) {
     talkStarting = false;
     talkSuppressClosingAck = false;
     if (turnMeetingGeneration !== meetingGeneration) return;
+    window.__micDenied = true;
     setLiveStatus("Microphone permission denied.");
     restoreWakeListening();
     return;
@@ -1157,6 +1476,10 @@ async function openLiveStt() {
         hud("live", shown);
         setLiveStatus("“" + (shown.length > 90 ? "…" + shown.slice(-87) : shown) + "”");
       }
+      if (m.speechFinal && liveDoneResolve) {
+        liveDoneResolve(liveFinal.trim());
+        liveDoneResolve = null;
+      }
     };
     eventSource.onerror = () => {}; // relay hiccup → batch fallback still runs
   } catch (e) { /* no live transcript this turn — batch handles it */ }
@@ -1184,11 +1507,79 @@ function closeLiveStt() {
     // don't hold the turn hostage: Deepgram flushes finals fast or not at all
     setTimeout(() => {
       if (liveDoneResolve) { liveDoneResolve(liveFinal.trim()); liveDoneResolve = null; }
-    }, 1200);
+    }, 700);
   }).finally(() => {
     if (liveEs) { try { liveEs.close(); } catch (e) {} liveEs = null; }
     hud("liveDone");
   });
+}
+
+// ---- speech-to-text transport ----------------------------------------------
+// One audio contract for BOTH providers: 16 kHz mono signed-16-bit PCM. The
+// browser already has the decoder, so the single decode/resample happens here
+// and neither the local engine nor Deepgram needs a transcode. Web Audio's
+// OfflineAudioContext works with the network down, which is the whole point.
+let __sttStatus = null;
+let __sttStatusAt = 0;
+async function sttStatus() {
+  if (__sttStatus && Date.now() - __sttStatusAt < 15000) return __sttStatus;
+  try {
+    const r = await fetch("/api/stt/status", { cache: "no-store" });
+    if (r.ok) { __sttStatus = await r.json(); __sttStatusAt = Date.now(); }
+  } catch (e) { /* keep the last known answer */ }
+  return __sttStatus;
+}
+
+async function blobToPcm16(blob, targetRate = 16000) {
+  const bytes = await blob.arrayBuffer();
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const decodeCtx = new Ctx();
+  let decoded;
+  try {
+    decoded = await decodeCtx.decodeAudioData(bytes.slice(0));
+  } finally {
+    decodeCtx.close().catch(() => {});
+  }
+  const frames = Math.max(1, Math.round(decoded.duration * targetRate));
+  const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const off = new OfflineCtx(1, frames, targetRate);   // mono, resampled once
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start(0);
+  const rendered = await off.startRendering();
+  const chan = rendered.getChannelData(0);
+  const pcm = new Int16Array(chan.length);
+  for (let i = 0; i < chan.length; i += 1) {
+    const v = Math.max(-1, Math.min(1, chan[i]));
+    pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+  }
+  return pcm.buffer;
+}
+
+/** POST recorded audio to STT in whatever format the routed provider wants. */
+async function postSttAudio(blob, type) {
+  const status = await sttStatus();
+  if (status && status.provider === null) {
+    return { error: status.message || "No speech provider available.", transcript: "" };
+  }
+  if (status && status.wantsPcm) {
+    try {
+      const pcm = await blobToPcm16(blob, status.sampleRate || 16000);
+      const res = await fetch("/api/stt", {
+        method: "POST",
+        headers: { "Content-Type": "audio/pcm;rate=" + (status.sampleRate || 16000) },
+        body: pcm
+      });
+      return await res.json();
+    } catch (e) {
+      // Decoding failed (odd codec). In hybrid the compressed body still works;
+      // in local-only it cannot, and the server says so honestly.
+      if (status.cloudForbidden) return { error: "I couldn't transcribe that locally. Try again.", transcript: "" };
+    }
+  }
+  const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": type }, body: blob });
+  return await res.json();
 }
 
 async function onTalkStop() {
@@ -1232,11 +1623,12 @@ async function onTalkStop() {
   }
   setLiveStatus("Transcribing…");
   try {
-    const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": type }, body: blob });
-    const data = await res.json();
+    const data = await postSttAudio(blob, type);
     if (turnMeetingGeneration !== meetingGeneration) return;
+    // Local and cloud transcripts enter the SAME dispatch — offline voice keeps
+    // the full contextual/permission runtime, never a reduced command set.
     if (!dispatchUtterance(data.transcript, { suppressClosingAck })) {
-      setLiveStatus("Didn't catch that — try again.");
+      setLiveStatus(data.error || "Didn't catch that — try again.");
       afterSpeak();
     }
   } catch (e) {
@@ -1416,7 +1808,7 @@ let wakeWatchdog = 0;
 function safeStartRec() {
   if (!wakeRec || wakeRunning || wakeRecStarting ||
       wakeVizStarting || !wakeOn || speaking || busy ||
-      document.hidden ||
+      voiceHidden() ||
       meetingVoiceActive() || localWakeRunning()) return;
   try {
     wakeRecStartGeneration = wakeStartGeneration;
@@ -1434,11 +1826,11 @@ function safeStartRec() {
 function startWakeWatchdog() {
   if (wakeWatchdog) return;
   wakeWatchdog = setInterval(() => {
-    if (wakeOn && !document.hidden && !wakeRunning && !speaking && !busy &&
+    if (wakeOn && !voiceHidden() && !wakeRunning && !speaking && !busy &&
         !meetingVoiceActive() && !localWakeRunning()) safeStartRec();
     // keep the live indicator honest
     if (wakeOn) {
-      window.__wakeLive = !document.hidden && !meetingVoiceActive() &&
+      window.__wakeLive = !voiceHidden() && !meetingVoiceActive() &&
         ((localWakeRunning() && !speaking && !busy) ||
          (wakeRunning && !speaking && !busy));
     }
@@ -1873,7 +2265,7 @@ async function finalizeMeetingCapture(session) {
 
   if (session.stopPromise) await session.stopPromise;
   micToggle.classList.remove("recording");
-  micToggle.setAttribute("aria-label", session.micAriaLabel || "Talk to Evie");
+  micToggle.setAttribute("aria-label", session.micAriaLabel || "Talk to Artemis");
   orb.setStatus("thinking");
   setLiveStatus("Structuring and saving meeting notes…");
 
@@ -1913,11 +2305,14 @@ async function finalizeMeetingCapture(session) {
   conversationLive = !!groupedPending;
   if (groupedPending) {
     pendingConfirm = groupedPending;
+    pendingConfirmPrompt = "Set the grouped meeting reminders?";
+    syncConfirmToCore();
     hud("log", "confirm", "meeting reminders awaiting your yes / no");
     hud("context", {
       title: "CONFIRM REQUIRED",
       lines: ["Set the grouped meeting reminders?"],
       confirm: true,
+      confirmId: groupedPending.confirmId
     });
   }
   addMsg("artemis", reply);
@@ -1926,8 +2321,8 @@ async function finalizeMeetingCapture(session) {
     deferredMeetingReply = reply;
     orb.setStatus("idle");
     setLiveStatus(groupedPending
-      ? "Meeting notes saved — return to Evie to confirm the reminders."
-      : "Meeting capture finished — return to Evie for details.");
+      ? "Meeting notes saved — return to Artemis to confirm the reminders."
+      : "Meeting capture finished — return to Artemis for details.");
     return;
   }
   orb._ensureAudio();
@@ -1982,7 +2377,7 @@ function beginMeetingCapture() {
     return false;
   }
   if (document.hidden) {
-    hud("log", "error", "notes: open the Evie tab before recording");
+    hud("log", "error", "notes: open the Artemis tab before recording");
     return false;
   }
 
@@ -2095,13 +2490,22 @@ function dispatchUtterance(text, { suppressClosingAck = false } = {}) {
 // fired — so nothing you said is ever lost to a mic handoff. The WAV goes to
 // batch STT (the reliable path); no MediaRecorder, no chunk streaming.
 let wakeCapturing = false;
-async function onLocalWake() {
+async function onLocalWake(ev) {
+  if (ev && ev.error) {
+    setLiveStatus("Wake audio stalled.");
+    return;
+  }
+  if (assistantMuted) return;
   if (recording || talkStarting || busy || wakeCapturing ||
       followUpInFlight || meetingVoiceActive()) return; // already handling a turn
   const turnMeetingGeneration = meetingGeneration;
   const interruptedTts = speaking || ttsPlaying || ttsQueue.length > 0;
   if (interruptedTts) window.ArtemisBargeIn.interrupt(); // she was talking → interrupt
   wakeCapturing = true;
+  // The bed drops to the capture level ONLY here — after the wake word fired
+  // and while her command is actually being recorded. Merely being armed is
+  // the resting state and must stay at full level.
+  try { window.dispatchEvent(new CustomEvent("artemis-voice-state", { detail: "capturing" })); } catch (e) {}
   playEarcon();
   orb.feed(0.6);
   orb.setStatus("listening");
@@ -2127,12 +2531,13 @@ async function onLocalWake() {
     afterSpeak();
   } finally {
     wakeCapturing = false;
+    try { window.dispatchEvent(new CustomEvent("artemis-voice-state", { detail: "listening" })); } catch (e) {}
   }
 }
 
 function followUpStillCurrent(generation) {
   return generation === followUpGeneration && wakeOn && conversationLive &&
-    followUpEnabled && !document.hidden && !recording && !talkStarting &&
+    followUpEnabled && !voiceHidden() && !recording && !talkStarting &&
     !busy && !speaking && !meetingVoiceActive() && localWakeRunning();
 }
 
@@ -2224,7 +2629,7 @@ async function startWakeLocal(
   expectedWakeGeneration = wakeStartGeneration,
   expectedMeetingGeneration = meetingGeneration
 ) {
-  if (document.hidden || meetingVoiceActive()) return false;
+  if (voiceHidden() || meetingVoiceActive()) return false;
   wakeStarting = true;
   orb._ensureAudio();
   const ok = await startLocalWake(localWakeCfg, onLocalWake);
@@ -2255,7 +2660,7 @@ async function acquireBrowserWakeViz({ allowWakeOff = false } = {}) {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     if (turnMeetingGeneration !== meetingGeneration ||
         turnWakeStartGeneration !== wakeStartGeneration ||
-        document.hidden || meetingVoiceActive() || localWakeRunning() ||
+        voiceHidden() || meetingVoiceActive() || localWakeRunning() ||
         speaking || busy || recording || talkStarting ||
         (!allowWakeOff && !wakeOn)) {
       return false;
@@ -2279,7 +2684,7 @@ async function acquireBrowserWakeViz({ allowWakeOff = false } = {}) {
 }
 
 async function startWake({ resumeBrowser = false } = {}) {
-  if (document.hidden || (!resumeBrowser && wakeOn) ||
+  if (voiceHidden() || (!resumeBrowser && wakeOn) ||
       wakeStarting || meetingVoiceActive()) return false;
   const turnMeetingGeneration = meetingGeneration;
   const turnWakeStartGeneration = wakeStartGeneration;
@@ -2306,7 +2711,7 @@ async function startWake({ resumeBrowser = false } = {}) {
   await acquireBrowserWakeViz({ allowWakeOff: true });
   if (turnWakeStartGeneration !== wakeStartGeneration ||
       turnMeetingGeneration !== meetingGeneration ||
-      document.hidden || meetingVoiceActive() ||
+      voiceHidden() || meetingVoiceActive() ||
       speaking || busy || recording || talkStarting) {
     wakeStarting = false;
     return false;
@@ -2321,7 +2726,7 @@ async function startWake({ resumeBrowser = false } = {}) {
     if (wakeRec !== recognizer ||
         wakeRecStartGeneration !== wakeStartGeneration ||
         wakeRecMeetingGeneration !== meetingGeneration ||
-        speaking || busy || document.hidden) return;
+        speaking || busy || voiceHidden()) return;
     for (let i = e.resultIndex; i < e.results.length; i++) {
       if (e.results[i].isFinal) handleWake(e.results[i][0].transcript);
     }
@@ -2335,7 +2740,7 @@ async function startWake({ resumeBrowser = false } = {}) {
     wakeRunning = true;
     if (wakeRecStartGeneration !== wakeStartGeneration ||
         wakeRecMeetingGeneration !== meetingGeneration ||
-        !wakeOn || document.hidden ||
+        !wakeOn || voiceHidden() ||
         meetingVoiceActive() || localWakeRunning()) {
       window.__wakeLive = false;
       // safeStartRec may have run one tick before meeting/local ownership was
@@ -2371,7 +2776,7 @@ async function startWake({ resumeBrowser = false } = {}) {
     window.__wakeLive = false;
     // restart shortly (a tiny delay avoids Chrome's "already started" throttle);
     // the watchdog is the backstop if this restart is dropped.
-    if (wakeOn && !document.hidden && !speaking && !busy &&
+    if (wakeOn && !voiceHidden() && !speaking && !busy &&
         !meetingVoiceActive() && !localWakeRunning()) {
       setTimeout(safeStartRec, 300);
     }
@@ -2475,7 +2880,7 @@ function pauseWakeForSpeech() {
   }
 }
 async function resumeWake() {
-  if (!wakeOn || document.hidden || meetingVoiceActive()) return false;
+  if (!wakeOn || voiceHidden() || meetingVoiceActive()) return false;
   const turnWakeStartGeneration = wakeStartGeneration;
   const turnMeetingGeneration = meetingGeneration;
   if (localWakeRunning()) { resumeLocalWake(); window.__wakeLive = true; return true; } // local engine: re-arm detection
@@ -2526,7 +2931,7 @@ if (talkBtn) talkBtn.addEventListener("click", startTalkGesture);
 // A function, not a constant: the wake phrase is only known after the manifest
 // resolves, so this must be built at speak time.
 const explainerText = () =>
-  `I'm Evie — your voice-first AI. Tap the mic and talk, or flip on the wake word and say “${wakePhrase()}”. ` +
+  `I'm Artemis — your voice-first AI. Tap the mic and talk, or flip on the wake word and say “${wakePhrase()}”. ` +
   "I reply in real time, and you can pick my voice and how blunt I am. " +
   "I search the web and read pages to answer with real sources, dig through Hacker News or GitHub when you want to go deeper, and open any site for you by voice. " +
   "I keep notes, remember your contacts, and can act on your behalf — drafting and sending messages — but anything that actually sends, pays, or changes something, I always confirm with you first. " +
@@ -2906,29 +3311,37 @@ const pauseIo = new IntersectionObserver(
 );
 document.querySelectorAll(".features, .team, .demo").forEach((el) => pauseIo.observe(el));
 
+// Tear the voice stack down when no visible surface can vouch for an open
+// microphone. Shared by the visibility handler and presentation-mode changes.
+function suspendHiddenVoice() {
+  conversationLive = false;
+  wakeStartGeneration++;
+  void abortFollowUp({ endConversation: true, resumeWakeAfter: false });
+  stopBargeIn();
+  if (localWakeRunning() || wakeStarting) void stopLocalWake();
+  if (wakeRec) {
+    try { wakeRec.stop(); } catch (e) {}
+  }
+  if (micStream) {
+    try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    micStream = null;
+  }
+  window.__wakeLive = false;
+}
+
 // freeze every CSS animation while the tab is hidden (the orb's rAF already pauses)
 document.addEventListener("visibilitychange", () => {
   document.body.classList.toggle("tab-hidden", document.hidden);
   if (document.hidden && meetingVoiceActive()) {
-    // The in-page orb/status can no longer make an open mic visible. Close it
-    // and save everything captured so far rather than running a hidden hot mic.
+    // The in-page orb/status can no longer make an open mic visible — the pill
+    // has no meeting UI — so this closes and saves regardless of mode.
     requestMeetingStop(meetingSession, "page hidden");
     return;
   }
   if (document.hidden) {
-    conversationLive = false;
-    wakeStartGeneration++;
-    void abortFollowUp({ endConversation: true, resumeWakeAfter: false });
-    stopBargeIn();
-    if (localWakeRunning() || wakeStarting) void stopLocalWake();
-    if (wakeRec) {
-      try { wakeRec.stop(); } catch (e) {}
-    }
-    if (micStream) {
-      try { micStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
-      micStream = null;
-    }
-    window.__wakeLive = false;
+    // PILL mode: the window is hidden by design and the pill stays on screen,
+    // so the voice runtime keeps running. Every other hidden case suspends.
+    if (voiceHidden()) suspendHiddenVoice();
     return;
   }
   if (!document.hidden && !meetingVoiceActive() && deferredMeetingReply) {
@@ -3099,3 +3512,9 @@ fetch("/api/status")
 document.addEventListener("visibilitychange", () => {
   document.documentElement.classList.toggle("hud-paused", document.hidden);
 });
+
+// Self-diagnostics: report what only this page can see (wake listener, audio
+// engine, pill), and accept the two local repairs registered above. Health
+// announcements go through the ONE existing voice path — never a second one.
+window.__artemisSay = (text) => speak(text);
+startHealthClient();

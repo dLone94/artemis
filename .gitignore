@@ -1,21 +1,16 @@
-.env
-.data/
-node_modules/
 .DS_Store
-*.log
-
-# user-supplied background music (e.g. your own copy of a song) — never committed
-assets/music.*
-
-# your personal Porcupine wake-word keyword (from the Picovoice console)
-
-# vendored wake engine binaries (re-fetchable; keep git lean)
-public/oww/*.wasm
-public/oww/*.onnx
-public/oww/ort.min.js
-
-# ad-hoc evaluation reports (the committed baseline lives in eval/baseline-*.json)
-eval/results/
-reference.jpeg
-current.png
-aetune-reference.png
+.env
+.env.*
+*.pem
+*.key
+node_modules/
+venv/
+.venv/
+__pycache__/
+.idea/
+.vscode/
+dist/
+build/
+*.gguf
+*.bin
+models/

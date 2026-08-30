@@ -171,6 +171,33 @@ export function fakeToolResult(name, args = {}) {
       return { ok: true, content: "Updated that Money Map answer (synthetic). Nothing was written." };
     case "finish_workout":
       return { ok: true, content: "Workout finished (synthetic) — 2 exercises, 5 sets in 30 minutes. Nothing was written." };
+    case "read_screen":
+      return {
+        ok: true,
+        content:
+          "Foreground app: Terminal\nWindow: artemis — npm test\nSource: synthetic\n---\n" +
+          "npm test\n… 151 assertions passed.\n(Synthetic screen content — evaluation mode, nothing was read.)"
+      };
+    case "run_command":
+      return { ok: true, content: `(Simulated) ran \`${String(args.command || "")}\` — evaluation mode, nothing was executed.` };
+    case "computer_control":
+      return args.action === "open_terminal"
+        ? { ok: true, content: "(Simulated) Terminal is open — evaluation mode, nothing was launched." }
+        : args.action === "open_application"
+          ? { ok: true, content: `(Simulated) ${String(args.name || "the app")}'s open — evaluation mode, nothing was launched.` }
+          : args.action === "type_text"
+          ? { ok: true, content: `(Simulated) typed \`${String(args.text || "")}\` in Terminal without running it — evaluation mode, nothing was typed.` }
+          : { ok: true, content: `(Simulated) ran \`${String(args.text || "")}\` in Terminal — evaluation mode, nothing was typed.` };
+    case "gym_session":
+      return { ok: true, content: "Gym session updated (synthetic). Nothing was logged." };
+    case "set_meeting_reminders":
+      return { ok: true, content: "Meeting reminders set (synthetic). Nothing was scheduled." };
+    case "set_presentation":
+      return {
+        ok: true,
+        content: `(Simulated) switching to ${String(args.mode || "full")}.`,
+        clientAction: { type: "presentation", mode: String(args.mode || "full") }
+      };
 
     default:
       return { ok: false, content: "Unknown tool: " + name };

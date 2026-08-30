@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARTEMIS · State Preview</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="alive.css">
+<link rel="stylesheet" href="v3.css">
+<style>
+  /* Dev-only preview: every dashboard and pill state, driven by SIMULATED
+     ArtemisUIState snapshots. Nothing here touches production data — no
+     presence POSTs, no chat calls; the pill iframe runs pill.html with a
+     ?preview=1 flag it simply ignores (it will show live state if the server
+     is up, which is also useful). */
+  body {
+    margin: 0; padding: 28px;
+    background: var(--bg); color: var(--text-bright);
+    font-family: var(--font-body);
+  }
+  h1 { font-family: var(--font-display); font-size: 20px; letter-spacing: 0.06em; }
+  h2 { font-size: 12px; letter-spacing: 0.16em; color: var(--text-muted); margin: 26px 0 10px; }
+  .states { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
+  .states button {
+    font: 600 11px/1 var(--font-mono);
+    letter-spacing: 0.1em;
+    padding: 8px 12px; border-radius: var(--radius-pill);
+    background: var(--card); color: var(--text-bright);
+    border: 1px solid var(--card-border); cursor: pointer;
+  }
+  .states button[aria-pressed="true"] { border-color: var(--teal); color: #a8f4ff; }
+
+  /* a miniature v2 stage so alive.css activity states are visible standalone */
+  .mini-map { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; max-width: 1080px; }
+  .mini-map .v2-panel {
+    border: 1px solid var(--card-border); border-radius: var(--radius);
+    min-height: 120px; padding: 10px;
+  }
+  .v2-panel-heading h2 { margin: 0 0 8px; color: var(--text-muted); }
+  .v2-panel-content { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+  .core-task { margin: 18px 0 6px; }
+  .hud-state { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.2em; color: var(--text-muted); }
+  .hud-state i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--teal); margin-right: 8px; }
+
+  .preview-focus { display: grid; place-items: center; min-height: 310px; margin: 8px 0 18px; }
+  .preview-focus .v2-hub {
+    position: relative; width: 286px; aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.12), transparent 68%);
+  }
+  .preview-core {
+    position: absolute; inset: 22%; display: grid; place-items: center; align-content: center;
+    border-radius: 50%;
+    background: radial-gradient(circle at 48% 42%, rgba(103, 232, 249, 0.38), rgba(4, 12, 20, 0.97) 62%);
+    box-shadow: inset 0 0 28px rgba(34, 211, 238, 0.16);
+    font: 650 17px/1 var(--font-display); letter-spacing: 0.18em;
+  }
+  .preview-core small { margin-top: 10px; color: var(--text-muted); font: 600 9px/1 var(--font-mono); letter-spacing: 0.2em; }
+
+  .pill-frames { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+  .pill-frame { border: 1px dashed rgba(120, 200, 255, 0.2); border-radius: 18px; padding: 8px; }
+  .pill-frame figcaption { font: 500 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-muted); margin: 8px 0 0 4px; }
+  .pill-frame iframe { border: 0; background: transparent; display: block; }
+  .note { color: var(--text-muted); font-size: 12px; max-width: 720px; }
+</style>
+</head>
+<body class="page dashboard-v2" data-ai-state="idle">
+  <h1>ARTEMIS · STATE PREVIEW</h1>
+  <p class="note">Simulated <code>ArtemisUIState</code> snapshots drive the same alive.css rules the
+  real dashboard uses. Production data is never touched.</p>
+
+  <h2>DASHBOARD STATES</h2>
+  <div class="states" id="dashStates"></div>
+
+  <div class="hud-state" id="hudState"><i></i> STANDBY</div>
+  <div class="core-task" id="coreTask" data-empty="1">No active task</div>
+
+  <div class="preview-focus">
+    <div class="v2-hub" id="previewHub" data-core-motion="drift" data-capability="0">
+      <div class="preview-core">ARTEMIS<small id="previewCoreState">IDLE</small></div>
+    </div>
+  </div>
+
+  <div class="mini-map">
+    <section class="v2-panel v2-panel--system" data-activity="calm">
+      <header class="v2-panel-heading"><h2>SYSTEM</h2></header>
+      <div class="v2-panel-content v2-system-stats">CPU · MEM · NET</div>
+    </section>
+    <section class="v2-panel v2-panel--neural" data-activity="calm">
+      <header class="v2-panel-heading"><h2>NEURAL CHAIN</h2></header>
+      <div class="v2-panel-content"></div>
+    </section>
+    <section class="v2-panel v2-panel--comms" data-activity="calm">
+      <header class="v2-panel-heading"><h2>COMMS</h2></header>
+      <div class="v2-panel-content v2-comms-content"><div>“check my email”</div><div>Inbox is clear.</div></div>
+    </section>
+    <section class="v2-panel v2-panel--context" data-activity="calm">
+      <header class="v2-panel-heading"><h2>CONTEXT &amp; MEMORY</h2></header>
+      <div class="v2-panel-content"><div class="v2-context-main"></div></div>
+    </section>
+  </div>
+
+  <h2>PILL STATES</h2>
+  <p class="note">These preview-only snapshots render every Mini Core state at its native panel
+  dimensions. The production pill still subscribes only to the live presence bus.</p>
+  <div class="pill-frames" id="pillFrames"></div>
+
+<script type="module">
+import { createUIState } from "./uiState.js";
+import { PILL_SIZES, capabilitySegment } from "./presencePill.js";
+
+// ---- simulated dashboard snapshots (preview-only data) ----------------------
+const SNAPSHOTS = {
+  IDLE: { state: "idle", interpreting: false, activeContext: null, currentTask: null, approvalState: null, brain: { name: "ollama:qwen3.5:4b", model: "qwen3.5:4b", provider: "ollama", local: true, available: true }, networkMode: "hybrid" },
+  LISTENING: { state: "listening", amplitude: 0.7 },
+  SPEAKING: { state: "speaking", amplitude: 0.58 },
+  THINKING: { state: "thinking", interpreting: true },
+  TERMINAL: {
+    state: "idle", interpreting: false,
+    activeContext: { application: "Terminal", windowTitle: "zsh — 80×24", promptLine: "Choose model:", at: Date.now() },
+    currentTask: { turnId: "p1", label: "Terminal · Selecting option 1", state: "active" }
+  },
+  RESEARCH: { state: "thinking", activeContext: null, currentTask: { turnId: "p2", label: "Researching bond yields", state: "active" } },
+  APPROVAL: { state: "waiting", approvalState: { prompt: "Allow the selected Terminal command?", tool: "computer_control" } },
+  ERROR: { state: "error" },
+  OFFLINE: { state: "idle", networkMode: "local-only", offline: true, brain: { name: "ollama:qwen3.5:4b", model: "qwen3.5:4b", provider: "ollama", local: true, available: true } }
+};
+
+const ui = createUIState();
+const hudState = document.getElementById("hudState");
+const coreTask = document.getElementById("coreTask");
+const previewHub = document.getElementById("previewHub");
+const previewCoreState = document.getElementById("previewCoreState");
+const panels = Object.fromEntries(["system", "neural", "comms", "context"].map(
+  (n) => [n, document.querySelector(`.v2-panel--${n}`)]
+));
+
+// mirror of alive.js's verdicts, kept tiny for the preview
+function verdicts(s) {
+  const busy = s.reasoningState === "understanding" || s.interpreting;
+  const term = s.activeContext && s.activeContext.application === "Terminal";
+  const research = /research/i.test((s.currentTask && s.currentTask.label) || "");
+  const talking = s.voiceState === "listening" || s.voiceState === "speaking";
+  const any = busy || term || research || talking;
+  return {
+    system: any ? "dim" : "calm",
+    neural: busy ? "active" : "calm",
+    comms: talking ? "active" : any ? "dim" : "calm",
+    context: term || research ? "active" : "calm"
+  };
+}
+
+// brain + context cards (same classes alive.css styles)
+const neuralContent = panels.neural.querySelector(".v2-panel-content");
+neuralContent.innerHTML = `<div class="alive-brain">
+  <div class="alive-brain-field"><div class="alive-brain-label">MODEL</div><div class="alive-brain-value" data-f="model"></div></div>
+  <div class="alive-brain-field"><div class="alive-brain-label">PROVIDER</div><div class="alive-brain-value" data-f="provider"></div></div>
+  <div class="alive-brain-field"><div class="alive-brain-label">LATENCY</div><div class="alive-brain-value" data-f="latency">—</div></div>
+  <div class="alive-brain-field"><div class="alive-brain-label">STATUS</div><div class="alive-brain-value" data-f="status"></div></div>
+</div>`;
+const contextMain = panels.context.querySelector(".v2-context-main");
+contextMain.innerHTML = `<div class="alive-context"><div class="alive-context-app"></div><div class="alive-context-prompt"></div><div class="alive-context-task"></div></div>`;
+
+function render() {
+  const s = ui.get();
+  document.body.dataset.aiState = s.voiceState;
+  document.body.dataset.interpreting = s.interpreting ? "1" : "0";
+  document.body.dataset.network = s.networkMode;
+  hudState.childNodes[1].textContent = " " + (s.interpreting ? "UNDERSTANDING" : s.voiceState.toUpperCase());
+  const label = s.currentTask && s.currentTask.label;
+  coreTask.textContent = label || "No active task";
+  coreTask.dataset.empty = label ? "0" : "1";
+  if (label) coreTask.dataset.alive = "1"; else delete coreTask.dataset.alive;
+  const frameCapability = s.activeCapability || (s.activeContext && s.activeContext.application) || "";
+  const segment = capabilitySegment(frameCapability);
+  const signal = (s.voiceState === "listening" || s.voiceState === "speaking") ? (s.amplitude || 0) : 0;
+  const motion = s.approvalState ? "hold"
+    : s.voiceState === "error" ? "fault"
+    : s.voiceState === "listening" ? "listen"
+    : s.voiceState === "speaking" ? "speak"
+    : s.interpreting ? "reason"
+    : label ? "work" : "drift";
+  previewHub.dataset.coreMotion = motion;
+  previewHub.dataset.capability = segment >= 0 ? "1" : "0";
+  previewHub.style.setProperty("--core-signal", signal.toFixed(3));
+  previewHub.style.setProperty("--core-scale", (1 + signal * 0.035).toFixed(4));
+  previewHub.style.setProperty("--capability-angle", `${Math.max(0, segment) * 45}deg`);
+  previewCoreState.textContent = s.interpreting ? "UNDERSTANDING" : s.voiceState.toUpperCase();
+  const v = verdicts(s);
+  for (const [name, panel] of Object.entries(panels)) panel.dataset.activity = v[name];
+  const brainCard = neuralContent.firstElementChild;
+  const bf = (k) => brainCard.querySelector(`[data-f="${k}"]`);
+  bf("model").textContent = s.brain ? s.brain.model : "—";
+  bf("provider").textContent = s.brain ? `${s.brain.provider} (${s.brain.local ? "LOCAL" : "CLOUD"})` : "—";
+  if (s.brain) bf("provider").dataset.local = s.brain.local ? "1" : "0";
+  bf("status").textContent = s.brain ? "Active" : "no brain";
+  bf("status").dataset.tone = s.brain ? "ok" : "hold";
+  const ctxCard = contextMain.firstElementChild;
+  const [app, prompt, task] = ctxCard.children;
+  ctxCard.dataset.live = s.activeContext ? "1" : "0";
+  app.textContent = s.activeContext ? s.activeContext.application : "";
+  prompt.textContent = s.activeContext && s.activeContext.promptLine ? `“${s.activeContext.promptLine}”` : "";
+  task.textContent = label || "";
+}
+ui.subscribe(render);
+
+const dash = document.getElementById("dashStates");
+for (const name of Object.keys(SNAPSHOTS)) {
+  const b = document.createElement("button");
+  b.textContent = name;
+  b.onclick = () => {
+    ui.applyPresence({ interpreting: false, activeContext: null, currentTask: null, approvalState: null, ...SNAPSHOTS.IDLE, ...SNAPSHOTS[name] });
+    dash.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+    render();
+  };
+  dash.appendChild(b);
+}
+dash.firstChild.click();
+
+// ---- pill frames: all visual states, preview-only data ----------------------
+const pillFrames = document.getElementById("pillFrames");
+const PILL_PREVIEWS = [
+  ["idle", "compact"],
+  ["listening", "wide"],
+  ["thinking", "wide"],
+  ["executing", "wide"],
+  ["speaking", "wide"],
+  ["approval", "approval"],
+  ["error", "wide"]
+];
+for (const [state, cls] of PILL_PREVIEWS) {
+  const size = PILL_SIZES[cls];
+  const fig = document.createElement("figure");
+  fig.className = "pill-frame";
+  const frame = document.createElement("iframe");
+  frame.src = `pill.html?preview=${state}`;
+  frame.width = size.width;
+  frame.height = size.height;
+  const cap = document.createElement("figcaption");
+  cap.textContent = `${state.toUpperCase()} · ${size.width}×${size.height}`;
+  fig.append(frame, cap);
+  pillFrames.appendChild(fig);
+}
+</script>
+</body>
+</html>

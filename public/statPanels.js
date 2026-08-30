@@ -235,6 +235,11 @@ export function mountOpsWall() {
       const wait = onFallback && head && head.availableInSec ? " · BEST BACK IN " + shortWait(head.availableInSec) : "";
       brain.sub.textContent = (onFallback ? "FALLBACK · " : "PRIMARY · ") + active.slice(0, 24).toUpperCase() + wait;
       glowBars(brain.cv, brain.cvEl, chain.map((c, i) => (c.current ? 1 : 0.45 - i * 0.05)), onFallback ? VIOLET : CYAN);
+      // The BRAIN card renders this same real chain as discrete nodes — one
+      // poll, one source of truth, no second fetch loop.
+      window.dispatchEvent(new CustomEvent("artemis-brain-chain", {
+        detail: { chain, onFallback }
+      }));
     }
     if (t.budget && t.budget.limitTokens) {
       const left = Math.round((t.budget.remainingTokens / t.budget.limitTokens) * 100);

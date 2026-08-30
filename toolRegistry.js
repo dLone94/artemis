@@ -17,6 +17,13 @@
 import { skillToolDefs, getSkill } from "./skills.js";
 // Wire rendering only. The registry stores neutral defs; these translate them.
 import { openaiCompat, anthropic as anthropicWire } from "./modelProvider.js";
+// Deterministic terminal risk classification — the runtime's authority on what
+// a command is allowed to do, consulted by needsConfirmation.
+import { classifyCommand, classifyInteractiveInput } from "./commandPolicy.js";
+// Shared across the wire: the SAME pure registry the browser fast-path uses
+// decides server-side whether "open X" could name an installed application —
+// so a known site never reads as an app, on either side.
+import { openTargetForText } from "./public/siteRegistry.js";
 
 // Tools implemented directly in server.js rather than as skills.
 const NATIVE_DEFS = [
@@ -97,6 +104,17 @@ const META = {
     forceFamilies: ["followups_nudge"]
   },
   check_messages:  { family: "messages", effect: "read" },
+  // Local computer-agent tools. Screen reading is a plain read. Terminal tools
+  // carry a dynamicConfirm marker: needsConfirmation classifies the command and
+  // only gates approval-risk actions, so "ls" runs but "sudo …" asks first.
+  read_screen:     { family: "perception", effect: "read", forceFamilies: ["perception"] },
+  // "contextual" is the deictic family ("pick the second one", "run that
+  // again"): it must appear in forceFamilies for classifyIntent to route it,
+  // but the contextual dispatcher consumes those turns entirely — they never
+  // reach the generative forced-tool loop.
+  run_command:     { family: "terminal", effect: "mutation", dynamicConfirm: "command", forceFamilies: ["terminal", "contextual"] },
+  computer_control:{ family: "computer", effect: "mutation", dynamicConfirm: "command", forceFamilies: ["computer", "contextual"] },
+  set_presentation:{ family: "presentation", effect: "client", forceFamilies: ["presentation"] },
   research_investment: { family: "research", effect: "read", requires: "search" },
   set_reminder:    { family: "reminder", effect: "mutate" },
   set_meeting_reminders: {
@@ -144,7 +162,12 @@ export const ACTIONABLE_FAMILIES = new Set([
   "memory",
   "contacts",
   "message",
-  "research"
+  "research",
+  "perception",
+  "terminal",
+  "computer",
+  "contextual",
+  "presentation"
 ]);
 
 const EMAIL_LIST_POSITION =
@@ -396,11 +419,201 @@ export function radarActionForText(text) {
   return null;
 }
 
+// Computer-agent phrasings that carry their whole meaning: the verb picked the
+// tool AND the argument, so the server can dispatch them code-owned, exactly
+// like gym verbs. "type … and run" is deliberately NOT here — extracting the
+// text to type is the model's job.
+const COMPUTER_OPEN_TERMINAL_PATTERN =
+  /\b(?:open(?:\s+up)?|launch|show(?:\s+me)?|focus|bring\s+up)\s+(?:the\s+|up\s+)?terminal(?:\.app)?\b/i;
+const COMPUTER_TYPE_PATTERN =
+  /\btype\b[^.?!]{0,80}\b(?:and\s+)?(?:run|enter|hit\s+enter)\b/i;
+const COMPUTER_RELAY_PATTERN =
+  /\btell\s+claude\b[^.?!]{0,40}\b(?:to\s+)?(?:continue|proceed|go\s+ahead|yes)\b/i;
+
+export function computerActionForText(text) {
+  const value = String(text || "");
+  // A literal typing command is handled by terminalTypeForText; a combined
+  // request ("open terminal and type ls and run it") still needs the model.
+  if (terminalTypeForText(value)) return null;
+  if (COMPUTER_TYPE_PATTERN.test(value) || COMPUTER_RELAY_PATTERN.test(value)) return null;
+  if (COMPUTER_OPEN_TERMINAL_PATTERN.test(value)) return "open_terminal";
+  return null;
+}
+
+// Literal terminal typing: when the user DICTATES the exact text ("type ai",
+// "type 'npm test' and run it", "in Terminal type git status"), no model is
+// needed to extract it. Anchored at the start so "what type of car" or
+// "write a note about X" can never read as typing; "write" additionally
+// requires the word terminal in the utterance because it is a generic verb.
+// Anything referring to context ("tell Claude…", "type whatever it asks")
+// stays with the model.
+const TERMINAL_TYPE_LITERAL_RE =
+  /^(?:(?:hey\s+)?artemis[,!\s]+)?(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?(?:in(?:side)?\s+(?:the\s+)?terminal[,:\s]+)?(?:type|write)\s+(.+)$/i;
+// Routing form of the same idea, with the "write" narrowing built in — the
+// family match must not steal "write a note about X" from the memory family.
+const TERMINAL_TYPE_ROUTE_RE = new RegExp(
+  "^(?:(?:hey\\s+)?artemis[,!\\s]+)?(?:please\\s+)?(?:can\\s+you\\s+|could\\s+you\\s+)?(?:in(?:side)?\\s+(?:the\\s+)?terminal[,:\\s]+)?type\\s+\\S" +
+    "|" +
+    "^(?=.*\\bterminal\\b)(?:(?:hey\\s+)?artemis[,!\\s]+)?(?:please\\s+)?(?:can\\s+you\\s+|could\\s+you\\s+)?(?:in(?:side)?\\s+(?:the\\s+)?terminal[,:\\s]+)?write\\s+\\S",
+  "i"
+);
+const TERMINAL_TYPE_RUN_SUFFIX_RE =
+  /[,\s]+(?:and\s+)?(?:then\s+)?(?:run|execute)(?:\s+(?:it|that|the\s+command))?$|[,\s]+(?:and\s+)?(?:then\s+)?(?:press|hit)\s+(?:enter|return)$/i;
+const TERMINAL_TYPE_PLACE_SUFFIX_RE =
+  /[,\s]+in(?:side)?\s+(?:the\s+)?terminal$/i;
+const TERMINAL_TYPE_CONTEXT_RE =
+  /\bclaude\b|^(?:it|that|this|them|those|something|anything)$|^what(?:ever)?\b/i;
+
+// An explicit literal marker ("type the words …", "type literally …") means
+// the payload is EXACT dictation: no suffix parsing, no context resolution.
+const TERMINAL_TYPE_LITERAL_MARKER_RE = /^(?:the\s+words?\s+|literally\s+)/i;
+// A bare ordinal/number/submit word is deictic: with a visible menu it means an
+// option, and only "the words one" (or quoting) makes it the literal word.
+const TERMINAL_TYPE_DEICTIC_PAYLOAD_RE =
+  /^(?:one|two|three|four|five|six|seven|eight|nine|ten|enter|return)$/i;
+
+/**
+ * Parse a literal typing command. Returns {text, submit, literal, deictic,
+ * deicticValue?, singleKey} or null.
+ *   submit    — the phrase asks to run/execute/press enter
+ *   literal   — the user marked the payload as exact words (quotes/"the words")
+ *   deictic   — a bare ordinal/number/submit word; needs context to resolve
+ *   singleKey — a ≤2-char payload; context-sensitive in a raw-mode TUI
+ */
+export function terminalTypeForText(text) {
+  const raw = String(text || "").trim();
+  const m = raw.match(TERMINAL_TYPE_LITERAL_RE);
+  if (!m) return null;
+  const verbIsWrite = /^\s*(?:(?:hey\s+)?artemis[,!\s]+)?(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?(?:in(?:side)?\s+(?:the\s+)?terminal[,:\s]+)?write\b/i.test(raw);
+  if (verbIsWrite && !/\bterminal\b/i.test(raw)) return null;
+  let payload = m[1].trim();
+  let submit = false;
+  let literal = false;
+
+  // "type the words one and press enter" → the literal text, verbatim.
+  if (TERMINAL_TYPE_LITERAL_MARKER_RE.test(payload)) {
+    literal = true;
+    payload = payload.replace(TERMINAL_TYPE_LITERAL_MARKER_RE, "").replace(/[.?!]+$/, "").trim();
+    if (!payload) return null;
+    return { text: payload, submit: false, literal: true, deictic: false, singleKey: payload.length === 1 };
+  }
+
+  // Trailing clauses can stack in either order ("… and run it in Terminal",
+  // "… in Terminal and run it"); strip until stable.
+  let prev;
+  do {
+    prev = payload;
+    payload = payload.replace(/[.?!]+$/, "").trim();
+    payload = payload.replace(TERMINAL_TYPE_PLACE_SUFFIX_RE, "").trim();
+    const stripped = payload.replace(TERMINAL_TYPE_RUN_SUFFIX_RE, "").trim();
+    if (stripped !== payload) { submit = true; payload = stripped; }
+  } while (payload !== prev);
+  // Dictated quotes delimit the exact text (straight or typographic).
+  const QUOTE = "'\"‘’“”";
+  if (payload.length > 1 &&
+      QUOTE.includes(payload[0]) && QUOTE.includes(payload[payload.length - 1])) {
+    payload = payload.slice(1, -1).trim();
+    literal = true;
+  }
+  if (!payload) return null;
+  if (TERMINAL_TYPE_CONTEXT_RE.test(payload)) return null;
+  const deictic = !literal && TERMINAL_TYPE_DEICTIC_PAYLOAD_RE.test(payload);
+  return {
+    text: payload,
+    submit,
+    literal,
+    deictic,
+    ...(deictic ? { deicticValue: payload.toLowerCase() } : {}),
+    singleKey: payload.length === 1
+  };
+}
+
+// Deictic phrasings whose meaning lives in context: ordinal/label selection,
+// bare submit, repeat. Anchored so ordinary conversation can't drift in; the
+// contextual dispatcher (not the model loop) owns every turn routed here.
+// Relay phrasings ("tell Claude yes") stay in the computer family — the
+// dispatcher triggers on that shape explicitly.
+const CONTEXTUAL_LEAD = String.raw`^(?:(?:hey\s+)?artemis[,!\s]+)?(?:please\s+)?(?:(?:yeah|yes|ok(?:ay)?)[,\s]+)?(?:can\s+you\s+|could\s+you\s+)?`;
+const CONTEXTUAL_SELECT_PATTERN = new RegExp(
+  CONTEXTUAL_LEAD +
+    String.raw`(?:pick|choose|select|go\s+with|take|hit)\s+(?:the\s+)?(?:(?:number|option|no\.?)\s+)?` +
+    String.raw`(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2}|[A-Za-z][\w.-]*)` +
+    String.raw`(?:\s+(?:one|option))?\s*[.!?]*$`,
+  "i"
+);
+const CONTEXTUAL_SUBMIT_PATTERN = new RegExp(
+  CONTEXTUAL_LEAD + String.raw`(?:press|hit)\s+(?:enter|return)\s*[.!?]*$`,
+  "i"
+);
+const CONTEXTUAL_REPEAT_PATTERN = new RegExp(
+  CONTEXTUAL_LEAD +
+    String.raw`(?:(?:run|do)\s+(?:that|it)\s+again|do\s+the\s+same\s+(?:thing\s+)?again|re-?run\s+(?:that|it)|again)\s*[.!?]*$`,
+  "i"
+);
+const CONTEXTUAL_PATTERN = new RegExp(
+  [CONTEXTUAL_SELECT_PATTERN, CONTEXTUAL_SUBMIT_PATTERN, CONTEXTUAL_REPEAT_PATTERN]
+    .map((pattern) => pattern.source)
+    .join("|"),
+  "i"
+);
+
+const PRESENTATION_PILL_PATTERN =
+  /\b(?:minimi[sz]e|shrink)\s*(?:yourself|down)?\b|\bpill\s+mode\b/i;
+const PRESENTATION_BACKGROUND_PATTERN =
+  /\bgo\s+to\s+(?:the\s+)?background\b|\bhide\s*(?:yourself)?\b/i;
+const PRESENTATION_FULL_PATTERN =
+  /\bshow\s+yourself\b|\bcome\s+back\b|\brestore\s+(?:the\s+)?(?:full\s+)?dashboard\b|\bfull\s+dashboard\b/i;
+
+export function presentationModeForText(text) {
+  const value = String(text || "");
+  if (PRESENTATION_BACKGROUND_PATTERN.test(value)) return "background";
+  if (PRESENTATION_PILL_PATTERN.test(value)) return "pill";
+  if (PRESENTATION_FULL_PATTERN.test(value)) return "full";
+  return null;
+}
+
+// Which read_screen target the phrase itself names. Never null: "look at my
+// screen" legitimately means "whatever is in front" (auto).
+export function perceptionTargetForText(text) {
+  const value = String(text || "");
+  if (/\bterminal\b/i.test(value)) return "terminal";
+  if (/\bselect(?:ed|ion)\b/i.test(value)) return "selection";
+  return "auto";
+}
+
 // Phrases that map a user's words onto a family. Recall-biased: it is much worse
 // to miss a real request (she narrates and does nothing — the bug) than to force
 // a tool on a borderline turn (she does the thing).
 const FAMILY_PATTERNS = {
   briefing: /\b(?:my\s+(?:morning\s+)?brief|morning\s+brief|what(?:['’]s|\s+is)\s+my\s+day)\b/i,
+  // Computer-agent families are matched BEFORE navigate/media so "open Terminal"
+  // routes to computer control, not open_url. Perception is scoped tightly so it
+  // never steals "read my email"/"read my notes".
+  computer: new RegExp(
+    [
+      COMPUTER_OPEN_TERMINAL_PATTERN,
+      COMPUTER_TYPE_PATTERN,
+      COMPUTER_RELAY_PATTERN,
+      // Literal typing ("type ai", "in terminal write ls") — anchored, so the
+      // verb must OPEN the utterance; "write" additionally requires a terminal
+      // mention (see TERMINAL_TYPE_ROUTE_RE).
+      TERMINAL_TYPE_ROUTE_RE
+    ]
+      .map((pattern) => pattern.source)
+      .join("|"),
+    "i"
+  ),
+  terminal:
+    /\brun\s+the\s+tests?\b|\brun\s+(?:the\s+)?(?:lint|linter|build|type\s*check)\b|\bwhat(?:['’]s|\s+is)\s+(?:the\s+)?git\s+status\b|\b(?:run|execute)\b[^.?!]{0,40}\b(?:command|npm|git|make|script|node|python)\b|\bgo\s+to\s+(?:my|the)\s+[^.?!]{0,40}\b(?:project|repo|directory|folder)\b[^.?!]{0,40}\b(?:and\s+)?run\b/i,
+  contextual: CONTEXTUAL_PATTERN,
+  perception:
+    /\b(?:look\s+at|check)\s+(?:my|the)\s+screen\b|\bwhat(?:['’]s|\s+is)?\s+(?:am\s+i\s+looking\s+at|on\s+(?:my|the)\s+screen)\b|\bread\s+(?:this|the\s+screen|my\s+screen|the\s+selected(?:\s+text)?|the\s+selection)\b|\bwhat\s+does\s+this\s+(?:error|message)\s+mean\b|\bwhat(?:['’]s|\s+is)\s+(?:in\s+)?(?:the\s+)?terminal\s+(?:say|saying|show)\w*\b|\bwhat(?:['’]s|\s+is)\s+(?:currently\s+)?(?:happening|going\s+on)\s+(?:in|on)\s+(?:the\s+)?(?:terminal|(?:my\s+)?screen)\b|\bwhat(?:['’]s|\s+is)\s+in\s+front\s+of\s+me\b|\bwhat\s+is\s+claude(?:\s+code)?\s+asking\b|\bsummar(?:ize|ise)\s+what(?:['’]s|\s+is)?\s+(?:currently\s+)?open\b/i,
+  presentation: new RegExp(
+    [PRESENTATION_PILL_PATTERN, PRESENTATION_BACKGROUND_PATTERN, PRESENTATION_FULL_PATTERN]
+      .map((pattern) => pattern.source)
+      .join("|"),
+    "i"
+  ),
   radar_update: RADAR_UPDATE_PATTERN,
   radar: RADAR_READ_PATTERN,
   map_update: MONEY_MAP_UPDATE_PATTERN,
@@ -455,6 +668,9 @@ const NEGATED_MEETING_ACTION_RE =
 const NEGATED_FOLLOWUP_ACTION_RE =
   /\b(?:don['’]?t|do\s+not|never|without|no\s+need(?:\s+for\s+you)?\s+to|i(?:['’]d|\s+would)?\s+rather\s+not|i(?:['’]m|\s+am)\s+not\s+asking\s+you\s+to)\b[^.?!;]{0,80}\b(?:nudge|chase|follow(?:[ -]?up))\w*\b/i;
 
+const HOWTO_QUESTION_RE =
+  /\bhow\s+to\b|\bhow\s+do(?:es)?\s+(?:i|you|one)\b|\bhow\s+can\s+(?:i|you)\b|\b(?:tell|show)\s+me\s+how\b|\bexplain\s+how\b/i;
+
 function capOk(entry, caps) {
   return !entry.requires || !!caps[entry.requires];
 }
@@ -479,6 +695,7 @@ function allEntries() {
       external: !!meta.external,
       confirm: meta.confirm || null,
       directOnly: meta.directOnly === true,
+      dynamicConfirm: meta.dynamicConfirm || null,
       forceFamilies: Array.isArray(meta.forceFamilies) ? meta.forceFamilies : [meta.family],
       // a skill's own requiresConfirmation is a floor, never lowered here
       alwaysConfirm: !!(skill && skill.requiresConfirmation) || !!meta.external || meta.confirm === "always",
@@ -639,10 +856,45 @@ export function validateToolCall(name, rawArgs, caps = {}) {
  * directly (a reminder, a note) still run without a prompt — gating those would
  * make her tedious without closing a real hole.
  */
-export function needsConfirmation(name, { tainted = false } = {}, caps = {}) {
+export function needsConfirmation(
+  name,
+  { tainted = false, args = null, contextDerived = false, interactive = null } = {},
+  caps = {}
+) {
   const tool = toolByName(name, caps);
   if (!tool) return false;
-  if (tool.confirm === "never") return false;
+  if (tool.confirm === "never") return !!tainted;
+  // Terminal tools are gated by the deterministic command policy, not a static
+  // flag: a read-only command runs freely; an approval-risk command asks first;
+  // a blocked one is refused by the skill's precheck before it reaches here.
+  if (tool.dynamicConfirm === "command") {
+    // Existing turn taint is an authority boundary, including for commands that
+    // look read-only. Untrusted screen/web/mail text may inform a command, but it
+    // cannot authorize terminal input or execution. Opening Terminal itself is
+    // inert and remains available without a prompt.
+    if (tainted && !(args && args.action === "open_terminal")) return true;
+    // Interactive keystrokes (a menu digit, a prompt answer, a bare Enter) are
+    // NOT shell commands — their risk is what the visible prompt/option does,
+    // so the interactive-input policy governs them when evidence is supplied.
+    if (interactive) {
+      const verdict = classifyInteractiveInput(interactive);
+      return !verdict.auto;
+    }
+    // A bare Enter with no interactive evidence could activate anything the
+    // TUI has highlighted — always confirm.
+    if (args && args.action === "press_enter") return true;
+    // Typing WITHOUT pressing Enter is inert in a cooked shell and fully
+    // visible — no spoken yes needed when the user dictated it themselves.
+    // A context-derived payload (the interpreter chose the text) still asks.
+    if (args && args.action === "type_text") return contextDerived;
+    const command = args && (args.command || args.text);
+    if (!command) return false; // e.g. computer_control open_terminal
+    const { risk } = classifyCommand(String(command));
+    if (risk === "approval" || risk === "blocked") return true;
+    // A payload that did not come verbatim from the user's own words gets
+    // confirmation pressure even when the shell classifier reads it as tame.
+    return contextDerived;
+  }
   if (tool.alwaysConfirm) return true;
   return (tool.effect === "mutate" || tool.effect === "mutation") && tainted;
 }
@@ -675,6 +927,13 @@ export function classifyIntent(text, caps = {}, history = []) {
     NEGATED_RADAR_ACTION_RE.test(s)
   ) {
     return { intent: "chat", family: null, expected: [], reason: "action is negated" };
+  }
+  // "Tell me how to open Terminal" is a question ABOUT an action, not the
+  // action — instructional phrasings must never auto-execute a tool. Scoped to
+  // the explicit how-to forms so actionable status questions ("how long left",
+  // "how much rest") keep their families.
+  if (HOWTO_QUESTION_RE.test(s)) {
+    return { intent: "chat", family: null, expected: [], reason: "instructional question, not a command" };
   }
 
   const tools = routableTools(caps);
@@ -729,6 +988,19 @@ export function classifyIntent(text, caps = {}, history = []) {
   const gymSessionAction = matched === "gym" && expected.includes("gym_session")
     ? gymSessionActionForText(s)
     : null;
+  // Deterministic computer-agent derivations: when the phrase itself already
+  // chose the tool argument, the server can execute without a model round.
+  const computerAction = matched === "computer" ? computerActionForText(s) : null;
+  const terminalType = matched === "computer" ? terminalTypeForText(s) : null;
+  // Relay shapes ("tell Claude yes") live in the computer family but are
+  // contextual by nature — the contextual dispatcher triggers on this flag.
+  const computerRelay = matched === "computer" && COMPUTER_RELAY_PATTERN.test(s);
+  const presentationMode = matched === "presentation" ? presentationModeForText(s) : null;
+  const perceptionTarget = matched === "perception" ? perceptionTargetForText(s) : null;
+  // A navigate turn whose object could name an INSTALLED APP ("open WhatsApp",
+  // "open Settings") carries the cleaned target; the server resolves it
+  // against the real disk before any browser/search behavior can win.
+  const openTarget = matched === "navigate" ? openTargetForText(s) : null;
   return {
     intent: "executable_action",
     family: matched,
@@ -736,6 +1008,12 @@ export function classifyIntent(text, caps = {}, history = []) {
     mutations,
     ...(radarAction ? { radarAction } : {}),
     ...(gymSessionAction ? { gymSessionAction } : {}),
+    ...(computerAction ? { computerAction } : {}),
+    ...(terminalType ? { terminalType } : {}),
+    ...(computerRelay ? { computerRelay } : {}),
+    ...(presentationMode ? { presentationMode } : {}),
+    ...(perceptionTarget ? { perceptionTarget } : {}),
+    ...(openTarget ? { openTarget } : {}),
     reason: `matched ${matched} family`
   };
 }

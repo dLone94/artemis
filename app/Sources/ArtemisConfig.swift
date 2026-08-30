@@ -34,12 +34,17 @@ struct ArtemisConfig {
 
     /// First load carries `?key=`; the server answers with a cookie and a 302,
     /// and every later request rides the cookie.
-    var initialURL: URL {
+    var initialURL: URL { pageURL(path: "/") }
+
+    /// The floating pill page, served by the same loopback server.
+    var pillURL: URL { pageURL(path: "/pill.html") }
+
+    private func pageURL(path: String) -> URL {
         var c = URLComponents()
         c.scheme = scheme
         c.host = "127.0.0.1"
         c.port = Int(port)
-        c.path = "/"
+        c.path = path
         if let token = accessToken, !token.isEmpty {
             c.queryItems = [URLQueryItem(name: "key", value: token)]
         }

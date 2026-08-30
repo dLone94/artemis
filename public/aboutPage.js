@@ -1,4 +1,4 @@
-import { MOON_INFO } from "./voiceOrb.js";
+import { MOON_INFO } from "./coreCapabilities.js";
 
 const ABOUT_HASH = "#about";
 const REFRESH_MS = 12000;
@@ -124,7 +124,7 @@ function hubMarkup() {
         <g><path d="m18 48 17-27 30-8 30 22-8 29-30 7-26-9z"/><path d="m35 21 22 50m8-58-8 58m38-36-78 13m70 16-69-16M35 21l52 43m8-29-64 27"/></g>
         <g><circle cx="18" cy="48" r="3"/><circle cx="35" cy="21" r="3"/><circle cx="65" cy="13" r="3"/><circle cx="95" cy="35" r="3"/><circle cx="87" cy="64" r="3"/><circle cx="57" cy="71" r="3"/><circle cx="31" cy="62" r="3"/><circle cx="58" cy="43" r="5"/></g>
       </svg>
-      <strong>EVIE</strong>
+      <strong>ARTEMIS</strong>
       <span>ORCHESTRATION CORE</span>
       <em data-about-hub-state>STATUS UNAVAILABLE</em>
     </div>
@@ -141,15 +141,15 @@ function flowStage(iconName, title, action) {
 function pageMarkup() {
   return `<div class="about-shell">
     <header class="about-header">
-      <a class="about-back" id="aboutBack" href="#" aria-label="Back to Evie dashboard">${icon("arrowLeft")}<span>DASHBOARD</span></a>
+      <a class="about-back" id="aboutBack" href="#" aria-label="Back to Artemis dashboard">${icon("arrowLeft")}<span>DASHBOARD</span></a>
       <div class="about-wordmark">
-        <h1 id="aboutTitle">EVIE <span>OS</span></h1>
+        <h1 id="aboutTitle">ARTEMIS <span>OS</span></h1>
         <p>Personal Voice Agent</p>
       </div>
       <div class="about-data-state" id="aboutDataState" data-state="pending" aria-live="polite"><i aria-hidden="true"></i><span>CONNECTING LIVE DATA</span></div>
     </header>
 
-    <section class="about-architecture" aria-label="Evie subsystem architecture">
+    <section class="about-architecture" aria-label="Artemis subsystem architecture">
       ${connectorSvg()}
       ${hubMarkup()}
       ${panel("brain", "BRAIN", "Reasoning Core", "brain", [
@@ -174,7 +174,7 @@ function pageMarkup() {
       <ul class="about-skill-list" data-about-skills></ul>
     </section>
 
-    <section class="about-flow" aria-label="Evie operating flow">
+    <section class="about-flow" aria-label="Artemis operating flow">
       <ol>
         ${flowStage("voice", "VOICE", "hears it")}
         ${flowStage("brain", "BRAIN", "reasons")}

@@ -1,0 +1,240 @@
+/* The living layer — state-driven visual response on top of the v2 cockpit.
+   Loaded last so it owns hierarchy without rewriting ops2.css.
+
+   Doctrine: every rule here is keyed off REAL state that alive.js writes —
+   body[data-reasoning], body[data-interpreting], panel[data-activity] — or a
+   live card it renders from ArtemisUIState. Nothing loops while idle; the only
+   continuous animation (border energy) runs solely on panels that are ACTIVE,
+   and reduced-motion turns motion into plain opacity states. */
+
+/* ---- typographic hierarchy: six deliberate steps, not five identical 10px --- */
+:root {
+  --type-identity: 17px;     /* ARTEMIS — the product, once */
+  --type-state: 15px;        /* current state / hero task */
+  --type-panel-title: 12px;  /* panel headings */
+  --type-primary: 13px;      /* the information a panel exists for */
+  --type-secondary: 11px;    /* supporting telemetry */
+  --type-micro: 9.5px;       /* chrome labels, units, chips */
+  --alive-active: rgba(34, 211, 238, 0.55);
+  --alive-calm: rgba(34, 211, 238, 0.14);
+}
+
+body.dashboard-v2 .v2-panel-heading h2 {
+  font-size: var(--type-panel-title);
+  letter-spacing: 0.14em;
+}
+
+/* The hero: what she is doing dominates the screen. */
+body.dashboard-v2 .core-task {
+  font-family: var(--font-display);
+  font-size: var(--type-state);
+  letter-spacing: 0.04em;
+  color: var(--text-bright);
+  text-shadow: 0 0 18px rgba(34, 211, 238, 0.35);
+  transition: opacity 0.4s var(--ease-out), transform 0.4s var(--ease-out);
+}
+body.dashboard-v2 .core-task[data-empty="1"]:not([data-alive]) {
+  opacity: 0.42;
+  font-size: var(--type-secondary);
+  text-shadow: none;
+}
+
+/* ---- shared Core state grammar -------------------------------------------
+   The mini Core and hero Core now read the same way: segmented capability
+   rails, real-signal expansion for voice, counter-motion for reasoning,
+   directional emphasis for execution, and restrained hold/fault tones. */
+body.dashboard-v2 .v2-hub {
+  --core-signal: 0;
+  --core-scale: 1;
+  --capability-angle: 0deg;
+  --core-frame-tone: rgba(103, 232, 249, 0.48);
+}
+
+body.dashboard-v2 .v2-hub::after {
+  content: "";
+  position: absolute;
+  inset: 1.6%;
+  z-index: 2;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    conic-gradient(from var(--capability-angle), transparent 0deg, transparent 4deg, var(--core-frame-tone) 5deg, var(--core-frame-tone) 19deg, transparent 21deg, transparent 360deg),
+    repeating-conic-gradient(from -90deg, rgba(103, 232, 249, 0.22) 0deg 18deg, transparent 18deg 45deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 89%, #000 89.4% 91%, transparent 91.4%);
+  mask: radial-gradient(circle, transparent 0 89%, #000 89.4% 91%, transparent 91.4%);
+  opacity: 0.34;
+  transform: scale(var(--core-scale));
+  transition: opacity 220ms var(--ease-out), transform 120ms linear, filter 220ms var(--ease-out);
+}
+
+body.dashboard-v2 .v2-hub[data-capability="0"]::after {
+  background: repeating-conic-gradient(from -90deg, rgba(103, 232, 249, 0.2) 0deg 18deg, transparent 18deg 45deg);
+}
+body.dashboard-v2 .v2-hub[data-core-motion="listen"]::after,
+body.dashboard-v2 .v2-hub[data-core-motion="speak"]::after {
+  opacity: calc(0.38 + var(--core-signal) * 0.42);
+  filter: drop-shadow(0 0 5px rgba(53, 208, 255, calc(0.18 + var(--core-signal) * 0.34)));
+}
+body.dashboard-v2 .v2-hub[data-core-motion="reason"]::after {
+  opacity: 0.72;
+  animation: alive-core-reason 8s linear infinite;
+}
+body.dashboard-v2 .v2-hub[data-core-motion="work"]::after { opacity: 0.86; }
+body.dashboard-v2 .v2-hub[data-core-motion="hold"] {
+  --core-frame-tone: rgba(255, 207, 106, 0.88);
+}
+body.dashboard-v2 .v2-hub[data-core-motion="fault"] {
+  --core-frame-tone: rgba(255, 111, 132, 0.86);
+}
+body.dashboard-v2 .v2-hub[data-core-motion="hold"]::after,
+body.dashboard-v2 .v2-hub[data-core-motion="fault"]::after { opacity: 0.82; }
+
+@keyframes alive-core-reason {
+  to { rotate: 360deg; }
+}
+
+/* ---- panel activity: active / calm / dim ----------------------------------- */
+body.dashboard-v2 .v2-panel {
+  transition:
+    opacity 0.6s var(--ease-out),
+    filter 0.6s var(--ease-out),
+    box-shadow 0.6s var(--ease-out);
+  /* depth: layered translucency + inner shadow + edge light, not plain glow */
+  background:
+    linear-gradient(178deg, rgba(14, 44, 60, 0.30), rgba(5, 14, 21, 0.55) 55%);
+  box-shadow:
+    inset 0 1px 0 rgba(167, 243, 255, 0.06),
+    inset 0 -14px 28px rgba(3, 9, 14, 0.45),
+    0 10px 32px rgba(0, 0, 0, 0.35);
+}
+body.dashboard-v2 .v2-panel[data-activity="dim"] {
+  opacity: 0.55;
+  filter: saturate(0.55) brightness(0.9);
+}
+body.dashboard-v2 .v2-panel[data-activity="calm"] {
+  opacity: 0.88;
+}
+body.dashboard-v2 .v2-panel[data-activity="active"] {
+  opacity: 1;
+  box-shadow:
+    inset 0 1px 0 rgba(167, 243, 255, 0.10),
+    inset 0 -14px 28px rgba(3, 9, 14, 0.45),
+    0 0 0 1px var(--alive-calm),
+    0 10px 36px rgba(6, 60, 80, 0.45);
+  animation: alive-border-energy 3.2s var(--ease-in-out) infinite;
+}
+@keyframes alive-border-energy {
+  0%, 100% { border-color: var(--alive-calm); }
+  50%      { border-color: var(--alive-active); }
+}
+
+/* ---- the brain card: real provider, real locality -------------------------- */
+.alive-brain {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+}
+.alive-brain-model {
+  font-size: var(--type-primary);
+  color: var(--text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alive-brain-locale {
+  font-size: var(--type-micro);
+  letter-spacing: 0.12em;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--hairline);
+  color: var(--text-muted);
+}
+.alive-brain-locale[data-local="1"] {
+  color: #67e8f9;
+  border-color: rgba(103, 232, 249, 0.4);
+}
+.alive-brain-net {
+  font-size: var(--type-micro);
+  letter-spacing: 0.1em;
+  color: var(--amber); /* local-only is a MODE the user chose — flagged, honest */
+  margin-left: auto;
+}
+/* one subtle transition on a real failover, then quiet again */
+.alive-brain--switched { animation: alive-brain-switch 1.2s var(--ease-out) 1; }
+@keyframes alive-brain-switch {
+  0%   { background: rgba(34, 211, 238, 0.18); }
+  100% { background: transparent; }
+}
+
+/* ---- the live context card: what she is actually looking at ---------------- */
+.alive-context {
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 6px;
+  min-height: 0;
+  transition: opacity 0.5s var(--ease-out);
+}
+.alive-context[data-live="0"] { opacity: 0.4; }
+.alive-context-app {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #67e8f9;
+}
+.alive-context-prompt {
+  font-family: var(--font-mono);
+  font-size: var(--type-primary);
+  color: var(--text-bright);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alive-context-task {
+  font-size: var(--type-secondary);
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* ---- interpreting: the visible thought ------------------------------------- */
+body.dashboard-v2[data-interpreting="1"] .hud-state {
+  color: #a8f4ff;
+}
+body.dashboard-v2[data-interpreting="1"] .hud-state i {
+  animation: alive-think 0.9s var(--ease-in-out) infinite;
+}
+@keyframes alive-think {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}
+
+/* ---- comms readability: current turn forward, history recedes -------------- */
+body.dashboard-v2 .v2-panel--comms[data-activity="active"] .v2-comms-content {
+  color: var(--text-bright);
+}
+body.dashboard-v2 .v2-comms-content > *:not(:last-child) {
+  opacity: 0.72;
+}
+body.dashboard-v2 .v2-comms-content > :last-child {
+  opacity: 1;
+}
+
+/* ---- telemetry recedes: numbers must not compete with intelligence --------- */
+body.dashboard-v2 .hud-telemetry,
+body.dashboard-v2 .v2-system-stats {
+  font-size: var(--type-secondary);
+  opacity: 0.8;
+}
+
+/* ---- restraint ------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  body.dashboard-v2 .v2-panel[data-activity="active"] { animation: none; }
+  .alive-brain--switched { animation: none; }
+  body.dashboard-v2[data-interpreting="1"] .hud-state i { animation: none; opacity: 1; }
+  body.dashboard-v2 .v2-hub::after { animation: none !important; transition: none; }
+}

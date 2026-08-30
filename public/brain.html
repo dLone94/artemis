@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>The Brain · Evie</title>
+  <title>The Brain · Artemis</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -14,7 +14,7 @@
 <body class="page bp-body">
   <nav class="nav scrolled" id="nav">
     <div class="nav-inner">
-      <a class="brand" href="index.html"><span class="brand-dot"></span> Evie</a>
+      <a class="brand" href="index.html"><span class="brand-dot"></span> Artemis</a>
       <nav class="nav-links" aria-label="Pages">
         <a href="about.html">About</a>
       </nav>
@@ -34,7 +34,7 @@
         <!-- CinematicOrb: the existing BrainOrb renderer, unchanged -->
         <div class="bp-pane" id="cinematicPane">
           <div class="brain-orb bp-orb" id="brainOrb" role="img"
-               aria-label="Diagram of Evie routing a request through wake, route, tool call, and respond to a sub-agent"></div>
+               aria-label="Diagram of Artemis routing a request through wake, route, tool call, and respond to a sub-agent"></div>
         </div>
         <!-- EngineerGraph: node rail Mic→Wake→Router→Agent→Tool→LLM→TTS -->
         <div class="bp-pane" id="engineerPane" hidden>
@@ -100,6 +100,6 @@
 
   <script type="module" src="brainPage.js"></script>
   <script defer src="pageCinema.js"></script>
-  <script defer src="pageMusic.js"></script>
+  <script type="module" src="pageMusic.js"></script>
 </body>
 </html>

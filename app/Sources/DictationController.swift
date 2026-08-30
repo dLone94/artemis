@@ -32,7 +32,7 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
 
     private static let defaultsKey = "dictationEnabled"
     private static let holdDelay: TimeInterval = 0.25
-    private static let finalWait: TimeInterval = 1.5
+    private static let finalWait: TimeInterval = 0.8
     private static let pcmChunkBytes = 16_000 * MemoryLayout<Int16>.size / 4
     private static let sseDelimiter = Data([0x0a, 0x0a])
     private static let cookieValueCharacters = CharacterSet(
@@ -85,6 +85,7 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
     private var finalSegments: [String] = []
     private var sseDone = false
     private var sseClosed = false
+    private var fnPoll: Timer?
 
     init(config: ArtemisConfig, defaults: UserDefaults = .standard) {
         self.config = config
@@ -133,8 +134,8 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
         if let first = mainMenu.items.first, let existing = first.submenu {
             appMenu = existing
         } else {
-            let rootItem = NSMenuItem(title: "Evie", action: nil, keyEquivalent: "")
-            appMenu = NSMenu(title: "Evie")
+            let rootItem = NSMenuItem(title: "Artemis", action: nil, keyEquivalent: "")
+            appMenu = NSMenu(title: "Artemis")
             rootItem.submenu = appMenu
             mainMenu.insertItem(rootItem, at: 0)
         }
@@ -188,6 +189,7 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
             _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
             panel.showNotice("allow Input Monitoring for dictation")
         }
+        requestPastePermissions()
 
         globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleFlagsChanged(event)
@@ -218,10 +220,44 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
         localMonitor = nil
     }
 
+    private func requestPastePermissions() {
+        if !AXIsProcessTrusted() {
+            let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            AXIsProcessTrustedWithOptions(prompt)
+        }
+        if !CGPreflightPostEventAccess() {
+            _ = CGRequestPostEventAccess()
+        }
+    }
+
+    private func startFnPoll() {
+        guard fnPoll == nil else { return }
+        let timer = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in
+            self?.pollFnUp()
+        }
+        timer.tolerance = 0.05
+        RunLoop.main.add(timer, forMode: .common)
+        fnPoll = timer
+    }
+
+    private func stopFnPoll() {
+        fnPoll?.invalidate()
+        fnPoll = nil
+    }
+
+    private func pollFnUp() {
+        guard fnIsDown else { return }
+        if !NSEvent.modifierFlags.contains(.function) {
+            fnIsDown = false
+            releaseHold()
+        }
+    }
+
     private func deactivate() {
         holdWorkItem?.cancel()
         holdWorkItem = nil
         fnIsDown = false
+        stopFnPoll()
         removeMonitors()
         if phase == .capturing {
             cancelCapture()
@@ -257,6 +293,7 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
             self.beginCapture()
         }
         holdWorkItem = work
+        startFnPoll()
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDelay, execute: work)
     }
 
@@ -265,6 +302,7 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
         case .armed:
             holdWorkItem?.cancel()
             holdWorkItem = nil
+            stopFnPoll()
             phase = .idle
         case .capturing:
             finishCapture(cancelled: false)
@@ -409,6 +447,7 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
 
     private func finishCapture(cancelled: Bool) {
         guard phase == .capturing else { return }
+        stopFnPoll()
         phase = .finishing
         stopAudioCapture()
         if cancelled {
@@ -624,11 +663,16 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
             let payload = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
             guard let json = payload.data(using: .utf8),
                   let event = try? JSONDecoder().decode(LiveEvent.self, from: json) else { continue }
-            _ = event.speechFinal // Parse the complete relay shape; v1 assembles finals only.
             if event.isFinal == true,
                let text = event.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
                !text.isEmpty {
                 finalSegments.append(text)
+            }
+            // Deepgram has explicitly endpointed the utterance, so once stop is
+            // on the wire there is no reason to consume the fixed fallback wait.
+            if event.speechFinal == true, stopSent {
+                completeStream(generation: captureGeneration)
+                return
             }
             if event.done == true {
                 sseDone = true
@@ -723,13 +767,13 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
         guard pasteboard.setString(transcript, forType: .string) else { return false }
         let transcriptChangeCount = pasteboard.changeCount
 
+        requestPastePermissions()
         guard CGPreflightPostEventAccess(),
               let source = CGEventSource(stateID: .hidSystemState),
               let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
         else {
-            // Keep the transcript available: the HUD tells the user the one
-            // manual action that preserves their dictation.
+            panel.showNotice("allow Accessibility so dictation can paste — transcript is on the clipboard")
             return false
         }
 
@@ -738,7 +782,7 @@ final class DictationController: NSObject, URLSessionDataDelegate, @unchecked Se
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             // Do not overwrite a clipboard the user changed during the grace
             // period; otherwise restore exactly the prior string contents.
             guard self?.clipboardGeneration == restoreGeneration,

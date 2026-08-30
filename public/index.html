@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EVIE · Command Center</title>
+  <title>ARTEMIS · Command Center</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Rajdhani:wght@500;600;700&family=Orbitron:wght@500;700&display=swap" rel="stylesheet" />
@@ -14,6 +14,16 @@
   <link rel="stylesheet" href="ops2.css" />
   <link rel="stylesheet" href="about-ops.css" />
   <link rel="stylesheet" href="constellation.css" />
+  <!-- loaded last: the Artemis Core + the hierarchy pass around it -->
+  <link rel="stylesheet" href="core.css" />
+  <!-- the living layer: state-driven activity, brain/context truth, hierarchy -->
+  <link rel="stylesheet" href="alive.css" />
+  <!-- v3: the reference presentation layer — layout, panels, core stage, dock -->
+  <link rel="stylesheet" href="v3.css" />
+  <!-- v4: authoritative reference-image composition. This deliberately loads
+       last so the shipped window has one layout owner instead of a cascade of
+       competing cockpit experiments. -->
+  <link rel="stylesheet" href="reference.css" />
   <!-- TODO(webgl-hero): optional future upgrade — see about.html for details -->
 </head>
 <body class="page cockpit dashboard-v2" data-ai-state="idle">
@@ -41,6 +51,8 @@
   <!-- live state caption under the orb -->
   <script type="module">import { mountOpsWall } from "/statPanels.js"; addEventListener("DOMContentLoaded", mountOpsWall);</script>
   <div class="hud-state" id="hudState" aria-live="polite"><i></i> STANDBY</div>
+  <!-- what she is actually doing right now, derived from real state by coreState.js -->
+  <div class="core-task" id="coreTask" aria-live="polite" data-empty="1">No active task</div>
   <!-- live tool activity: SVG stays composited while the existing orb remains canvas -->
   <div class="hud-tool-orb" id="hudToolOrb" role="status" aria-live="polite" aria-atomic="true" data-phase="idle">
     <svg class="hud-tool-ring" viewBox="0 0 48 48" aria-hidden="true">
@@ -68,20 +80,25 @@
     <div class="hud-sweep"></div>
   </div>
 
-  <!-- top status bar: real telemetry, no fake numbers -->
+  <!-- top status bar: real telemetry, no fake numbers. Three zones — live
+       model status left, the ARTEMIS identity centered, clock + pages right —
+       matching the reference composition. Same ids, same data plumbing. -->
   <header class="hud-top" aria-label="System status">
-    <div class="hud-brand">
-      <span class="brand-dot"></span> EVIE <span class="hud-os">OS</span>
-    </div>
-    <div class="hud-dots" id="hudDots" aria-label="Subsystem status">
-      <span class="hud-dot" data-sys="brain" title="LLM">⬤ BRAIN</span>
-      <span class="hud-dot" data-sys="voice" title="STT/TTS">⬤ VOICE</span>
-      <span class="hud-dot" data-sys="web" title="Web search">⬤ WEB</span>
-      <span class="hud-dot" data-sys="gmail" title="Gmail">⬤ MAIL</span>
-    </div>
-    <div class="hud-meta">
+    <div class="v3-header-status">
       <span class="hud-model" id="hudModel" title="Active model"></span>
       <span class="hud-ttfw" id="hudTtfw" title="Time to first word, last turn">TTFW —</span>
+      <div class="hud-dots" id="hudDots" aria-label="Subsystem status">
+        <span class="hud-dot" data-sys="brain" title="LLM">⬤ BRAIN</span>
+        <span class="hud-dot" data-sys="voice" title="STT/TTS">⬤ VOICE</span>
+        <span class="hud-dot" data-sys="web" title="Web search">⬤ WEB</span>
+        <span class="hud-dot" data-sys="gmail" title="Gmail">⬤ MAIL</span>
+      </div>
+    </div>
+    <!-- the v2 shell wraps this into a lockup and adds the subtitle -->
+    <div class="hud-brand" aria-label="Artemis">
+      <span class="brand-dot"></span> ARTEMIS
+    </div>
+    <div class="hud-meta">
       <span class="hud-clock" id="hudClock">--:--:--</span>
       <nav class="hud-links" aria-label="Pages">
         <a href="brain.html">BRAIN</a>
@@ -114,16 +131,16 @@
   </aside>
 
   <!-- bottom: controls + live waveform. Same ids the voice pipeline expects. -->
-  <div class="dock" id="dock" data-state="expanded" aria-label="Evie controls">
+  <div class="dock" id="dock" data-state="expanded" aria-label="Artemis controls">
     <div class="dock-status" id="liveStatus">Say “<span data-wake-phrase>the wake phrase</span>”, or tap the mic to talk</div>
     <canvas class="hud-wave" id="hudWave" height="36" aria-hidden="true"></canvas>
     <!-- typed command line — same pipeline as voice ("/" focuses it) -->
     <form class="hud-cmd" id="cmdForm" autocomplete="off">
       <span class="hud-cmd-prompt" aria-hidden="true">›</span>
-      <input class="hud-cmd-input" id="cmdInput" type="text" placeholder="type a command — open youtube, check my email, play some jazz…" aria-label="Type a command for Evie" />
+      <input class="hud-cmd-input" id="cmdInput" type="text" placeholder="type a command — open youtube, check my email, play some jazz…" aria-label="Type a command for Artemis" />
     </form>
     <div class="dock-row" id="dockBody">
-      <button class="mic-orb" id="micToggle" aria-label="Talk to Evie">
+      <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
           <rect x="9" y="3" width="6" height="11" rx="3"/>
           <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
@@ -141,6 +158,7 @@
       <span class="dock-sep"></span>
       <label class="set-field">Voice
         <select id="voiceSelect">
+          <option value="voicebox">Jarvis (local clone · Voicebox)</option>
           <option value="aura-2-thalia-en">Thalia</option>
           <option value="aura-2-andromeda-en">Andromeda</option>
           <option value="aura-2-vesta-en">Vesta</option>
@@ -178,6 +196,9 @@
 
   <script src="celebration.js"></script>
   <script type="module" src="dashboardV2.js"></script>
+  <!-- shared ArtemisUIState + the state→DOM reactor (after the v2 shell) -->
+  <script type="module" src="alive.js"></script>
+  <script type="module" src="referenceDashboard.js"></script>
   <script type="module" src="main.js"></script>
   <script type="module" src="cockpit.js"></script>
   <script type="module" src="aboutPage.js"></script>

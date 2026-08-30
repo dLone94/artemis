@@ -199,7 +199,7 @@ async function offerConfirmation(params) {
   assert.equal(result.ok, false);
   assert.equal(
     result.summary,
-    "I can read your mail but I'm not authorized to delete yet — open Evie's Gmail settings link to re-authorize, then try again."
+    "I can read your mail but I'm not authorized to delete yet — open Artemis's Gmail settings link to re-authorize, then try again."
   );
   assert.doesNotMatch(result.summary, /Moved \d+ to trash/i);
 

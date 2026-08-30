@@ -1,0 +1,896 @@
+/* v3 — the reference-image presentation layer. Loaded LAST: it owns layout
+   proportion, panel language, the header identity, the command bar, and the
+   Core's stage treatment. Everything underneath (state feeds, canvases, ids,
+   handlers) is untouched — presentation rebuilt, engineering preserved.
+
+   Design contract (from the reference):
+     · three-zone composition, center dominant
+     · panels are premium rounded modules, not edge-to-edge HUD boxes
+     · one luminous circular intelligence core with ARTEMIS identity
+     · quiet capability tiles that light on REAL tool lifecycle
+     · a calm bottom command bar led by the microphone
+     · state colors: cyan live · violet reasoning · teal work · amber hold · red fault */
+
+:root {
+  --v3-bg: #05070d;
+  --v3-panel: rgba(11, 17, 28, 0.78);
+  --v3-panel-deep: rgba(7, 11, 19, 0.92);
+  --v3-line: rgba(125, 200, 255, 0.10);
+  --v3-line-bright: rgba(125, 211, 252, 0.28);
+  --v3-ink: #e6f1fa;
+  --v3-dim: #6f8398;
+  --v3-cyan: #35d0ff;
+  --v3-violet: #8b7cf6;
+  --v3-teal: #2dd4bf;
+  --v3-amber: #fbbf24;
+  --v3-red: #fb7185;
+  --v3-radius: 16px;
+  --v3-radius-sm: 11px;
+}
+
+/* ---- 0. retire the old HUD dressing ---------------------------------------- */
+body.dashboard-v2 .hud-frame,
+body.dashboard-v2 .hud-beam,
+body.dashboard-v2 .hud-pedestal,
+body.dashboard-v2 .v2-spokes { display: none; }
+body.dashboard-v2 { background: var(--v3-bg); }
+
+/* ---- 1. layout: center dominates, air between modules ---------------------- */
+body.dashboard-v2 .v2-map {
+  grid-template-columns: minmax(18rem, 0.78fr) minmax(30rem, 1.5fr) minmax(18rem, 0.78fr);
+  gap: clamp(12px, 1.2vw, 22px);
+  padding: clamp(10px, 1vw, 20px) clamp(12px, 1.4vw, 26px);
+}
+body.dashboard-v2 .v2-center-column {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: clamp(8px, 0.9vh, 14px);
+}
+
+/* ---- 2. header: identity centered, truth at the edges ---------------------- */
+body.dashboard-v2 .hud-top {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  grid-template-rows: 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: clamp(8px, 1vh, 14px) clamp(14px, 1.4vw, 28px);
+  clip-path: none;
+  background: transparent;
+  border-bottom: 1px solid var(--v3-line);
+}
+body.dashboard-v2 .hud-top::before,
+body.dashboard-v2 .hud-top::after { display: none; }
+
+body.dashboard-v2 .v3-header-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+body.dashboard-v2 .v3-header-status .hud-model {
+  color: var(--v3-cyan);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 15em;
+}
+body.dashboard-v2 .v3-header-status .hud-ttfw {
+  color: var(--v3-dim);
+  font-size: 11px;
+}
+body.dashboard-v2 .hud-dots { display: flex; gap: 8px; }
+body.dashboard-v2 .hud-dot { font-size: 8.5px; letter-spacing: 0.12em; }
+
+body.dashboard-v2 .v2-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+body.dashboard-v2 .hud-brand {
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2.2vw, 27px);
+  font-weight: 800;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em; /* optical centering against the tracking */
+  color: var(--v3-ink);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+body.dashboard-v2 .hud-brand .brand-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--v3-violet);
+  box-shadow: 0 0 10px rgba(139, 124, 246, 0.8);
+}
+body.dashboard-v2 .v2-subtitle {
+  font-size: 9.5px;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+  color: var(--v3-cyan);
+  opacity: 0.85;
+}
+body.dashboard-v2 .hud-meta {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+}
+body.dashboard-v2 .hud-clock {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  color: var(--v3-ink);
+  letter-spacing: 0.08em;
+}
+body.dashboard-v2 .hud-links { display: flex; gap: 8px; }
+body.dashboard-v2 .hud-links a {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  padding: 6px 12px;
+  border: 1px solid var(--v3-line-bright);
+  border-radius: 8px;
+  color: var(--v3-ink);
+  background: rgba(14, 22, 36, 0.6);
+  text-decoration: none;
+  transition: border-color 0.2s var(--ease-out), background 0.2s var(--ease-out);
+}
+body.dashboard-v2 .hud-links a:hover {
+  border-color: var(--v3-cyan);
+  background: rgba(21, 34, 52, 0.8);
+}
+
+/* ---- 3. the ACTIVE TASK bar ------------------------------------------------ */
+body.dashboard-v2 .v3-task-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border: 1px solid var(--v3-line);
+  border-radius: var(--v3-radius-sm);
+  background: var(--v3-panel);
+}
+body.dashboard-v2 .v3-task-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  color: var(--v3-cyan);
+  white-space: nowrap;
+}
+body.dashboard-v2 .v3-task-label::before {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  margin-right: 8px;
+  background: var(--v3-cyan);
+  vertical-align: 1px;
+}
+body.dashboard-v2 .v3-task-slot { min-width: 0; flex: 1; }
+body.dashboard-v2 .v3-task-slot .core-task {
+  position: static;
+  transform: none;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-shadow: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 4. premium panel modules ---------------------------------------------- */
+body.dashboard-v2 .v2-panel {
+  clip-path: none;
+  border: 1px solid var(--v3-line);
+  border-radius: var(--v3-radius);
+  background:
+    linear-gradient(176deg, rgba(16, 26, 42, 0.62), var(--v3-panel-deep) 60%);
+  overflow: hidden;
+}
+body.dashboard-v2 .v2-panel::before,
+body.dashboard-v2 .v2-panel::after { display: none; }
+body.dashboard-v2 .v2-panel-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--v3-line);
+  background: rgba(13, 21, 34, 0.55);
+}
+body.dashboard-v2 .v2-panel-heading h2 {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--v3-ink);
+}
+body.dashboard-v2 .v2-panel-heading h2::before {
+  content: "◈";
+  color: var(--v3-cyan);
+  margin-right: 8px;
+  font-size: 10px;
+}
+body.dashboard-v2 .v2-panel-heading i { display: none; }
+body.dashboard-v2 .v2-panel-content { padding: 10px 14px; }
+
+/* ---- 5. the intelligence core stage ---------------------------------------- */
+body.dashboard-v2 .v2-hub {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(139, 124, 246, 0.14), transparent 46%),
+    radial-gradient(circle at 50% 50%, rgba(53, 208, 255, 0.08), transparent 62%),
+    radial-gradient(circle at 50% 50%, rgba(8, 13, 22, 0.9), rgba(5, 7, 13, 0) 74%);
+}
+body.dashboard-v2 .v2-hub::before {
+  content: "";
+  position: absolute;
+  inset: 4%;
+  border-radius: 50%;
+  border: 1px solid rgba(125, 211, 252, 0.10);
+  box-shadow:
+    inset 0 0 60px rgba(53, 208, 255, 0.05),
+    inset 0 0 0 1px rgba(139, 124, 246, 0.05),
+    0 0 90px rgba(53, 208, 255, 0.05);
+  pointer-events: none;
+}
+/* state caption under the core: "○ LISTENING" */
+body.dashboard-v2 .v2-hub-readouts .hud-state {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.32em;
+  color: var(--v3-cyan);
+}
+body.dashboard-v2 .v2-hub-readouts .hud-wave {
+  width: min(46%, 320px);
+  height: 26px;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+/* ---- 6. BRAIN card --------------------------------------------------------- */
+body.dashboard-v2 .alive-brain {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  padding: 10px 12px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--v3-line);
+}
+.alive-brain-field { min-width: 0; }
+.alive-brain-label {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: var(--v3-dim);
+  margin-bottom: 3px;
+}
+.alive-brain-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--v3-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.alive-brain-value[data-local="1"] { color: #7ee2a8; }
+.alive-brain-value[data-tone="ok"] { color: var(--v3-teal); }
+.alive-brain-value[data-tone="hold"] { color: var(--v3-amber); }
+
+/* ---- 7. CONTEXT card ------------------------------------------------------- */
+body.dashboard-v2 .alive-context { border: 0; padding: 10px 12px 12px; }
+.alive-context-label {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: var(--v3-dim);
+  margin: 8px 0 3px;
+}
+.alive-context-label:first-child { margin-top: 0; }
+body.dashboard-v2 .alive-context-app {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--v3-ink);
+}
+body.dashboard-v2 .alive-context-prompt {
+  padding: 8px 10px;
+  border: 1px solid var(--v3-line);
+  border-radius: 8px;
+  background: rgba(5, 9, 16, 0.7);
+  white-space: normal;
+  max-height: 72px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+}
+body.dashboard-v2 .alive-context-task { font-size: 12px; color: var(--v3-ink); }
+.alive-context-agewrap { margin-top: 4px; }
+.alive-context-age {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(125, 200, 255, 0.10);
+  overflow: hidden;
+}
+.alive-context-age i {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--v3-cyan), var(--v3-violet));
+  transform-origin: left center;
+  transition: transform 0.9s linear;
+}
+.alive-context-age::after {
+  content: attr(data-seconds);
+  position: absolute;
+  right: 0;
+  top: -14px;
+  font: 9px var(--font-mono);
+  color: var(--v3-dim);
+}
+
+/* ---- 8. capability tiles --------------------------------------------------- */
+body.dashboard-v2 .v2-skills {
+  border: 1px solid var(--v3-line);
+  border-radius: var(--v3-radius);
+  background: var(--v3-panel);
+  padding: 10px 14px 12px;
+}
+body.dashboard-v2 .v2-skills-heading h2,
+body.dashboard-v2 .v2-skills-heading span {
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  color: var(--v3-dim);
+}
+body.dashboard-v2 .v2-skill {
+  border: 1px solid var(--v3-line);
+  border-radius: var(--v3-radius-sm);
+  background: rgba(9, 14, 24, 0.7);
+  padding: 8px 4px 6px;
+  transition: border-color 0.25s var(--ease-out), background 0.25s var(--ease-out), opacity 0.25s var(--ease-out);
+  opacity: 0.62;
+}
+body.dashboard-v2 .v2-skill strong {
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: var(--v3-dim);
+}
+body.dashboard-v2 .v2-skill.is-executing {
+  opacity: 1;
+  border-color: var(--v3-teal);
+  background: rgba(14, 40, 38, 0.72);
+  box-shadow: inset 0 0 14px rgba(45, 212, 191, 0.12);
+}
+body.dashboard-v2 .v2-skill.is-executing strong { color: var(--v3-teal); }
+body.dashboard-v2 .v2-skill.is-success { opacity: 1; border-color: rgba(45, 212, 191, 0.55); }
+body.dashboard-v2 .v2-skill.is-failure { opacity: 1; border-color: var(--v3-red); }
+body.dashboard-v2 .v2-skill:hover,
+body.dashboard-v2 .v2-skill:focus-visible { opacity: 1; border-color: var(--v3-line-bright); }
+
+/* ---- 9. the command bar ---------------------------------------------------- */
+body.dashboard-v2 #dock {
+  clip-path: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "status status status"
+    "mic input controls"
+    "drawer drawer drawer";
+  align-items: center;
+  gap: 6px 14px;
+  padding: 10px clamp(14px, 1.6vw, 26px) 12px;
+  border: 1px solid var(--v3-line);
+  border-radius: var(--v3-radius);
+  background: linear-gradient(178deg, rgba(13, 20, 33, 0.8), rgba(7, 11, 19, 0.94));
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+}
+body.dashboard-v2 #dock::before,
+body.dashboard-v2 #dock::after { display: none; }
+body.dashboard-v2 .dock-status {
+  grid-area: status;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--v3-dim);
+}
+body.dashboard-v2 #micToggle {
+  grid-area: mic;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(53, 208, 255, 0.55);
+  background:
+    radial-gradient(circle at 50% 38%, rgba(53, 208, 255, 0.22), rgba(9, 16, 28, 0.9) 68%);
+  color: var(--v3-cyan);
+  box-shadow: inset 0 0 18px rgba(53, 208, 255, 0.12);
+  transition: border-color 0.25s var(--ease-out), box-shadow 0.25s var(--ease-out);
+}
+body.dashboard-v2 #micToggle:hover { border-color: var(--v3-cyan); }
+body.dashboard-v2 #micToggle.recording {
+  border-color: var(--v3-red);
+  color: var(--v3-red);
+  box-shadow: inset 0 0 18px rgba(251, 113, 133, 0.2);
+}
+body.dashboard-v2 .hud-cmd {
+  grid-area: input;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--v3-line-bright);
+  border-radius: 999px;
+  background: rgba(6, 10, 18, 0.8);
+  padding: 0 18px;
+  height: 44px;
+}
+body.dashboard-v2 .hud-cmd:focus-within { border-color: var(--v3-cyan); }
+body.dashboard-v2 .hud-cmd-prompt { color: var(--v3-cyan); }
+body.dashboard-v2 .hud-cmd-input {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--v3-ink);
+  background: transparent;
+  border: 0;
+  width: 100%;
+}
+body.dashboard-v2 .v3-dock-controls {
+  grid-area: controls;
+  display: flex;
+  gap: 8px;
+}
+body.dashboard-v2 .v3-dock-btn {
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--v3-ink);
+  padding: 0 14px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--v3-line-bright);
+  background: rgba(14, 22, 36, 0.6);
+  cursor: pointer;
+  transition: border-color 0.2s var(--ease-out);
+}
+body.dashboard-v2 .v3-dock-btn:hover { border-color: var(--v3-cyan); }
+/* the toggle/selector drawer: everything still exists, on demand */
+body.dashboard-v2 #dockBody {
+  grid-area: drawer;
+  display: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--v3-line);
+}
+body.dashboard-v2 #dock[data-more="1"] #dockBody { display: flex; }
+
+/* ---- 10. state color language on the caption ------------------------------- */
+body.dashboard-v2[data-ai-state="listening"] .v2-hub-readouts .hud-state { color: var(--v3-cyan); }
+body.dashboard-v2[data-ai-state="thinking"] .v2-hub-readouts .hud-state,
+body.dashboard-v2[data-interpreting="1"] .v2-hub-readouts .hud-state { color: var(--v3-violet); }
+body.dashboard-v2[data-reasoning="executing"] .v2-hub-readouts .hud-state { color: var(--v3-teal); }
+body.dashboard-v2[data-ai-state="error"] .v2-hub-readouts .hud-state { color: var(--v3-red); }
+
+/* ---- 11. responsiveness ---------------------------------------------------- */
+@media (max-width: 1180px) {
+  body.dashboard-v2 .hud-brand { letter-spacing: 0.24em; text-indent: 0.24em; }
+  body.dashboard-v2 .v3-header-status .hud-model { max-width: 9em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alive-context-age i { transition: none; }
+}
+
+/* ---- 12. round-2 corrections from the live screenshot ---------------------- */
+/* header: pin every zone; the old 2-row HUD grid kept pulling children around */
+body.dashboard-v2 .hud-top {
+  grid-template-areas: "status brand meta";
+}
+body.dashboard-v2 .v3-header-status { grid-area: status; }
+body.dashboard-v2 .v2-lockup { grid-area: brand; }
+body.dashboard-v2 .hud-top > .hud-meta { grid-area: meta; grid-column: auto; grid-row: auto; }
+body.dashboard-v2 .hud-top .hud-dots {
+  position: static;
+  transform: none;
+  grid-area: auto;
+  margin-left: 6px;
+}
+
+/* neural chain: the ops charts are supporting texture, never a hero block */
+body.dashboard-v2 [data-v2-slot="neural"] .ops-chart { max-height: 34px; }
+body.dashboard-v2 [data-v2-slot="neural"] .ops-panel { min-height: 0; }
+body.dashboard-v2 [data-v2-slot="neural"] { display: grid; gap: 8px; }
+
+/* context panel: the live context leads; diagnostics recede and scroll */
+body.dashboard-v2 .v2-panel--context .v2-panel-content {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+body.dashboard-v2 .v2-context-main { flex: 0 0 auto; }
+body.dashboard-v2 .v2-context-stats {
+  position: static;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden auto;
+  opacity: 0.68;
+  scrollbar-width: thin;
+}
+
+/* comms: one title is enough, and the ring gauges duplicate SYSTEM's numbers */
+body.dashboard-v2 .v2-panel--comms .hud-panel-title { display: none; }
+body.dashboard-v2 .v2-panel--comms .hud-gauges { display: none; }
+body.dashboard-v2 .v2-panel--comms .hud-telemetry {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+  border-top: 1px solid var(--v3-line);
+  padding-top: 6px;
+}
+body.dashboard-v2 .hud-log { line-height: 1.55; }
+
+/* dock drawer: hidden until asked for, whatever the legacy row rules say */
+body.dashboard-v2 #dock:not([data-more="1"]) #dockBody { display: none; }
+body.dashboard-v2 #dock[data-more="1"] #dockBody { display: flex; }
+
+/* ---- 13. round-3: retire legacy absolute positioning inside the new grid --- */
+body.dashboard-v2 .hud-top .hud-links,
+body.dashboard-v2 .hud-top .hud-clock,
+body.dashboard-v2 .hud-top .hud-model,
+body.dashboard-v2 .hud-top .hud-ttfw { position: static; transform: none; }
+body.dashboard-v2 #dock > * { position: static; transform: none; }
+body.dashboard-v2 .hud-cmd { width: auto; max-width: none; }
+/* the subsystem checklist duplicates the capability band's summary and used
+   to float over the CONTEXT heading — diagnostics live on /about instead */
+body.dashboard-v2 .v2-context-stats #opsSkills { display: none; }
+body.dashboard-v2 [data-v2-slot="neural"] .ops-chart {
+  border-radius: 6px;
+  opacity: 0.75;
+}
+
+/* ---- 14. round-4: win the specificity fights we actually measured ---------- */
+/* header: the slotted .hud-top is styled at .v2-header-slot strength */
+body.dashboard-v2 .v2-header-slot .hud-top {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  grid-template-rows: auto;
+  grid-template-areas: "status brand meta";
+  align-items: center;
+  padding: clamp(8px, 1vh, 14px) clamp(14px, 1.4vw, 28px);
+}
+body.dashboard-v2 .v2-header-slot .v3-header-status { grid-area: status; }
+body.dashboard-v2 .v2-header-slot .v2-lockup { grid-area: brand; }
+body.dashboard-v2 .v2-header-slot .hud-meta {
+  grid-area: meta;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  max-width: none;
+  padding: 0;
+}
+
+/* the BRAIN panel's self-check becomes its quiet footer, not a floater */
+body.dashboard-v2 .v2-selfcheck {
+  position: static;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--v3-line);
+  margin-top: auto;
+}
+body.dashboard-v2 .v2-selfcheck-label {
+  font: 8.5px var(--font-mono);
+  letter-spacing: 0.18em;
+  color: var(--v3-dim);
+}
+body.dashboard-v2 .v2-selfcheck-items { display: flex; gap: 8px; flex-wrap: wrap; }
+body.dashboard-v2 .v2-selfcheck-items em {
+  font: 8.5px var(--font-mono);
+  font-style: normal;
+  letter-spacing: 0.1em;
+  color: var(--v3-teal);
+}
+body.dashboard-v2 .v2-selfcheck-items em[data-state="warn"] { color: var(--v3-amber); }
+body.dashboard-v2 .v2-selfcheck-items em[data-state="bad"] { color: var(--v3-red); }
+
+/* dock: flex beats the legacy grid coordinates on every child */
+body.dashboard-v2 #dock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+body.dashboard-v2 #dock .dock-status { flex: 1 1 100%; width: auto; }
+body.dashboard-v2 #dock #micToggle { flex: 0 0 auto; }
+body.dashboard-v2 #dock .hud-cmd {
+  flex: 1 1 auto;
+  grid-column: auto;
+  grid-row: auto;
+  width: auto;
+  height: 44px;
+}
+body.dashboard-v2 #dock .v3-dock-controls { flex: 0 0 auto; }
+body.dashboard-v2 #dock .dock-row {
+  grid-column: auto;
+  grid-row: auto;
+  flex: 1 1 100%;
+}
+
+/* the chain sparkline is texture, not a slab */
+body.dashboard-v2 #opsBrain .ops-chart {
+  max-height: 20px;
+  opacity: 0.7;
+  border-radius: 4px;
+}
+body.dashboard-v2 [data-v2-slot="neural"] .ops-scan { display: none; }
+
+/* ---- 15. round-5: overflow discipline + dock row order ---------------------- */
+/* a grid item's implicit min-height let the BRAIN panel outgrow its row and
+   paint its self-check over CONTEXT — flex-column the panel and let the ops
+   diagnostics shrink instead */
+body.dashboard-v2 .v2-panel { min-height: 0; }
+body.dashboard-v2 .v2-panel--neural {
+  display: flex;
+  flex-direction: column;
+}
+body.dashboard-v2 [data-v2-slot="neural"] {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+body.dashboard-v2 .v2-panel--neural .v2-selfcheck {
+  position: static;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 14px 10px;
+  border: 0;
+  border-top: 1px solid var(--v3-line);
+  border-radius: 0;
+}
+
+/* dock: one explicit row — status · mic · input · controls, drawer beneath */
+body.dashboard-v2 #dock .dock-status {
+  grid-column: auto;
+  grid-row: auto;
+  flex: 0 1 auto;
+  order: 1;
+  max-width: 26%;
+}
+body.dashboard-v2 #dock #micToggle { order: 2; margin: 0; }
+body.dashboard-v2 #dock .hud-cmd { order: 3; margin: 0; min-width: 0; }
+body.dashboard-v2 #dock .v3-dock-controls { order: 4; margin: 0; }
+body.dashboard-v2 #dock .dock-row { order: 5; }
+
+/* ---- 16. round-6: brain content back + the dock's real selector ------------ */
+body.dashboard-v2 .v2-panel--neural { height: 100%; }
+body.dashboard-v2 [data-v2-slot="neural"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden auto;
+  scrollbar-width: thin;
+}
+/* ops2 styles the dock at #dock[data-state=…] strength — match it */
+body.dashboard-v2 #dock[data-state] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  grid-template-columns: none;
+  grid-template-rows: none;
+}
+body.dashboard-v2 #dock[data-state] .dock-status {
+  flex: 0 1 auto;
+  order: 1;
+  max-width: 30%;
+  position: static;
+}
+body.dashboard-v2 #dock[data-state] #micToggle { order: 2; margin: 0; position: static; }
+body.dashboard-v2 #dock[data-state] .hud-cmd {
+  order: 3;
+  flex: 1 1 260px;
+  margin: 0;
+  width: auto;
+  min-width: 0;
+  position: static;
+}
+body.dashboard-v2 #dock[data-state] .v3-dock-controls { order: 4; flex: 0 0 auto; }
+body.dashboard-v2 #dock[data-state] .dock-row { order: 5; flex: 1 1 100%; }
+body.dashboard-v2 #dock[data-state]:not([data-more="1"]) #dockBody { display: none; }
+
+/* narrow: the chain diagnostics simplify away; the truth card stays */
+@media (max-width: 1360px) {
+  body.dashboard-v2 [data-v2-slot="neural"] .ops-panel { display: none; }
+}
+
+/* ---- 17. validation-pass polish -------------------------------------------- */
+/* SYSTEM's network truth: chosen mode + offline state from the presence bus */
+.alive-network {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 2px 2px;
+  border-top: 1px solid var(--v3-line);
+  margin-top: 6px;
+}
+.alive-network-label {
+  font: 8.5px var(--font-mono);
+  letter-spacing: 0.18em;
+  color: var(--v3-dim);
+}
+.alive-network-value {
+  font: 600 10.5px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+.alive-network-value[data-tone="ok"] { color: var(--v3-teal); }
+.alive-network-value[data-tone="hold"] { color: var(--v3-amber); }
+
+/* BRAIN chain as discrete nodes; the old bar canvas retires */
+body.dashboard-v2 #opsBrain .ops-chart { display: none; }
+.alive-chain {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.alive-chain-label {
+  font: 8.5px var(--font-mono);
+  letter-spacing: 0.18em;
+  color: var(--v3-dim);
+}
+.alive-chain-dots { display: flex; align-items: center; gap: 0; }
+.alive-chain-dot {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--v3-line-bright);
+  background: transparent;
+  position: relative;
+}
+.alive-chain-dot + .alive-chain-dot { margin-left: 18px; }
+.alive-chain-dot + .alive-chain-dot::before {
+  content: "";
+  position: absolute;
+  right: 100%; top: 50%;
+  width: 18px; height: 1px;
+  background: var(--v3-line-bright);
+}
+.alive-chain-dot[data-current="1"] {
+  background: var(--v3-cyan);
+  border-color: var(--v3-cyan);
+}
+.alive-chain[data-fallback="1"] .alive-chain-dot[data-current="1"] {
+  background: var(--v3-violet);
+  border-color: var(--v3-violet);
+}
+.alive-chain-dot[data-cooling="1"] { border-color: rgba(251, 191, 36, 0.55); }
+
+/* the open drawer: same module language as the rest of the bar */
+body.dashboard-v2 #dock[data-more="1"] #dockBody {
+  align-items: center;
+  padding-top: 10px;
+}
+body.dashboard-v2 #dockBody .wake-toggle {
+  font: 600 9.5px var(--font-mono);
+  letter-spacing: 0.1em;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--v3-line);
+  background: rgba(9, 14, 24, 0.7);
+  color: var(--v3-dim);
+}
+body.dashboard-v2 #dockBody .wake-toggle:hover { border-color: var(--v3-line-bright); color: var(--v3-ink); }
+body.dashboard-v2 #dockBody .set-field {
+  font: 600 9.5px var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--v3-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+body.dashboard-v2 #dockBody select {
+  font: 600 10.5px var(--font-mono);
+  color: var(--v3-ink);
+  background: rgba(9, 14, 24, 0.9);
+  border: 1px solid var(--v3-line-bright);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
+
+/* the discrete chain nodes ARE the chain count now — the ops panel keeps only
+   its primary/fallback truth line, no overlapping big digit */
+body.dashboard-v2 #opsBrain .ops-num,
+body.dashboard-v2 #opsBrain .ops-label { display: none; }
+body.dashboard-v2 #opsBrain { min-height: 0; }
+.alive-chain { padding: 2px 0 4px; }
+
+/* ---- 18. reference parity pass 2 ------------------------------------------- */
+/* SYSTEM: numbers lead; the decorative wire globe retires */
+body.dashboard-v2 .v2-system-motif { display: none; }
+body.dashboard-v2 .v2-system-content { grid-template-columns: minmax(0, 1fr); }
+.alive-nominal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 2px 0;
+  font: 600 9.5px var(--font-mono);
+  letter-spacing: 0.18em;
+}
+.alive-nominal i {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--v3-dim);
+}
+.alive-nominal[data-tone="ok"] { color: var(--v3-teal); }
+.alive-nominal[data-tone="ok"] i { background: var(--v3-teal); }
+.alive-nominal[data-tone="hold"] { color: var(--v3-amber); }
+.alive-nominal[data-tone="hold"] i { background: var(--v3-amber); }
+.alive-nominal:not([data-tone="ok"]):not([data-tone="hold"]) { color: var(--v3-dim); }
+
+/* COMMS: the newest turn carries the focus (reference's highlighted row) */
+body.dashboard-v2 .hud-log > :last-child {
+  border-left: 2px solid var(--v3-cyan);
+  padding-left: 8px;
+  margin-left: -10px;
+  background: rgba(53, 208, 255, 0.05);
+}
+
+/* the core reads deeper: stronger violet heart + a second orbit ring */
+body.dashboard-v2 .v2-hub {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(139, 124, 246, 0.22), transparent 44%),
+    radial-gradient(circle at 50% 50%, rgba(53, 208, 255, 0.10), transparent 62%),
+    radial-gradient(circle at 50% 50%, rgba(8, 13, 22, 0.92), rgba(5, 7, 13, 0) 76%);
+}
+body.dashboard-v2 .v2-hub::before {
+  inset: 2.5%;
+  box-shadow:
+    inset 0 0 70px rgba(53, 208, 255, 0.06),
+    inset 0 0 0 1px rgba(139, 124, 246, 0.07),
+    inset 0 0 0 26px rgba(9, 16, 28, 0.0),
+    0 0 110px rgba(72, 112, 200, 0.07);
+}
+
+/* the stop control reads as a stop (reference's red ✕) */
+body.dashboard-v2 .v3-dock-btn:first-child { color: var(--v3-red); border-color: rgba(251, 113, 133, 0.35); }
+body.dashboard-v2 .v3-dock-btn:first-child:hover { border-color: var(--v3-red); }
+
+/* ---- 19. retire the legacy "cockpit v3" overlay chrome --------------------- */
+/* These float over the composition from document.body (holo readouts, mission
+   ticker, ops-traffic card). They are not in the approved reference, and they
+   are created ONLY when reduced motion is off — which is why they never
+   appeared in reduced-motion verification captures while dominating the real
+   window. The data they showed lives in SYSTEM/BRAIN/CONTEXT already. */
+body.dashboard-v2 .v2-holo,
+body.dashboard-v2 .v2-ticker { display: none !important; }
+
+/* the live waveform belongs under the Core, never a full-width band */
+body.dashboard-v2 #hudWave {
+  position: static;
+  width: min(46%, 320px);
+  height: 26px;
+  margin: 2px auto 0;
+  opacity: 0.85;
+  left: auto; right: auto; bottom: auto;
+}
+
+/* ---- 20. live-window corrections (measured in the real WKWebView) --------- */
+/* The readouts layer is an absolute overlay (inset:0), so a static wave flows
+   to the TOP of the Core. Pin it under the state caption instead. */
+body.dashboard-v2 .v2-hub-readouts #hudWave,
+body.dashboard-v2 #hudWave {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 9%;
+  top: auto;
+  margin: 0;
+  width: min(30%, 300px);
+  height: 24px;
+}
+/* legacy full-width decorative band inside the command bar */
+body.dashboard-v2 .dock-scope { display: none !important; }
+
+/* SYSTEM: keep the network + health rows inside the panel */
+body.dashboard-v2 [data-v2-slot="system"] { overflow: hidden; }
+.alive-network { padding: 6px 2px 0; margin-top: 4px; }
+.alive-network-value { font-size: 10px; }
+.alive-nominal { padding: 4px 2px 0; font-size: 9px; }

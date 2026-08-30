@@ -3,13 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>About · Evie</title>
+  <title>About · Artemis</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="app.css" />
   <link rel="stylesheet" href="constellation.css" />
+  <link rel="stylesheet" href="core.css" />
 </head>
 <body class="page">
   <!-- TODO(webgl-hero): optional Phase-4 upgrade — ONE interactive WebGL hero orb
@@ -23,7 +24,7 @@
 
   <nav class="nav" id="nav">
     <div class="nav-inner">
-      <a class="brand" href="index.html"><span class="brand-dot"></span> Evie</a>
+      <a class="brand" href="index.html"><span class="brand-dot"></span> Artemis</a>
       <nav class="nav-links" aria-label="Sections">
         <a href="brain.html">The Brain</a>
         <a href="#features">Features</a>
@@ -31,7 +32,7 @@
         <a href="#team">Agents</a>
       </nav>
       <!-- href/target/disabled state are driven by the LINKS config at the top of main.js -->
-      <a class="nav-cta" id="navRepo" data-link="repo" aria-label="View the Evie source code on GitHub (opens in a new tab)">OPEN SOURCE ↗</a>
+      <a class="nav-cta" id="navRepo" data-link="repo" aria-label="View the Artemis source code on GitHub (opens in a new tab)">OPEN SOURCE ↗</a>
     </div>
   </nav>
 
@@ -40,7 +41,7 @@
       <div class="hero-inner">
         <div class="eyebrow hero-anim"><span class="badge-dot"></span> ALWAYS ON · WAKE-WORD READY</div>
         <h1 class="hero-title hero-anim">The voice-first AI that <span class="grad">watches your whole business</span> — and says it to your face.</h1>
-        <p class="hero-sub hero-anim">Evie listens, thinks, and talks back in real time — revenue, the news, whatever you throw at it. Brief, sharp, occasionally brutal. The co-pilot that never sleeps.</p>
+        <p class="hero-sub hero-anim">Artemis listens, thinks, and talks back in real time — revenue, the news, whatever you throw at it. Brief, sharp, occasionally brutal. The co-pilot that never sleeps.</p>
         <div class="hero-meta hero-anim">FREE · OPEN SOURCE · VOICE-POWERED</div>
         <div class="chips hero-anim">
           <span class="chip"><span class="dot dot-teal"></span> VOICE</span>
@@ -55,7 +56,7 @@
       <div class="features-head reveal">
         <div class="eyebrow">◦ LIVE INTELLIGENCE</div>
         <h2 class="features-title">Always watching.<br /><span class="grad">Always answering.</span></h2>
-        <p class="features-sub">Six streams, one voice. Evie keeps an eye on what moves the needle — and tells you the moment it matters.</p>
+        <p class="features-sub">Six streams, one voice. Artemis keeps an eye on what moves the needle — and tells you the moment it matters.</p>
       </div>
       <div class="cards">
         <article class="card reveal" style="--accent: #22d3ee">
@@ -68,7 +69,7 @@
           <span class="card-orb"></span>
           <h3 class="card-title"><span class="card-dot"></span> Code</h3>
           <p class="card-desc">Reads repos and pages on command, summarizes what changed and why.</p>
-          <div class="card-tag">FETCH · REVIEW · SHIP</div>
+          <div class="card-tag">FETCH · RARTEMISW · SHIP</div>
         </article>
         <article class="card reveal" style="--accent: #67e8f9">
           <span class="card-orb"></span>
@@ -126,7 +127,7 @@
         <p class="brain-sub">The orb isn't decoration — it's a live picture of her pipeline. Every request runs the same four steps. Step through them, or pick who handles it, and watch the sub-agent light up.</p>
       </div>
       <div class="brain-stage reveal">
-        <div class="brain-orb" id="brainOrb" role="img" aria-label="Diagram of Evie routing a request through wake, route, tool call, and respond to a sub-agent"></div>
+        <div class="brain-orb" id="brainOrb" role="img" aria-label="Diagram of Artemis routing a request through wake, route, tool call, and respond to a sub-agent"></div>
         <div class="brain-panel">
           <div class="brain-steps" role="group" aria-label="Pipeline steps">
             <button class="brain-step is-active" type="button" data-step="0">1 · Wake</button>
@@ -151,7 +152,7 @@
       <div class="team-head reveal">
         <div class="eyebrow">◦ THE TEAM · SUB-AGENTS</div>
         <h2 class="team-title">One voice.<br /><span class="grad">A team behind it.</span></h2>
-        <p class="team-sub">Evie routes your request to the right skill. Each one has its own job — and acts only with your say-so.</p>
+        <p class="team-sub">Artemis routes your request to the right skill. Each one has its own job — and acts only with your say-so.</p>
       </div>
       <div class="team-grid">
         <article class="agent reveal" style="--accent: #22d3ee">
@@ -182,13 +183,13 @@
         <p class="demo-sub">No screenshots-as-promises. This is the shape of an actual voice turn — you ask, she searches, she answers aloud with sources, then she acts.</p>
       </div>
       <div class="demo-stage reveal">
-        <div class="demo-chat" id="demoChat" aria-label="Example conversation with Evie">
+        <div class="demo-chat" id="demoChat" aria-label="Example conversation with Artemis">
           <div class="demo-line user" data-delay="0">
             <span class="demo-who">You</span>
-            <p class="demo-bubble">“Evie — what's trending on Hacker News right now?”</p>
+            <p class="demo-bubble">“Artemis — what's trending on Hacker News right now?”</p>
           </div>
           <div class="demo-line bot" data-delay="900">
-            <span class="demo-who">Evie
+            <span class="demo-who">Artemis
               <span class="demo-spoken"><span class="demo-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span> spoken aloud</span>
             </span>
             <p class="demo-bubble">Top of Hacker News right now: a Show HN for a local-first sync engine, and a deep dive on WebGPU compute. Want me to open either?
@@ -200,7 +201,7 @@
             <p class="demo-bubble">“Open the WebGPU one.”</p>
           </div>
           <div class="demo-line bot" data-delay="3400">
-            <span class="demo-who">Evie
+            <span class="demo-who">Artemis
               <span class="demo-spoken"><span class="demo-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span> spoken aloud</span>
             </span>
             <p class="demo-bubble">Opening it now. <span class="demo-action">↗ opened a new tab</span></p>
@@ -219,18 +220,18 @@
       <div class="demo-os reveal">
         <span class="demo-os-label">Free &amp; open source</span>
         <!-- href/target/disabled state are driven by the LINKS config at the top of main.js -->
-        <a class="demo-os-link" data-link="repo" aria-label="Evie GitHub repo (opens in a new tab)">GitHub repo ↗</a>
-        <a class="demo-os-link" data-link="docs" aria-label="Evie documentation (opens in a new tab)">Docs ↗</a>
-        <a class="demo-os-link" data-link="start" aria-label="Evie getting started guide (opens in a new tab)">Getting started ↗</a>
+        <a class="demo-os-link" data-link="repo" aria-label="Artemis GitHub repo (opens in a new tab)">GitHub repo ↗</a>
+        <a class="demo-os-link" data-link="docs" aria-label="Artemis documentation (opens in a new tab)">Docs ↗</a>
+        <a class="demo-os-link" data-link="start" aria-label="Artemis getting started guide (opens in a new tab)">Getting started ↗</a>
       </div>
     </section>
   </main>
 
-  <div class="dock" id="dock" data-state="idle" aria-label="Evie controls">
+  <div class="dock" id="dock" data-state="idle" aria-label="Artemis controls">
     <button class="dock-toggle" id="dockToggle" type="button" aria-expanded="true" aria-controls="dockBody" title="Collapse controls" aria-label="Collapse controls">▾</button>
     <div class="dock-status" id="liveStatus">Say “<span data-wake-phrase>the wake phrase</span>”, or tap the mic to talk</div>
     <div class="dock-row" id="dockBody">
-      <button class="mic-orb" id="micToggle" aria-label="Talk to Evie">
+      <button class="mic-orb" id="micToggle" aria-label="Talk to Artemis">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
           <rect x="9" y="3" width="6" height="11" rx="3"/>
           <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
@@ -280,7 +281,7 @@
   </div>
 
   <footer class="foot">
-    <span>Evie · voice-first AI</span>
+    <span>Artemis · voice-first AI</span>
     <!-- accurate stack: the orb is Canvas 2D (not Three.js); brain is provider-switchable -->
     <span class="foot-mono">CANVAS 2D · WEB AUDIO · NVIDIA NIM · DEEPGRAM</span>
   </footer>
@@ -294,6 +295,6 @@
     honourCapabilityHash();
   </script>
   <script defer src="pageCinema.js"></script>
-  <script defer src="pageMusic.js"></script>
+  <script type="module" src="pageMusic.js"></script>
 </body>
 </html>

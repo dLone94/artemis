@@ -681,9 +681,17 @@ const message = ({
   assert.match(serverSource, /pending\.name\s*===\s*["']nudge_email["']/);
   assert.match(serverSource, /clientActions/);
   assert.match(serverSource, /historyHasMailTaint\(messages\)/);
+  // The confirm gate is now applied through the args-aware confirmNeeded()
+  // helper (so terminal-tool risk can be classified from the call's arguments);
+  // it still guards the untrusted-read path with the taint flag.
   assert.match(
     serverSource,
-    /needsConfirmation\(b\.name,\s*\{\s*tainted:\s*readUntrusted\s*\}/
+    /confirmNeeded\(b,\s*readUntrusted,\s*caps\)/
+  );
+  assert.match(
+    serverSource,
+    /needsConfirmation\(call\.name,\s*\{\s*tainted,\s*args:/,
+    "confirmNeeded threads parsed args into needsConfirmation"
   );
   assert.match(clientSource, /d\.clientActions/);
   assert.match(clientSource, /!r\.ok\s*\|\|\s*data\.error/);

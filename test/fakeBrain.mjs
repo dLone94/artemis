@@ -54,7 +54,11 @@ export async function startFakeBrain() {
     const spec = script.shift() || { text: "(fake brain ran out of script)" };
     if (spec.status) {
       const headers = spec.retryAfter ? { "retry-after": String(spec.retryAfter) } : {};
-      res.writeHead(spec.status, headers).end(JSON.stringify({ error: { message: "rate limit" } }));
+      // Default body reads like a rate limit; spec.message/spec.code let a test
+      // script a different failure (e.g. a 404 model_not_found for a retired model).
+      const error = { message: spec.message || "rate limit" };
+      if (spec.code) error.code = spec.code;
+      res.writeHead(spec.status, headers).end(JSON.stringify({ error }));
       return;
     }
     if (spec.delayMs) {

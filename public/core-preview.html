@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Artemis Intelligence Core · proving ground</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="app.css" />
+  <link rel="stylesheet" href="core.css" />
+  <style>
+    /* Development harness for the Core, the way /orb.html served the retired
+       VoiceOrb. Nothing here touches production state: every Core on this page
+       is a local instance driven by local calls. No server, no SSE, no polling
+       — which is also why this page settles enough to screenshot. */
+    body { background: #04070d; margin: 0; color: #d6f8ff; font-family: "JetBrains Mono", monospace; }
+    header { padding: 10px 14px; border-bottom: 1px solid rgba(72,140,250,0.2); display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+    /* Three type sizes only, each a clear step apart (16 / 12 / 9.5 — ratios
+       1.33 and 1.26). Page identity, then the per-cell state label, then the
+       control chrome. Everything else separates by colour and weight rather
+       than by a near-identical size. */
+    header h1 { font-size: 16px; letter-spacing: 0.3em; margin: 0; font-weight: 700; color: rgba(214,248,255,0.95); }
+    /* One declaration for the control tier — these are the same size by
+       intent, so they share a rule and differ by colour and tracking. */
+    label, .note { font-size: 9.5px; }
+    .note { color: rgba(138,147,163,0.8); letter-spacing: 0.08em; }
+    label { letter-spacing: 0.14em; display: inline-flex; gap: 7px; align-items: center; color: rgba(140,236,255,0.8); }
+    input[type=range] { width: 150px; accent-color: #22d3ee; }
+    .wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 10px; padding: 10px; }
+    .cell { position: relative; aspect-ratio: 1 / 1; border: 1px solid rgba(72,140,250,0.16); background: radial-gradient(circle at 50% 50%, rgba(12,26,48,0.5), transparent 70%); margin: 0; }
+    .cell > .stage { position: absolute; inset: 3%; }
+    .cell > .stage::before {
+      content: ""; position: absolute; inset: 1.5%; border-radius: 50%;
+      background: url("artemis-core-material.png") center / contain no-repeat;
+      opacity: 0.72; mix-blend-mode: screen; transform: scale(0.66);
+    }
+    .cell > .stage canvas { position: relative; z-index: 1; }
+    .cell > figcaption { position: absolute; left: 9px; top: 7px; z-index: 5; font-size: 12px; letter-spacing: 0.2em; color: rgba(140,236,255,0.72); }
+    .solo { padding: 10px; }
+    .solo .cell { max-width: 720px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ARTEMIS INTELLIGENCE CORE</h1>
+    <label>MIC AMPLITUDE
+      <input type="range" id="amp" min="0" max="100" value="55" />
+      <span id="ampOut">0.55</span>
+    </label>
+    <label><input type="checkbox" id="live" checked /> ANIMATE</label>
+    <label><input type="checkbox" id="solo" /> SOLO (large)</label>
+    <span class="note">preview-only · simulated amplitude never reaches production state</span>
+  </header>
+  <div class="wrap" id="wrap"></div>
+
+  <script type="module">
+    import { ArtemisCore } from "./artemisCore.js";
+
+    // Every scenario is REAL input to the same adapter the cockpit uses — the
+    // same setStatus/toolEvent/setPendingConfirm calls, no preview-only render
+    // path. A harness with its own drawing code would prove nothing.
+    const SCENARIOS = [
+      { id: "standby",   caption: "STANDBY",     amp: false, apply: (c) => c.setStatus("idle") },
+      { id: "listening", caption: "LISTENING",   amp: true,  apply: (c) => c.setStatus("listening") },
+      { id: "reasoning", caption: "REASONING",   amp: false, apply: (c) => c.setStatus("thinking") },
+      { id: "researching", caption: "RESEARCHING · web", amp: false, apply: (c) => {
+          c.setStatus("thinking");
+          c.toolEvent({ name: "web_search", family: "research", phase: "start" });
+        } },
+      { id: "executing", caption: "EXECUTING · media", amp: false, apply: (c) => {
+          c.setStatus("thinking");
+          c.toolEvent({ name: "play_media", family: "media", phase: "start" });
+        } },
+      { id: "verifying", caption: "VERIFYING (future stage)", amp: false, apply: (c) => {
+          c.setStatus("thinking");
+          c.setStage("verifying");
+        } },
+      { id: "waiting",   caption: "WAITING · confirm gate", amp: false, apply: (c) => {
+          c.setStatus("listening");
+          c.setPendingConfirm(true);
+        } },
+      { id: "error",     caption: "ERROR",       amp: false, apply: (c) => {
+          c.setStatus("error");
+          c.setError("Could not reach Gmail");
+        } },
+      { id: "speaking",  caption: "SPEAKING",    amp: true,  apply: (c) => c.setStatus("speaking") }
+    ];
+
+    const wrap = document.getElementById("wrap");
+    const ampEl = document.getElementById("amp");
+    const ampOut = document.getElementById("ampOut");
+    const liveEl = document.getElementById("live");
+    const soloEl = document.getElementById("solo");
+    const cores = [];
+    const pendingRestarts = new Set();
+
+    function build(list) {
+      for (const id of pendingRestarts) clearTimeout(id);
+      pendingRestarts.clear();
+      for (const { core } of cores) core.destroy();
+      wrap.innerHTML = "";
+      cores.length = 0;
+      for (const s of list) {
+        const fig = document.createElement("figure");
+        fig.className = "cell";
+        const stage = document.createElement("div");
+        stage.className = "stage";
+        const cap = document.createElement("figcaption");
+        cap.textContent = s.caption;
+        fig.append(stage, cap);
+        wrap.appendChild(fig);
+        const core = new ArtemisCore(stage, { center: true });
+        s.apply(core);
+        cores.push({ core, spec: s });
+      }
+    }
+    build(SCENARIOS);
+
+    soloEl.addEventListener("change", () => {
+      wrap.className = soloEl.checked ? "solo" : "wrap";
+      build(soloEl.checked ? [SCENARIOS[1]] : SCENARIOS);
+    });
+
+    // Simulated amplitude: feed() is the same entry celebration.js already uses,
+    // so this exercises the real amplitude path rather than poking internals.
+    function pump() {
+      const amp = Number(ampEl.value) / 100;
+      ampOut.textContent = amp.toFixed(2);
+      if (liveEl.checked) {
+        const t = performance.now() / 1000;
+        // A speech-like envelope so the iris is driven by something that moves
+        // the way a voice does, not a constant value.
+        const env = amp * (0.55 + 0.45 * Math.abs(Math.sin(t * 5.1)) * (0.6 + 0.4 * Math.sin(t * 1.7)));
+        for (const { core, spec } of cores) if (spec.amp) core.feed(env);
+      }
+      requestAnimationFrame(pump);
+    }
+    requestAnimationFrame(pump);
+
+    // Periodically complete then restart the tool scenarios so the RETURN
+    // traffic (inbound packets + result tint) is visible without interaction.
+    setInterval(() => {
+      for (const { core, spec } of cores) {
+        if (spec.id === "executing") {
+          core.toolEvent({ name: "play_media", family: "media", phase: "end", ok: true });
+          const id = setTimeout(() => {
+            pendingRestarts.delete(id);
+            if (!core._disposed) core.toolEvent({ name: "play_media", family: "media", phase: "start" });
+          }, 2200);
+          pendingRestarts.add(id);
+        }
+        if (spec.id === "researching") {
+          core.toolEvent({ name: "web_search", family: "research", phase: "end", ok: true });
+          const id = setTimeout(() => {
+            pendingRestarts.delete(id);
+            if (!core._disposed) core.toolEvent({ name: "web_search", family: "research", phase: "start" });
+          }, 2200);
+          pendingRestarts.add(id);
+        }
+      }
+    }, 6000);
+
+    window.__cores = cores.map((c) => c.core);
+    window.__coreViews = () => cores.map(({ core }) => core.view);
+  </script>
+</body>
+</html>

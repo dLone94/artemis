@@ -148,9 +148,12 @@ function memoryCtx(initial = {}) {
     /preserveCapture: session\.preserveActiveCapture[\s\S]*session\.preserveActiveCapture && wav/,
     "physical/visibility/deadline stops must retain their buffered partial"
   );
+  // The teardown lives in suspendHiddenVoice() (shared with presentation-mode
+  // changes); the visibility handler must still invoke it so a hidden page
+  // closes the wake mic rather than reacquiring it.
   assert.match(
     clientSource,
-    /async function resumeWake\(\) \{[\s\S]*document\.hidden[\s\S]*visibilitychange[\s\S]*wakeStartGeneration\+\+;[\s\S]*stopLocalWake\(\)/,
+    /async function resumeWake\(\) \{[\s\S]*function suspendHiddenVoice\(\) \{[\s\S]*wakeStartGeneration\+\+;[\s\S]*stopLocalWake\(\)[\s\S]*visibilitychange[\s\S]*suspendHiddenVoice\(\)/,
     "a hidden post-meeting follow-up must close, not reacquire, the wake mic"
   );
   assert.match(

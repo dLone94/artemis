@@ -1,8 +1,16 @@
 // The Artemis System — a voice-reactive particle-wireframe globe with six
 // honest agent moons. Canvas 2D only; all scene geometry and draw-style pools
 // are fixed before the animation loop starts.
+//
+// RETIRED FROM THE COCKPIT (2026-08-13): the hero visualization is now
+// artemisCore.js. This module still powers the /orb.html proving ground, so it
+// is kept working rather than deleted — but nothing on the main pages loads it.
+// Its capability data moved to coreCapabilities.js, which both renderers share.
 
 import { PAL, prefersReducedMotion } from "./orbShared.js";
+import { MOON_INFO, FAMILY_NAMES, CAPABILITY_OF_FAMILY as FAMILY_MOONS } from "./coreCapabilities.js";
+
+export { MOON_INFO };
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
@@ -17,7 +25,7 @@ const DOT_TONE_BUCKETS = 5;
 const DOT_ALPHA_BUCKETS = 10;
 const DOT_STYLE_GROUPS = DOT_TONE_BUCKETS * DOT_ALPHA_BUCKETS;
 const STYLE_ALPHA_BUCKETS = 16;
-const WORDMARK_LETTERS = ["E","V","I","E"];
+const WORDMARK_LETTERS = ["A","R","T","E","M","I","S"];
 const RIPPLE_POOL_SIZE = 16;
 const HALO_LIFE = 1.25;
 const BASE_SPIN_RATE = TAU / 60; // ops redesign: stately ~60s/rev
@@ -65,42 +73,8 @@ const MOON_LABELS = Object.freeze([
   "RADAR"
 ]);
 
-// One-tap description per moon — shown as a context card on click.
-export const MOON_INFO = Object.freeze([
-  { title: "RESEARCH", what: "Web research with sources.", say: "should I invest in… / research…" },
-  { title: "MAIL", what: "Reads, checks and trashes Gmail — trash only, always asks.", say: "check my email · delete number 2" },
-  { title: "MESSAGES", what: "WhatsApp unread checks and drafted sends you approve.", say: "any WhatsApp messages?" },
-  { title: "MEDIA", what: "Opens sites, plays music and video.", say: "play some jazz · open YouTube" },
-  { title: "MEMORY", what: "Notes, reminders and meeting notes.", say: "take notes · what were my meeting notes?" },
-  { title: "FINANCE", what: "Live market figures, always with source and date.", say: "what's the dollar to shilling?" },
-  { title: "BRIEF", what: "Your morning rundown: mail, day, money minute, world.", say: "give me my brief" },
-  { title: "FOLLOW-UPS", what: "Who owes you a reply, and whom you owe. Nudges you send.", say: "any follow-ups?" },
-  { title: "SCHOOL", what: "Investing lessons from zero, one at a time.", say: "teach me investing · next lesson" },
-  { title: "PLAN", what: "Your Money Map: staged plan from your own numbers.", say: "my money map" },
-  { title: "RADAR", what: "Weekly sourced sweep of your opportunity themes.", say: "run the radar" }
-]);
-
-const FAMILY_NAMES = Object.freeze([
-  "research",
-  "web",
-  "email",
-  "messages",
-  "media",
-  "navigate",
-  "memory",
-  "notes",
-  "finance",
-  "briefing",
-  "followups",
-  "followups_nudge",
-  "school",
-  "map",
-  "map_update",
-  "radar",
-  "radar_update",
-  "meeting"
-]);
-const FAMILY_MOONS = new Int8Array([0, 0, 1, 2, 3, 3, 4, 4, 5, 6, 7, 7, 8, 9, 9, 10, 10, 4]);
+// MOON_INFO, FAMILY_NAMES and FAMILY_MOONS now live in coreCapabilities.js and
+// are imported at the top of this file — the Core renders from the same data.
 
 function makeAlphaStyles(prefix, count = STYLE_ALPHA_BUCKETS) {
   const styles = new Array(count);

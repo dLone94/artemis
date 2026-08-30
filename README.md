@@ -1,10 +1,12 @@
-# Evie — a voice-first, JARVIS-style AI assistant
+# Artemis — a voice-first, JARVIS-style AI assistant
 
-> **Naming:** *Evie* is the product's display name. Internal identifiers stay `Artemis`
-> on purpose — bundle id `com.artemis.desktop`, `ARTEMIS_*` env vars, the `artemis_auth`
-> cookie, `.data/` stores, `~/Library/Logs/Artemis`, and the built `Artemis.app` file name
-> are all compatibility-critical (renaming them would void macOS TCC permission grants and
-> orphan user data). Full inventory: [`docs/EVIE-COMPAT.md`](docs/EVIE-COMPAT.md).
+> **Naming:** the product is *Artemis*, display and internals alike. A display-only
+> rename to "Evie" shipped and was reversed on 2026-08-13. Identifiers never moved during
+> either change and must not — bundle id `com.artemis.desktop`, `ARTEMIS_*` env vars, the
+> `artemis_auth` cookie, `.data/` stores, `~/Library/Logs/Artemis`, and the built
+> `Artemis.app` file name are all compatibility-critical (renaming them would void macOS
+> TCC permission grants and orphan user data). Full inventory:
+> [`docs/NAMING-COMPAT.md`](docs/NAMING-COMPAT.md).
 
 A local, **zero-dependency** voice assistant with a cinematic command-center UI: a live
 3D orb, a HUD command log, and a real agent behind it that can search the web, open
@@ -32,7 +34,7 @@ phrase shown in the app.
 ### …or run her as a Mac app
 
 ```bash
-bash app/build.sh && open app/build/Artemis.app   # file name stays Artemis.app; it shows as "Evie"
+bash app/build.sh && open app/build/Artemis.app
 ```
 
 A real windowed app that starts the server for you, with no terminal and no
@@ -55,18 +57,24 @@ Copy `.env.example` to `.env`. Nothing is required to boot, but each key unlocks
 | `ANTHROPIC_API_KEY` | Alternative brain (`LLM_PROVIDER=anthropic`). |
 | `TAVILY_API_KEY` | Live web search (needed for news, weather, prices). |
 | `DEEPGRAM_API_KEY` | Speech-to-text + text-to-speech (incl. live streaming transcript). |
+| `ARTEMIS_VOICEBOX_PROFILE` | Optional local Voicebox cloned profile override; otherwise Artemis discovers it. |
 | `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` | Optional premium voices (free 10k chars/mo). |
 | `GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN` | Gmail read + recoverable Trash (see below). |
 | `ASSISTANT_USER_NAME` | How she addresses you (default: “sir”). |
 | `STRIPE_SECRET_KEY` | Optional revenue-celebration confetti on real payments. |
 
-**Voices** are chosen in the dock. British options include free Deepgram (Pandora/Athena/
-Draco), free Microsoft Edge neural (Sonia/Libby/Ryan — most human), and ElevenLabs
-(Lily/Alice). If a premium voice's quota runs out she falls back automatically.
+**Voices** are chosen in the dock. Artemis defaults to the local Voicebox `Jarvis`
+clone when Voicebox is running at `127.0.0.1:17493`. The server verifies health,
+discovers a usable cloned profile, preloads the local model, and serves the resulting WAV.
+Stalled local generations are cancelled after five seconds by default so an existing
+cloud/Edge fallback can answer instead of leaving the conversation blocked.
+If Voicebox is unavailable, the existing ElevenLabs, MiniMax, Deepgram, or Edge path
+remains available. British options include Deepgram (Pandora/Athena/Draco), Microsoft
+Edge neural (Sonia/Libby/Ryan), and ElevenLabs (Lily/Alice).
 
 ## Gmail (optional)
 
-Evie implements Gmail read + recoverable Trash and no Gmail draft/send
+Artemis implements Gmail read + recoverable Trash and no Gmail draft/send
 endpoint. Follow-up nudges only open a browser compose that you review and send.
 The required Google `gmail.modify` OAuth grant is broader than those implemented
 operations and technically authorizes sending, so protect the refresh token.
@@ -141,13 +149,14 @@ Get ORT from the `onnxruntime-web@1.14.0` npm package's `dist/` folder, and the 
 `.onnx` files from the openWakeWord **v0.5.1** GitHub release assets. `mic-worklet.js`
 is already committed. When these files are present, `/api/status` reports
 `localWake.ready:true` and the wake toggle enables on every browser. If they're absent,
-Evie falls back to the Chrome/Edge `SpeechRecognition` recognizer (which still listens for
-the legacy token “Artemis” — unchanged in the display-only rename — and is disabled on
-Safari/WebKit).
+Artemis falls back to the Chrome/Edge `SpeechRecognition` recognizer (which listens for the
+token “Artemis” and is disabled on Safari/WebKit).
 
 ## Known limitations
 - **Edge neural voices** use an unofficial Microsoft endpoint; if it breaks, she falls back
   to Deepgram automatically.
+- **Voicebox** must be running for cloned-voice speech. Artemis falls back automatically
+  and rechecks the local service after a short cooldown.
 - LAN mode is **local network only** — don't port-forward it to the public internet.
 
 ## Structure

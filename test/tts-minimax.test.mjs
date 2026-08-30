@@ -35,6 +35,7 @@ function cleanEnv(overrides = {}) {
     MINIMAX_GROUP_ID: "",
     MINIMAX_VOICE_ID: "",
     MINIMAX_MODEL: "",
+    ARTEMIS_VOICEBOX_ENABLED: "0",
     ARTEMIS_TTS_PROVIDER: "",
     ...overrides
   };

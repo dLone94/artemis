@@ -11,6 +11,8 @@
 // Read-only by construction. Fixed host allowlist, no user-controlled URLs — the
 // same rule research.js already follows, for the same reason (no SSRF surface).
 
+import { assertNetwork } from "./networkPolicy.js";
+
 /** Hosts this module may ever contact. Anything else is a bug, not a feature. */
 export const ALLOWED_HOSTS = Object.freeze([
   "open.er-api.com",       // FX, 166 currencies, no key
@@ -35,6 +37,7 @@ function hostAllowed(url) {
 /** Bounded fetch. Injectable so the test suite never touches the network. */
 async function getText(url, opts = {}) {
   if (!hostAllowed(url)) throw new Error("host not on the finance allowlist: " + url);
+  assertNetwork("web");
   const doFetch = opts.fetch || fetch;
   const res = await doFetch(url, {
     headers: { "User-Agent": "ArtemisBot/1.0 (+finance skill)", Accept: "application/json, text/csv, */*" },

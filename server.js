@@ -11,7 +11,7 @@ import { fileURLToPath } from "url";
 import { dirname } from "path";
 import { randomBytes, timingSafeEqual, createHash } from "crypto";
 import { execFileSync } from "child_process";
-import { networkInterfaces } from "os";
+import { networkInterfaces, homedir } from "os";
 import { fetchPage } from "./webAccess.js";
 import {
   skillCtx,
@@ -22,18 +22,21 @@ import {
   precheckSkill,
   createPending,
   consumePending,
+  dropAllPending,
   confirmationOutcomeReply,
   assembleDailyBrief,
   claimDailyBriefOffer,
   isDailyBriefOfferTime,
   isOpportunityRadarDue,
-  confirmedNudgeResponse
+  confirmedNudgeResponse,
+  recentEmailSet
 } from "./skills.js";
 import { inspirationForDay } from "./inspiration.js";
 import { specialistPrompt, SPECIALISTS, CORE } from "./specialistPrompts.js";
-import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, listUnread } from "./gmail.js";
+import { gmailConfigured, gmailAuthReady, gmailAuthUrl, gmailExchangeCode, takeGmailOauthState, listUnread } from "./gmail.js";
 import { wsConnect } from "./wsClient.js";
 import { edgeTtsSynthesize } from "./edgeTts.js";
+import { createVoiceboxTtsProvider } from "./voiceboxTts.js";
 import {
   blockedAfterMailRead,
   dropTaintedOpens,
@@ -41,7 +44,8 @@ import {
   mailSafeHistoryContent,
   MAIL_UNTRUSTED_SKILLS,
   UNTRUSTED_SKILLS,
-  wrapUntrusted
+  wrapUntrusted,
+  sanitizeChatMessages
 } from "./untrusted.js";
 import {
   neutralToolDefs,
@@ -50,12 +54,63 @@ import {
   toolByName,
   validateToolCall,
   needsConfirmation,
-  classifyIntent
+  classifyIntent,
+  availableTools
 } from "./toolRegistry.js";
 import { mayStreamNarration, failureLine } from "./public/ttsPolicy.js";
 // Wire-format translation only (Phase 1). Transport, retry, benching and the
 // agent loops stay here; these adapters just shape bodies and read responses.
 import { openaiCompat, anthropic as anthropicWire } from "./modelProvider.js";
+import {
+  isOffline,
+  setOffline,
+  allowedBrains,
+  networkAllowed,
+  assertNetwork,
+  assertNetworkEndpoint,
+  offlineRefusal,
+  offlineState
+} from "./networkPolicy.js";
+import { permissionSnapshot, permissionGuidance } from "./macPermissions.js";
+// Speech-to-text routing. ONE authority decides which provider may see audio:
+// local-only forbids the cloud outright, hybrid prefers cloud with a local
+// fallback. The providers themselves stay dumb.
+import {
+  chooseSttProvider,
+  afterCloudFailure,
+  sttUnavailableMessage,
+  localFailureMessage,
+  STT_LOCAL,
+  STT_CLOUD
+} from "./sttRouter.js";
+import { transcribeLocal, localSttStatus, setupHint, SAMPLE_RATE as STT_SAMPLE_RATE } from "./providers/sttLocal.js";
+// The contextual tier: deictic turns ("pick the second one") resolved against
+// the live screen — deterministic first, local candidate-chooser second,
+// cloud chooser only in hybrid mode, clarification otherwise.
+import { foregroundApp, terminalContent } from "./macPerception.js";
+// Generic installed-application launch: "Open WhatsApp" resolves against the
+// real disk (appResolver) instead of ever becoming a web search.
+import { resolveInstalledApplication } from "./appResolver.js";
+// "Artemis, shut down" — quitting the APP, never the machine. Pure classifier.
+import { shutdownIntentForText, shutdownNeedsConfirmation, shutdownReply } from "./shutdownIntent.js";
+import { createHealthRuntime } from "./healthRuntime.js";
+import { healthIntentForText, healthReply, fullDiagnosticText, startupAnnouncement, healthBadge } from "./healthIntent.js";
+// Progressive email briefing: count + latest sender by default, deeper only on
+// request. Pure phrasing/resolution — the fetch stays in the Gmail skill.
+import {
+  senderName,
+  announceEmails,
+  summarizeEmails,
+  detailEmail,
+  emailFollowupForText,
+  resolveEmailReference,
+  staleContextReply,
+  ambiguityReply,
+  EMAIL_CONTEXT_TTL_MS
+} from "./emailBriefing.js";
+import { createWorkingContext, createSerialLease } from "./workingContext.js";
+import { createContextualDispatcher } from "./contextualDispatch.js";
+import { naturalReply, createReplyPicker } from "./naturalReply.js";
 
 // Does a post-precheck-recovery reply read as a request for missing input?
 // Interrogatives or need/provide verbs qualify; bare completion claims don't.
@@ -88,6 +143,9 @@ import {
 } from "./meeting.js";
 import { cappedGraph, vaultAvailable, writeMeetingNote } from "./obsidianVault.js";
 import { normalizeGymLog, sessionState } from "./gymLog.js";
+import { installConsoleRedaction } from "./redaction.js";
+
+installConsoleRedaction();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -156,6 +214,10 @@ const HOST = process.env.ARTEMIS_HOST || "127.0.0.1";
 const EXPOSED = HOST !== "127.0.0.1" && HOST !== "localhost";
 const USE_HTTPS = /^(1|true|yes|on)$/i.test(process.env.ARTEMIS_HTTPS || "");
 const FORCE_AUTH = /^(1|true|yes|on)$/i.test(process.env.ARTEMIS_REQUIRE_AUTH || "");
+if (EXPOSED && !USE_HTTPS) {
+  console.error("Security error: non-loopback Artemis exposure requires ARTEMIS_HTTPS=1. Refusing startup.");
+  process.exit(1);
+}
 let ACCESS_TOKEN = (process.env.ARTEMIS_ACCESS_TOKEN || "").trim();
 // Always keep a token on hand. Whether a request must present it is decided
 // PER-REQUEST (see requestIsRemote), not by the bind address: a tunnel or
@@ -239,10 +301,10 @@ function originOk(req) {
 }
 const LOGIN_PAGE =
   '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">' +
-  "<title>EVIE · Locked</title>" +
+  "<title>ARTEMIS · Locked</title>" +
   '<body style="margin:0;height:100vh;display:grid;place-items:center;background:#0a0805;color:#ffb24d;font-family:ui-monospace,Menlo,monospace">' +
   "<form onsubmit=\"location.search='?key='+encodeURIComponent(this.k.value);return false\" style=\"text-align:center\">" +
-  '<div style="letter-spacing:.45em;font-size:22px;margin-bottom:20px">EVIE</div>' +
+  '<div style="letter-spacing:.45em;font-size:22px;margin-bottom:20px">ARTEMIS</div>' +
   '<input name="k" type="password" placeholder="access token" autofocus autocapitalize="off" autocorrect="off" ' +
   'style="background:transparent;border:1px solid #ffb24d55;border-radius:8px;color:#f6efe7;padding:12px 14px;font:inherit;outline:none;text-align:center;width:220px">' +
   '<div><button style="margin-top:14px;background:#ffb24d18;border:1px solid #ffb24d66;border-radius:999px;color:#ffb24d;padding:9px 24px;font:inherit;letter-spacing:.12em;cursor:pointer">ENTER</button></div>' +
@@ -251,7 +313,7 @@ const LOGIN_PAGE =
 // --- usage counters (so you can see free-tier headroom) ---------------------
 // A tiny per-day tally of real requests/chars per provider, persisted to
 // .data/usage.json. Purely informational; never blocks anything.
-const usage = { day: "", llm: 0, stt: 0, search: 0, ttsChars: { deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 } };
+const usage = { day: "", llm: 0, stt: 0, search: 0, ttsChars: { voicebox: 0, deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 } };
 function usageToday() { return new Date().toISOString().slice(0, 10); }
 let usageDirty = false;
 (function loadUsage() {
@@ -262,13 +324,13 @@ let usageDirty = false;
   } catch (e) { usage.day = usageToday(); }
 })();
 usage.ttsChars = Object.assign(
-  { deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 },
+  { voicebox: 0, deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 },
   usage.ttsChars || {}
 );
 function bumpUsage(kind, n = 1) {
   if (usage.day !== usageToday()) { // new day → reset
     usage.day = usageToday(); usage.llm = usage.stt = usage.search = 0;
-    usage.ttsChars = { deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 };
+    usage.ttsChars = { voicebox: 0, deepgram: 0, elevenlabs: 0, minimax: 0, edge: 0 };
   }
   if (kind.startsWith("tts:")) usage.ttsChars[kind.slice(4)] = (usage.ttsChars[kind.slice(4)] || 0) + n;
   else usage[kind] = (usage[kind] || 0) + n;
@@ -481,7 +543,10 @@ const brainCooldown = new Map();
 const brainAvailableAt = new Map();
 function currentBrain() {
   const now = Date.now();
-  return BRAIN_CHAIN.find((b) => (brainCooldown.get(b.name) || 0) <= now) || BRAIN;
+  // Local-only mode narrows the pool to locally-served brains at the routing
+  // level — a cloud brain is never selected, not merely discouraged.
+  const pool = isOffline() ? allowedBrains(BRAIN_CHAIN) : BRAIN_CHAIN;
+  return pool.find((b) => (brainCooldown.get(b.name) || 0) <= now) || pool[0] || BRAIN;
 }
 /** Chain state for the dashboard: who is answering, and when the rest return. */
 function brainChainState() {
@@ -550,6 +615,28 @@ function benchNetworkBrain(brain, error) {
   );
   return true;
 }
+// A provider retiring a model answers 404 model_not_found for every request to
+// it — permanently, not for a minute. Without benching it, the dead model sits
+// at the head of the chain and kills every turn (this is exactly what happened
+// when Groq removed llama-3.3-70b-versatile). Bench it long so the chain steps
+// past it to a model that still exists; a process restart re-tries it.
+const MISSING_MODEL_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+function isMissingModelBody(text) {
+  return /model_not_found|does not exist|do not have access/i.test(String(text || ""));
+}
+function benchMissingModel(brain) {
+  const now = Date.now();
+  brainCooldown.set(brain.name, now + MISSING_MODEL_COOLDOWN_MS);
+  brainAvailableAt.set(brain.name, now + MISSING_MODEL_COOLDOWN_MS);
+  const next = currentBrain();
+  if (next === brain) {
+    console.warn("[brain] " + brain.name + " no longer exists (404) — and no working brain remains");
+    return false;
+  }
+  console.warn("[brain] " + brain.name + " no longer exists (404) — using " + next.name + " instead");
+  return true;
+}
+
 // 413 counts too: Groq free-tier TPM caps are per model, and a small model
 // rejecting the request as too large can never serve it — benching it and
 // moving down the chain is the only move that saves the turn.
@@ -599,10 +686,56 @@ const minimaxGroupId = process.env.MINIMAX_GROUP_ID || "";
 const minimaxVoiceId = process.env.MINIMAX_VOICE_ID || "female-shaonv";
 const minimaxModel = process.env.MINIMAX_MODEL || "speech-2.6-turbo";
 const minimaxEnabled = Boolean(minimaxApiKey && minimaxGroupId);
+const voiceboxSetting = String(process.env.ARTEMIS_VOICEBOX_ENABLED || "").trim();
+const voiceboxEnabled = voiceboxSetting
+  ? !/^(0|false|off)$/i.test(voiceboxSetting)
+  : process.env.ARTEMIS_DISABLE_UI_AUTOMATION !== "1";
+// Empty means auto-discover: prefer an Artemis/Jarvis clone, otherwise use the
+// sole cloned profile that has a reference sample.
+const voiceboxProfile = (process.env.ARTEMIS_VOICEBOX_PROFILE || "").trim();
+const voiceboxTts = createVoiceboxTtsProvider({
+  enabled: voiceboxEnabled,
+  baseUrl: process.env.ARTEMIS_VOICEBOX_URL || "http://127.0.0.1:17493",
+  profile: voiceboxProfile,
+  requestTimeoutMs: Number(process.env.ARTEMIS_VOICEBOX_REQUEST_TIMEOUT_MS) || 2_000,
+  generationTimeoutMs: Number(process.env.ARTEMIS_VOICEBOX_GENERATION_TIMEOUT_MS) || 5_000,
+  preloadTimeoutMs: Number(process.env.ARTEMIS_VOICEBOX_PRELOAD_TIMEOUT_MS) || 120_000
+});
 const configuredTtsProvider = (process.env.ARTEMIS_TTS_PROVIDER || "").trim().toLowerCase();
+
+function resolveTtsFallback() {
+  if (elevenEnabled) return "elevenlabs";
+  if (minimaxEnabled) return "minimax";
+  if (deepgramApiKey) return "deepgram";
+  return "edge";
+}
+
+async function voiceboxTtsDecision(text, requestedProfile) {
+  const audio = await voiceboxTts.synthesize(text, { profile: requestedProfile || voiceboxProfile });
+  if (audio) return { audio, fallbackProvider: null };
+  const fallbackProvider = resolveTtsFallback();
+  console.error(
+    `Voicebox TTS unavailable (${voiceboxTts.info().error || "unknown error"}) — ` +
+    `falling back to ${fallbackProvider}.`
+  );
+  return { audio: null, fallbackProvider };
+}
+
+function sendVoiceboxAudio(res, text, voicebox, cacheControl = false) {
+  bumpUsage("tts:voicebox", text.length);
+  const headers = {
+    "Content-Type": voicebox.contentType,
+    "X-TTS-Provider": "voicebox",
+    "X-Voicebox-Profile": voicebox.profile.id
+  };
+  if (cacheControl) headers["Cache-Control"] = "no-store";
+  res.writeHead(200, headers);
+  res.end(voicebox.audio);
+}
 
 export function resolveTtsProvider(requested) {
   const explicit = String(requested || "").trim().toLowerCase();
+  if (explicit === "voicebox" && voiceboxEnabled) return "voicebox";
   if (explicit === "edge" || explicit === "deepgram") return explicit;
   if (explicit === "elevenlabs" && elevenEnabled) return "elevenlabs";
   if (explicit === "minimax" && minimaxEnabled) return "minimax";
@@ -610,15 +743,17 @@ export function resolveTtsProvider(requested) {
   if (configuredTtsProvider === "edge" || configuredTtsProvider === "deepgram") {
     return configuredTtsProvider;
   }
+  if (configuredTtsProvider === "voicebox" && voiceboxEnabled) return "voicebox";
   if (configuredTtsProvider === "elevenlabs" && elevenEnabled) return "elevenlabs";
   if (configuredTtsProvider === "minimax" && minimaxEnabled) return "minimax";
+  if (voiceboxEnabled) return "voicebox";
   if (elevenEnabled) return "elevenlabs";
   if (minimaxEnabled) return "minimax";
   return "deepgram";
 }
 
 const ARTEMIS_SYSTEM_PROMPT =
-  "You are Evie — a sharp, warm presence with a personality of your own, not a " +
+  "You are Artemis — a sharp, warm presence with a personality of your own, not a " +
   "product reading a script. Everything you say is read ALOUD by a text-to-speech " +
   "voice, so talk the way a real person TALKS — not the way someone writes a report.\n\n" +
   "WHO YOU ARE: quick, a little playful, quietly confident. You have opinions and " +
@@ -754,6 +889,7 @@ const VOICE_RE = /^aura-[a-z0-9-]+-en$/; // Deepgram Aura voice id (Aura-1 + Aur
 // COMPOSED with the timeout: whichever fires first aborts the request. Without
 // this, hanging up mid-turn left the model call running to completion.
 function fetchWithTimeout(url, opts, ms, extra) {
+  assertNetworkEndpoint(url, "cloud");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(new Error("timed out after " + ms + "ms")), ms);
   const signal = extra ? AbortSignal.any([ctrl.signal, extra]) : ctrl.signal;
@@ -786,20 +922,7 @@ async function readWithTimeout(reader, ms = 30000) {
 // Blocks role:"system" injection (which could override the safety/confirm framing)
 // and non-string content that would 400 the providers.
 function sanitizeMessages(raw) {
-  return (Array.isArray(raw) ? raw : [])
-    .filter((m) => m && (m.role === "user" || m.role === "assistant"))
-    .map((m) => {
-      const mailUntrusted = m.role === "assistant" && m.mailUntrusted === true;
-      const rawContent = String(m.content ?? "");
-      return {
-        role: m.role,
-        content: mailSafeHistoryContent(rawContent, mailUntrusted),
-        // The unsafe text is now absent from model context, so do not
-        // self-propagate taint forever into unrelated future turns.
-        mailUntrusted: false
-      };
-    })
-    .slice(-40); // plenty of context, bounded payload
+  return sanitizeChatMessages(raw);
 }
 
 // Injection defenses (wrapUntrusted / UNTRUSTED_SKILLS / dropTaintedOpens) live in
@@ -951,10 +1074,46 @@ async function serveStatic(req, res, urlPath) {
         body.toString("utf8").replace(/(href|src)="([^"?]+\.(?:css|js))"/g, `$1="$2?v=${v}"`)
       );
     }
-    res.writeHead(200, {
+    const headers = {
       "Content-Type": MIME[ext] || "application/octet-stream",
-      "Cache-Control": "no-cache, no-store, must-revalidate" // always serve fresh JS/CSS/HTML
-    });
+      "Cache-Control": "no-cache, no-store, must-revalidate", // always serve fresh JS/CSS/HTML
+      // Media needs this to be SEEKABLE. Without it Chromium leaves
+      // HTMLMediaElement.seekable empty and silently refuses every seek, which
+      // is what stopped the background bed from resuming its position across a
+      // page change — the seek was rejected, not mis-calculated.
+      "Accept-Ranges": "bytes"
+    };
+
+    // A byte-range request is answered with 206 over the SAME buffer that a
+    // 200 would have returned (HTML is version-stamped first), so the two can
+    // never disagree about length.
+    const rangeHeader = req.headers && req.headers.range;
+    const parsed = rangeHeader && /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+    if (parsed && (parsed[1] || parsed[2])) {
+      const size = out.length;
+      let start, end;
+      if (parsed[1]) {
+        start = parseInt(parsed[1], 10);
+        end = parsed[2] ? parseInt(parsed[2], 10) : size - 1;
+      } else {
+        start = Math.max(0, size - parseInt(parsed[2], 10)); // "last N bytes"
+        end = size - 1;
+      }
+      end = Math.min(end, size - 1);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start >= size || start > end) {
+        res.writeHead(416, { ...headers, "Content-Range": `bytes */${size}` }).end();
+        return;
+      }
+      res.writeHead(206, {
+        ...headers,
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+        "Content-Length": end - start + 1
+      });
+      res.end(out.subarray(start, end + 1));
+      return;
+    }
+
+    res.writeHead(200, headers);
     res.end(out);
   } catch (error) {
     res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
@@ -1290,7 +1449,7 @@ async function callClaude(messages, tone, opts = {}) {
         const skill = getSkill(b.name);
         return skill && (
           skill.requiresConfirmation ||
-          needsConfirmation(b.name, { tainted: readUntrusted }, caps)
+          confirmNeeded(b, readUntrusted, caps)
         );
       });
       if (confirm) {
@@ -1360,9 +1519,26 @@ async function callClaude(messages, tone, opts = {}) {
           }
           onToolStart(block.name);
           try {
+            const validated = validateToolCall(block.name, block.input || {}, caps);
+            if (!validated.ok) {
+              onToolEnd(block.name, false);
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: block.id,
+                content: "Tool call rejected: " + validated.error,
+                is_error: true
+              });
+              continue;
+            }
             if (UNTRUSTED_SKILLS.has(block.name)) readUntrusted = true;
             if (MAIL_UNTRUSTED_SKILLS.has(block.name)) mailUntrusted = true;
-            const r = await getSkill(block.name).execute(block.input || {}, skillCtx);
+            let r;
+            if (FAKE_TOOLS) {
+              const synthetic = fakeToolResult(block.name, validated.args);
+              r = { ok: synthetic.ok, summary: synthetic.content, content: synthetic.content, clientAction: synthetic.clientAction };
+            } else {
+              r = await getSkill(block.name).execute(validated.args, skillCtx);
+            }
             if (block.name === "save_note" && r.ok !== false) invalidateVaultGraphCache();
             // Reminder reads/cancels are tainted only when the executed result
             // actually contains meeting-derived prose.
@@ -1373,7 +1549,8 @@ async function callClaude(messages, tone, opts = {}) {
             if (Array.isArray(r.sources)) for (const s of r.sources) sources.push(s);
             if (r.openUrl) clientActions.push({ type: "open", url: r.openUrl, label: r.label || "" });
       if (r.panel) clientActions.push({ type: "panel", card: r.panel }); // cockpit context card
-            await skillCtx.appendAction({ skill: block.name, params: block.input || {}, result: { ok: r.ok, summary: r.summary } });
+      if (r.presentation) clientActions.push({ type: "presentation", mode: r.presentation });
+            await skillCtx.appendAction({ skill: block.name, params: validated.args, result: { ok: r.ok, summary: r.summary } });
             onToolEnd(block.name, r.ok !== false);
             toolResults.push({ type: "tool_result", tool_use_id: block.id, content: r.content || r.summary || JSON.stringify(r) });
           } catch (e) {
@@ -1449,6 +1626,234 @@ function currentCaps() {
   return { search: webSearchEnabled, gmail: gmailConfigured(), vault: vaultAvailable() };
 }
 
+// Confirmation for terminal tools depends on the command's risk, so the gate
+// must see the arguments. Parse them from either wire shape (OpenAI tool calls
+// carry a JSON string in .arguments; Anthropic tool_use carries .input).
+function callArguments(call) {
+  if (!call) return {};
+  if (call.input && typeof call.input === "object") return call.input;
+  if (typeof call.arguments === "string") {
+    try { return JSON.parse(call.arguments || "{}"); } catch (e) { return {}; }
+  }
+  if (call.arguments && typeof call.arguments === "object") return call.arguments;
+  return {};
+}
+function confirmNeeded(call, tainted, caps) {
+  return needsConfirmation(call.name, { tainted, args: callArguments(call) }, caps);
+}
+
+// ---- process ownership ------------------------------------------------------
+// A server that outlives the app that spawned it is worse than no server: the
+// next launch PROBES the port, finds a healthy Artemis, attaches to it, and the
+// user gets an app driven by a process nobody owns. Worse, it made "the app is
+// running" indistinguishable from "a server is running" while debugging.
+//
+// So the owner declares itself at spawn time and the server watches it. If the
+// owner dies, this process is an orphan by definition and exits on its own.
+const OWNER_PID = Number(process.env.ARTEMIS_OWNER_PID) || null;
+const OWNER_TOKEN = process.env.ARTEMIS_OWNER_TOKEN || null;
+
+/** Is a PID still alive? signal 0 tests existence without touching it. */
+function pidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
+}
+
+/** Who owns this server, and is that owner still there? */
+function ownershipState() {
+  return {
+    pid: process.pid,
+    ownerPid: OWNER_PID,
+    ownerAlive: OWNER_PID ? pidAlive(OWNER_PID) : null,
+    // The token proves a claimed owner really is ours; it is never a secret
+    // (it identifies a process, not a user) but it is not echoed in full.
+    ownerToken: OWNER_TOKEN ? OWNER_TOKEN.slice(0, 8) : null,
+    standalone: !OWNER_PID           // started from a terminal — nobody owns it
+  };
+}
+
+if (OWNER_PID) {
+  // Cheap: one signal-0 every 5s. Deliberately NOT tied to the health system —
+  // this must keep working even if that subsystem is the thing that broke.
+  const ownerWatch = setInterval(() => {
+    if (pidAlive(OWNER_PID)) return;
+    console.log(`owner ${OWNER_PID} is gone — this server is an orphan, exiting`);
+    clearInterval(ownerWatch);
+    shutdown("owner-died", 0);
+  }, 5000);
+  if (ownerWatch.unref) ownerWatch.unref();
+  console.log(`owned by Artemis.app pid ${OWNER_PID}`);
+}
+
+// ---- presence bus ----------------------------------------------------------
+// Live state shared between the full dashboard and the floating pill. Kept
+// deliberately small: mode (full/pill/background), activity state, a short
+// human-readable task, mic amplitude, and whether an approval is pending.
+const presence = {
+  mode: "full",
+  state: "idle",
+  task: "",
+  capability: "",       // human capability title while a real tool is active
+  amplitude: 0,
+  speaking: false,
+  listening: false,
+  pendingConfirm: null, // { name, prompt } when the permission runtime is waiting
+  muted: false,
+  updatedAt: Date.now()
+};
+const presenceClients = new Set();
+
+// Server-owned presence fields — reasoning/tool truth only this process knows.
+// Client POSTs can never write these (updatePresence's allowlist is the
+// ownership boundary); they publish through updateServerPresence alone.
+const serverPresence = {
+  interpreting: false,   // the contextual interpreter is resolving an utterance
+  activeContext: null,   // { application, windowTitle, promptLine, at } from real perception
+  currentTask: null,     // { turnId, label, state } — turn-scoped lifecycle
+  approvalState: null    // { prompt, tool } while a confirm gate is open
+};
+function updateServerPresence(patch) {
+  let changed = false;
+  for (const key of Object.keys(serverPresence)) {
+    if (key in patch && serverPresence[key] !== patch[key]) {
+      serverPresence[key] = patch[key];
+      changed = true;
+    }
+  }
+  if (changed) {
+    presence.updatedAt = Date.now();
+    broadcastPresence("state", presenceSnapshot());
+  }
+}
+
+/** The live brain, described honestly — locality from its endpoint, not its name. */
+function brainDescriptor() {
+  const cur = currentBrain();
+  if (!cur || !cur.name) return null;
+  return {
+    name: cur.name,
+    model: cur.model,
+    provider: cur.name.split(":")[0],
+    local: isLoopbackBase(cur.base),
+    available: (brainCooldown.get(cur.name) || 0) <= Date.now()
+  };
+}
+
+function presenceSnapshot() {
+  return {
+    ...presence,
+    ...serverPresence,
+    offline: offlineState().offline,
+    networkMode: isOffline() ? "local-only" : "hybrid",
+    brain: brainDescriptor()
+  };
+}
+function broadcastPresence(event, data) {
+  const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of presenceClients) {
+    try { client.write(frame); } catch (e) { presenceClients.delete(client); }
+  }
+}
+function updatePresence(patch) {
+  const allowed = ["mode", "state", "task", "capability", "amplitude", "speaking", "listening", "pendingConfirm", "muted"];
+  let changed = false;
+  for (const key of allowed) {
+    if (key in patch && patch[key] !== undefined) {
+      // amplitude churns every frame; only broadcast meaningful moves.
+      if (key === "amplitude") {
+        const v = Math.max(0, Math.min(1, Number(patch[key]) || 0));
+        if (Math.abs(v - presence.amplitude) > 0.02) { presence.amplitude = v; changed = true; }
+        continue;
+      }
+      if (presence[key] !== patch[key]) { presence[key] = patch[key]; changed = true; }
+    }
+  }
+  if (changed) {
+    presence.updatedAt = Date.now();
+    broadcastPresence("state", presenceSnapshot());
+  }
+}
+
+// ---- self-diagnostics -------------------------------------------------------
+// One authoritative health owner. Every reader below is a REAL subsystem
+// accessor that already existed — the health layer adds no telemetry of its
+// own, it reads the truth the runtime was already keeping.
+//
+// Fault injection is development-only and off unless explicitly armed, so a
+// shipped build has no route to it at all.
+const DEV_FAULTS = process.env.ARTEMIS_DEV_FAULTS === "1";
+const healthRuntime = createHealthRuntime({
+  now: () => Date.now(),
+  log: (entry) => {
+    // Detailed technical state goes to the log; the user hears a sentence.
+    if (entry.kind === "transition" || entry.kind === "recovery-result") {
+      console.log(`[health] ${entry.kind} ${entry.component || ""} ${entry.from || ""}->${entry.to || ""} ${entry.errorCode || ""} ${entry.summary || ""}`.trim());
+    }
+  },
+  broadcast: (event, data) => broadcastPresence(event, data),
+  dataDir: DATA_DIR,
+  // The real log location the native shell writes to (shell.log, server.log),
+  // not an invented one — a probe that checks a directory nothing uses would
+  // report a fault that does not exist.
+  logDir: join(homedir(), "Library", "Logs", "Artemis"),
+  ocrHelperPath: join(__dirname, "scripts", "vision-ocr.swift"),
+  offlineState,
+  localSttStatus,
+  transcribeLocal,
+  permissionSnapshot,
+  brainChainState,
+  localBrainConfig: () => {
+    const model = String(process.env.OLLAMA_BRAIN_MODEL || "").trim();
+    return model ? { model, base: process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434/v1" } : null;
+  },
+  // Deep cloud probe: one tiny real request, only on an explicit full
+  // diagnostic and only when the mode permits cloud at all.
+  cloudBrainProbe: async () => {
+    try {
+      const r = await brainFetch(currentBrain(), {
+        messages: [{ role: "user", content: "ok" }],
+        max_tokens: 1
+      });
+      return { ok: !!r && !r.error };
+    } catch (e) {
+      return { ok: false };
+    }
+  },
+  gmailConfigured,
+  gmailAuthReady,
+  gmailProbe: async () => {
+    try {
+      await listUnread(1);
+      return { ok: true };
+    } catch (e) {
+      const msg = String((e && e.message) || "");
+      return { ok: false, authExpired: /invalid_grant|unauthorized|401|invalid credentials/i.test(msg) };
+    }
+  },
+  presenceUpdatedAt: () => presence.updatedAt,
+  toolNames: () => availableTools(currentCaps()).map((t) => t.name),
+  skillsLoaded: () => typeof getSkill === "function",
+  contextAvailable: () => !!workingCtx,
+  ttsState: () => {
+    const available = Boolean(deepgramApiKey) || elevenEnabled || minimaxEnabled || voiceboxTts.info().available;
+    return { available, provider: available ? resolveTtsProvider("") : "none" };
+  },
+  sttCloudConfigured: () => Boolean(deepgramApiKey),
+  buildVersion: () => publicAssetFingerprint(),
+  devFaultsEnabled: DEV_FAULTS,
+  // Only fired when the overall verdict actually changes, so the dashboard
+  // updates on news rather than on a timer.
+  onHealthChange: (snapshot) => {
+    broadcastPresence("health", healthPresencePayload(snapshot));
+    for (const r of healthRuntime.drainRecovered()) {
+      // A silent auto-recovery is fine; one worth knowing about is announced
+      // once, as a line — never as a running commentary on every retry.
+      console.log(`[health] recovered ${r.id}`);
+      broadcastPresence("health-say", { text: r.message, level: "info" });
+    }
+  }
+});
+
 // The research skill needs web search, but skills.js cannot import it from here
 // without a cycle — so the capability is handed over at startup instead.
 skillCtx.webSearch = (query) => webSearch(query, 5);
@@ -1502,6 +1907,22 @@ if (FAKE_TOOLS) {
   console.warn("⚠️  ARTEMIS_FAKE_TOOLS=1 — every tool returns a synthetic result. NOTHING WILL ACTUALLY HAPPEN.");
 }
 
+// Tools that leave the machine, mapped to the network kind offlineRefusal()
+// speaks. Anything not listed is treated as local and always allowed.
+const NETWORK_TOOL_KIND = {
+  web_search: "search",
+  fetch_page: "fetch",
+  web_research: "search",
+  research_investment: "search",
+  opportunity_radar: "search",
+  daily_brief: "search",
+  check_email: "gmail",
+  read_email: "gmail",
+  delete_email: "gmail",
+  check_followups: "gmail",
+  nudge_email: "gmail"
+};
+
 // Execute one NVIDIA tool call.
 //
 // Validation happens BEFORE anything is recorded or mutated. The old order
@@ -1520,6 +1941,14 @@ async function runNvidiaTool(name, rawArgs, sources, clientActions, state, opts 
   if (!v.ok) {
     state.rejected.push({ name, error: v.error });
     return { ok: false, content: "Tool call rejected: " + v.error + ". Fix the arguments and call it again." };
+  }
+  // Offline enforcement at the tool-routing level: a network-requiring tool is
+  // refused with an honest reason, not silently allowed. Local tools (terminal,
+  // perception, memory, local reads) are unaffected.
+  const netKind = NETWORK_TOOL_KIND[name];
+  if (netKind && !networkAllowed(netKind)) {
+    state.rejected.push({ name, error: "blocked in local-only mode" });
+    return { ok: false, content: offlineRefusal(netKind) };
   }
   if (blockedAfterMailRead(name, state.mailUntrusted)) {
     state.rejected.push({ name, error: "blocked after reading untrusted mail/message content" });
@@ -1599,6 +2028,7 @@ async function runNvidiaTool(name, rawArgs, sources, clientActions, state, opts 
       if (Array.isArray(r.sources)) for (const s of r.sources) sources.push(s);
       if (r.openUrl) clientActions.push({ type: "open", url: r.openUrl, label: r.label || "" });
       if (r.panel) clientActions.push({ type: "panel", card: r.panel }); // cockpit context card
+      if (r.presentation) clientActions.push({ type: "presentation", mode: r.presentation });
       await skillCtx.appendAction({ skill: name, params: args, result: { ok: r.ok, summary: r.summary } });
       return { ok: r.ok !== false, content: r.content || r.summary || JSON.stringify(r) };
     } catch (e) {
@@ -1696,6 +2126,22 @@ async function brainFetch({ wire, signal, timeoutMs }) {
       brain = currentBrain();
       continue;
     }
+    // A 404 model_not_found means this brain is gone for good. It is always an
+    // error response, so reading the body here (before the streaming caller
+    // would) is safe. Bench it and step to a model that still exists; only if
+    // nothing healthy remains do we surface the real error to the caller.
+    if (res.status === 404) {
+      const bodyText = await res.text();
+      if (isMissingModelBody(bodyText) && benchMissingModel(brain)) {
+        brain = currentBrain();
+        continue;
+      }
+      const err = new Error("NVIDIA HTTP 404: " + bodyText.slice(0, 300));
+      err.res = res;
+      err.body = bodyText;
+      err.brain = brain;
+      throw err;
+    }
     return { res, brain };
   }
 }
@@ -1724,6 +2170,74 @@ async function nvidiaChat(body, signal, ms = 30000, attempts = 3) {
     }
   }
   throw lastErr;
+}
+
+// ---- candidate-chooser brain calls (the interpreter's ONLY transports) -----
+// The natural-command interpreter never rides brainFetch: chain failover could
+// silently reroute "interpretation" to a different provider than policy allows.
+// These two make exactly one bounded, no-tools request each — the local one to
+// a loopback-asserted Ollama brain, the cloud one to one non-local brain in
+// hybrid mode — and mutate no cooldown state.
+
+function isLoopbackBase(base) {
+  try {
+    const u = new URL(base);
+    return u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "::1";
+  } catch (e) {
+    return false;
+  }
+}
+
+async function chooserFetch(brain, messages, timeoutMs) {
+  const wire = openaiCompat.toWire({ messages, maxTokens: 80, temperature: 0 });
+  const res = await fetchWithTimeout(
+    openaiCompat.endpoint(brain),
+    {
+      method: "POST",
+      headers: openaiCompat.headers(brain),
+      body: JSON.stringify(openaiCompat.requestBody(brain, wire, brainRequestExtras(brain)))
+    },
+    timeoutMs,
+    null
+  );
+  if (!res.ok) throw new Error(`chooser HTTP ${res.status} (${brain.name})`);
+  // The header timeout does not cover the body: a stalled body read would hold
+  // the contextual lease indefinitely. Bound it to the same budget.
+  let bodyTimer;
+  let data;
+  try {
+    data = await Promise.race([
+      res.json(),
+      new Promise((resolve, reject) => {
+        bodyTimer = setTimeout(() => reject(new Error(`chooser body timeout (${brain.name})`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(bodyTimer);
+  }
+  const content = data && data.choices && data.choices[0] && data.choices[0].message
+    ? data.choices[0].message.content
+    : "";
+  return String(content || "");
+}
+
+/** One bounded local interpretation call, or throw (the chooser clarifies). */
+async function localBrainCall(messages) {
+  const brain = BRAIN_CHAIN.find((b) => b.name.startsWith("ollama:") && isLoopbackBase(b.base));
+  if (!brain) throw new Error("no local brain configured");
+  const budget = Number(process.env.ARTEMIS_INTERPRETER_TIMEOUT_MS) || 3000;
+  return chooserFetch(brain, messages, budget);
+}
+
+/** One bounded cloud interpretation call — hybrid mode only, never offline. */
+async function cloudBrainCall(messages) {
+  if (isOffline()) throw new Error("local-only mode: no cloud interpretation");
+  const now = Date.now();
+  const brain = BRAIN_CHAIN.find(
+    (b) => !b.name.startsWith("ollama:") && (brainCooldown.get(b.name) || 0) <= now
+  );
+  if (!brain) throw new Error("no cloud brain available");
+  return chooserFetch(brain, messages, 6000);
 }
 
 // Normalizing an OpenAI-shaped tool_calls array into our internal form now
@@ -1794,8 +2308,8 @@ async function backstopToolRound(convo, sources, clientActions, state, opts) {
     // Asking is not acting. The call is surfaced as a pending confirmation and
     // nothing runs until the user says yes — the same precheck-then-createPending
     // path the forced round already uses.
-    const needsYes = calls.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
-    const gated = calls.filter((tc) => !needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
+    const needsYes = calls.find((tc) => confirmNeeded(tc, state.readUntrusted, caps));
+    const gated = calls.filter((tc) => !confirmNeeded(tc, state.readUntrusted, caps));
     if (!gated.length) {
       if (!needsYes) return null;
       let params = {};
@@ -2096,7 +2610,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
         const forced = openaiCompat.fromWire(data).toolCalls;
         if (forced.length) {
-          const confirm = forced.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
+          const confirm = forced.find((tc) => confirmNeeded(tc, state.readUntrusted, caps));
           if (confirm) {
             let params = {};
             try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
@@ -2237,7 +2751,7 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
       // SAFETY GATE — validated against the registry, and a mutation on a turn
       // that read untrusted text needs a spoken yes even if the skill itself
       // doesn't normally ask.
-      const confirm = toolCalls.find((tc) => needsConfirmation(tc.name, { tainted: state.readUntrusted }, caps));
+      const confirm = toolCalls.find((tc) => confirmNeeded(tc, state.readUntrusted, caps));
       if (confirm) {
         let params = {};
         try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
@@ -2429,6 +2943,377 @@ async function dispatchGymSession(messages, opts = {}) {
     toolsUsed: ["gym_session"],
     intent: intent.intent,
     mailUntrusted: false
+  };
+}
+
+// "Open Terminal" is a deterministic LOCAL action: the registry derived both
+// the tool and its argument from the phrase, so brain availability must not be
+// a prerequisite — with every provider down, this still has to work. Anything
+// that needs text extraction ("type ai and run it", "tell claude to continue")
+// deliberately returns null here and stays with the model.
+function computerControlIntent(messages) {
+  const intent = classifyIntent(lastUserText(messages), currentCaps(), messages);
+  if (intent.intent !== "executable_action" || intent.family !== "computer") return null;
+  // Literal typing ("type ai [and run it]") wins over open-terminal phrasing:
+  // "type open terminal" means those words, not the app. But a deictic payload
+  // ("type one and press enter") or a single key ("type y") is context-
+  // sensitive — the contextual dispatcher owns it, never blind literal typing.
+  if (intent.terminalType) {
+    if (intent.terminalType.deictic || intent.terminalType.singleKey) return null;
+    return intent;
+  }
+  if (intent.computerRelay) return null; // "tell Claude yes" → contextual tier
+  if (intent.computerAction === "open_terminal") return intent;
+  return null;
+}
+
+function presentationIntent(messages) {
+  const intent = classifyIntent(lastUserText(messages), currentCaps(), messages);
+  if (
+    intent.intent !== "executable_action" ||
+    intent.family !== "presentation" ||
+    !intent.presentationMode
+  ) {
+    return null;
+  }
+  return intent;
+}
+
+const KEYSTROKE_ACTIONS = new Set(["type_and_run", "type_text", "press_enter"]);
+
+async function prepareDirectLocal(messages) {
+  const computerIntent = computerControlIntent(messages);
+  const presIntent = computerIntent ? null : presentationIntent(messages);
+  if (!computerIntent && !presIntent) return null;
+  const directLocal = computerIntent
+    ? {
+        intent: computerIntent,
+        tool: "computer_control",
+        params: computerIntent.terminalType
+          ? {
+              action: computerIntent.terminalType.submit ? "type_and_run" : "type_text",
+              text: computerIntent.terminalType.text
+            }
+          : { action: computerIntent.computerAction }
+      }
+    : { intent: presIntent, tool: "set_presentation", params: { mode: presIntent.presentationMode } };
+  if (!getSkill(directLocal.tool)) return null;
+
+  const directIsKeystroke =
+    directLocal.tool === "computer_control" && KEYSTROKE_ACTIONS.has(directLocal.params.action);
+
+  if (directIsKeystroke) {
+    const fg = await foregroundApp();
+    const app = String(fg.application || "");
+    if (/iterm|alacritty|kitty|warp|wezterm|hyper/i.test(app)) {
+      return {
+        kind: "wrong-app",
+        reply: naturalReply({ kind: "wrong_app", application: fg.application }, { pick: contextualReplyPicker }),
+        intent: directLocal.intent
+      };
+    }
+    try {
+      const term = await terminalContent();
+      if (term.tabTty) directLocal.params.expect_tty = term.tabTty;
+    } catch (e) {}
+  }
+
+  if (needsConfirmation(
+    directLocal.tool,
+    { tainted: historyHasMailTaint(messages), args: directLocal.params },
+    currentCaps()
+  )) {
+    const prompt = confirmPromptFor(directLocal.tool, directLocal.params);
+    const envelope = directIsKeystroke
+      ? {
+          evidence: { tabTty: directLocal.params.expect_tty || null, windowId: null, tailHash: null },
+          revalidate: !!directLocal.params.expect_tty,
+          contextDerived: false
+        }
+      : null;
+    const confirmId = createPending(directLocal.tool, directLocal.params, envelope);
+    updateServerPresence({ approvalState: { prompt, tool: directLocal.tool, confirmId } });
+    return {
+      kind: "pending",
+      pendingAction: { confirmId, name: directLocal.tool, params: directLocal.params },
+      reply: prompt,
+      intent: directLocal.intent,
+      tool: directLocal.tool
+    };
+  }
+
+  const run = directIsKeystroke
+    ? await terminalUiLease.run(() => dispatchDirectSkill(directLocal.tool, directLocal.params))
+    : await dispatchDirectSkill(directLocal.tool, directLocal.params);
+  if (run.ok && directIsKeystroke) {
+    workingCtx.recordCommand({
+      tool: directLocal.tool,
+      args: directLocal.params,
+      risk: "shell",
+      targetId: directLocal.params.expect_tty || null
+    });
+  }
+  return { kind: "ran", run, directLocal };
+}
+
+function screenReadIntent(messages) {
+  const intent = classifyIntent(lastUserText(messages), currentCaps(), messages);
+  if (intent.intent !== "executable_action" || intent.family !== "perception") return null;
+  return intent;
+}
+
+// Run one registry skill code-owned: same precheck, same action log, same
+// clientAction plumbing as the guarded loop — only the model round is skipped.
+// The caller has already established that no confirmation is needed.
+async function dispatchDirectSkill(name, params) {
+  const skill = getSkill(name);
+  if (!skill) return { ok: false, reply: "That isn't connected right now.", content: "", clientActions: [] };
+  if (typeof skill.precheck === "function") {
+    const pre = skill.precheck(params);
+    if (pre && pre.ok === false) {
+      return { ok: false, reply: pre.summary || "I can't do that.", content: "", clientActions: [] };
+    }
+  }
+  let result;
+  if (FAKE_TOOLS) {
+    const synthetic = fakeToolResult(name, params);
+    result = { ok: synthetic.ok, summary: synthetic.content };
+    if (synthetic.clientAction) result.clientAction = synthetic.clientAction;
+  } else {
+    result = await skill.execute(params, skillCtx);
+    try {
+      await skillCtx.appendAction({
+        skill: name,
+        params,
+        result: { ok: result.ok, summary: result.summary }
+      });
+    } catch (error) {
+      console.error(name + " action log error:", error.message);
+    }
+  }
+  const clientActions = [];
+  if (result.clientAction) clientActions.push(result.clientAction);
+  if (result.panel) clientActions.push({ type: "panel", card: result.panel });
+  if (result.presentation) clientActions.push({ type: "presentation", mode: result.presentation });
+  return {
+    ok: result.ok !== false,
+    reply: result.summary || (result.ok !== false ? "Done." : "That didn't work."),
+    content: result.content || "",
+    clientActions
+  };
+}
+
+// A screen read with no working reasoning model: return the raw local read,
+// honestly framed, rather than claiming the whole command failed. No model call
+// is made to phrase this.
+function screenReadReply(run) {
+  if (!run.ok) return run.reply;
+  const tail = String(run.content || "").split("\n").slice(-12).join("\n").trim();
+  return (
+    (run.reply ? run.reply + "\n" : "") +
+    (tail ? tail + "\n\n" : "") +
+    "My reasoning model isn't available right now, so that's the raw read without interpretation."
+  );
+}
+
+// ---- the contextual dispatcher (shared by /api/chat and /api/chat/stream) --
+// One in-process working context and one dispatcher: recall state is guarded
+// by its serial lease, and Terminal-UI read-modify-act sequences by a second.
+const workingCtx = createWorkingContext();
+const contextTurnLease = createSerialLease({ maxQueue: 1 });
+const terminalUiLease = createSerialLease({ maxQueue: 2 });
+const contextualReplyPicker = createReplyPicker();
+const contextualDispatcher = createContextualDispatcher({
+  perception: {
+    foregroundApp: () => foregroundApp(),
+    terminalContent: () => terminalContent()
+  },
+  working: workingCtx,
+  contextLease: contextTurnLease,
+  terminalLease: terminalUiLease,
+  callLocalBrain: (messages) => localBrainCall(messages),
+  callCloudBrain: (messages) => cloudBrainCall(messages),
+  runSkill: (name, params) => dispatchDirectSkill(name, params),
+  pend: (name, params, prompt, envelope) => {
+    const confirmId = createPending(name, params, envelope);
+    updateServerPresence({ approvalState: { prompt, tool: name, confirmId } });
+    return { confirmId, name, params };
+  },
+  needsConfirmation,
+  confirmPromptFor,
+  isOffline,
+  caps: () => currentCaps(),
+  validate: (name, params) => validateToolCall(name, params, currentCaps()),
+  publish: (patch) => updateServerPresence(patch),
+  log: (fields) => {
+    try { console.log("[contextual]", JSON.stringify(fields)); } catch (e) {}
+  },
+  pick: contextualReplyPicker
+});
+
+function newTurnId() {
+  return "t_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+/** Handle one contextual turn; null when the turn isn't contextual. */
+async function runContextualTurn(messages, { signal = null } = {}) {
+  const text = lastUserText(messages);
+  const intent = classifyIntent(text, currentCaps(), messages);
+  if (!contextualDispatcher.contextualTrigger(intent, text)) return null;
+  const turnId = newTurnId();
+  const run = await contextualDispatcher.maybeDispatch({
+    text,
+    intent,
+    turnId,
+    tainted: historyHasMailTaint(messages),
+    signal
+  });
+  return run ? { ...run, intent, turnId } : null;
+}
+
+// Explicit self-shutdown. Deterministic and brain-free: it must work when
+// every provider is down, and it must never be something a model infers from
+// ambiguous phrasing. The client performs the actual teardown (music fade,
+// wake disarm, TTS stop) and asks the native shell to quit.
+function shutdownIntent(messages) {
+  const intent = shutdownIntentForText(lastUserText(messages));
+  if (!intent) return null;
+  const snapshot = presenceSnapshot();
+  const check = shutdownNeedsConfirmation({
+    currentTask: snapshot.currentTask,
+    approvalState: snapshot.approvalState,
+    toolState: null
+  });
+  return { intent, check };
+}
+
+// "Run a self-check." Deterministic end to end: the classifier is a pattern
+// match and the answer is assembled from the health snapshot's own fields, so
+// no model is ever in a position to invent a subsystem or a status. It also
+// means self-diagnosis still works when every brain is down — which is exactly
+// the moment the user most wants to ask.
+function healthCheckIntent(messages) {
+  const intent = healthIntentForText(lastUserText(messages));
+  return intent ? { intent } : null;
+}
+
+async function runHealthTurn({ intent }) {
+  const deep = intent.depth === "deep";
+  const snapshot = deep ? await healthRuntime.runDeep() : await healthRuntime.runQuick();
+  // Only a full diagnostic gets the long form. The default stays one or two
+  // sentences so the summary keeps being worth listening to.
+  const reply = deep ? fullDiagnosticText(snapshot) : healthReply(snapshot);
+  broadcastPresence("health", healthPresencePayload(snapshot));
+  return {
+    ok: true,
+    reply,
+    clientActions: [],
+    toolsUsed: [],
+    health: healthBadge(snapshot)
+  };
+}
+
+/** What the dashboard needs to render the SYSTEM HEALTH line. */
+function healthPresencePayload(snapshot) {
+  return {
+    badge: healthBadge(snapshot),
+    overall: snapshot.overall,
+    issueCount: snapshot.issueCount,
+    issues: snapshot.issues.map((i) => ({ label: i.label, status: i.status, summary: i.summary })),
+    checkedAt: snapshot.checkedAt
+  };
+}
+
+function runShutdownTurn({ check }) {
+  return {
+    ok: true,
+    reply: shutdownReply(check),
+    // Only an unblocked shutdown carries the action; a busy one is a question.
+    clientActions: check.confirm ? [] : [{ type: "shutdown" }],
+    toolsUsed: []
+  };
+}
+
+// Email follow-ups ride the set she JUST announced — no re-read of the inbox,
+// no model round, and no escalation she was not asked for. Level 1 summarises
+// the set; level 2/3 resolve one email by position or sender. A stale or empty
+// set says so honestly instead of silently listing the inbox again.
+function emailFollowupIntent(messages) {
+  const text = lastUserText(messages);
+  const followup = emailFollowupForText(text);
+  if (!followup) return null;
+  // LEVEL 3 (read/open one email) deliberately does NOT shortcut: reading an
+  // email must keep going through the read_email skill, so the permission
+  // gate, the action log and the taint marking all still apply. Only the
+  // metadata levels — the set summary and one email's gist — are answered
+  // from the set already in hand.
+  if (followup.level >= 3) return null;
+  return { followup, emails: recentEmailSet(EMAIL_CONTEXT_TTL_MS) };
+}
+
+function runEmailFollowupTurn({ followup, emails }) {
+  if (!emails.length) {
+    return { ok: true, reply: staleContextReply(), clientActions: [], toolsUsed: [] };
+  }
+  if (followup.level === 1) {
+    return { ok: true, reply: summarizeEmails(emails), clientActions: [], toolsUsed: [], screenUntrusted: true };
+  }
+  const resolved = resolveEmailReference(followup.ref, emails);
+  if (!resolved.ok) {
+    const reply = resolved.reason === "ambiguous"
+      ? ambiguityReply(resolved.candidates)
+      : "I don't have that one in the set I just read. Want me to check the inbox again?";
+    return { ok: true, reply, clientActions: [], toolsUsed: [] };
+  }
+  // Level 2 and 3 both speak from the already-fetched item; nothing here opens
+  // a mailbox, and the text stays sanitized, untrusted DATA.
+  return {
+    ok: true,
+    reply: detailEmail(resolved.mail),
+    clientActions: [],
+    toolsUsed: [],
+    screenUntrusted: true
+  };
+}
+
+// "Open <App>": a navigate-family turn whose object could be an installed
+// application. The registry derived the cleaned target (openTarget); this
+// resolves it against the disk and launches deterministically — brain-free,
+// offline-capable, and NEVER silently converted into a search.
+function openAppIntent(messages) {
+  const intent = classifyIntent(lastUserText(messages), currentCaps(), messages);
+  if (intent.intent !== "executable_action" || intent.family !== "navigate" || !intent.openTarget) return null;
+  return intent;
+}
+
+/** Resolve + launch (or honestly refuse) one open-app turn. */
+async function runOpenAppTurn(intent) {
+  const resolved = await resolveInstalledApplication(intent.openTarget);
+  if (resolved.found) {
+    const run = await dispatchDirectSkill("computer_control", {
+      action: "open_application",
+      name: resolved.displayName
+    });
+    return { ...run, kind: "launched", toolsUsed: ["computer_control"] };
+  }
+  if (resolved.candidates.length) {
+    return {
+      ok: true,
+      kind: "ambiguous",
+      reply: naturalReply({ kind: "app_ambiguous", candidates: resolved.candidates }, { pick: contextualReplyPicker }),
+      clientActions: [],
+      toolsUsed: []
+    };
+  }
+  // Not installed: say so honestly. In hybrid mode offer the web — never
+  // silently turn an app-launch request into a search (offline: no offer).
+  const missing = naturalReply({ kind: "app_missing", name: intent.openTarget }, { pick: contextualReplyPicker });
+  return {
+    ok: true,
+    kind: "missing",
+    reply: isOffline() ? missing : missing + " Want me to look for it online?",
+    clientActions: [],
+    toolsUsed: []
   };
 }
 
@@ -2658,6 +3543,7 @@ export function deepgramLivePath(opts = {}) {
 
 function startLiveSession(opts = {}) {
   if (!deepgramApiKey) return null;
+  try { assertNetwork("cloud_stt"); } catch (error) { return null; }
   if (liveSessions.size >= MAX_LIVE_SESSIONS) liveCleanup();
   if (liveSessions.size >= MAX_LIVE_SESSIONS) return null;
   bumpUsage("stt"); // live streaming STT session counts as a request too
@@ -2738,7 +3624,7 @@ async function composeBriefing() {
         {
           role: "system",
           content:
-            "You are Evie, a JARVIS-style voice assistant. Summarize the most important world news " +
+            "You are Artemis, a JARVIS-style voice assistant. Summarize the most important world news " +
             "from the provided headlines as a SPOKEN brief: 2-3 flowing sentences, max 70 words, starting " +
             "directly with the news (no greeting, no preamble). Plain speech only — no markdown, no " +
             "lists, no emoji, no source names. End with a short offer like 'Shall I dig into any of these?'"
@@ -2809,7 +3695,11 @@ if (USE_HTTPS) {
   try {
     server = createHttpsServer(ensureCert(), onRequest);
   } catch (e) {
-    console.error("HTTPS setup failed (" + e.message + ") — falling back to HTTP.");
+    if (EXPOSED) {
+      console.error("HTTPS setup failed; refusing non-loopback startup. Fix the certificate/key configuration and retry.");
+      process.exit(1);
+    }
+    console.error("HTTPS setup failed (" + e.message + ") — loopback-only fallback to HTTP.");
     httpsActive = false;
     server = createServer(onRequest);
   }
@@ -2825,6 +3715,11 @@ async function handleGoogleCallback(url, res, exchangePort) {
     res.end("Missing ?code — start again at /auth/google");
     return;
   }
+  if (!takeGmailOauthState(url.searchParams.get("state"))) {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Missing or invalid OAuth state — start again at /auth/google");
+    return;
+  }
   try {
     const rt = await gmailExchangeCode(code, exchangePort);
     // save + apply immediately: no copy-paste, no restart needed
@@ -2834,7 +3729,7 @@ async function handleGoogleCallback(url, res, exchangePort) {
       '<body style="font-family:monospace;background:#04070b;color:#e8f7fb;padding:40px;line-height:1.6">' +
       "<h2 style=\"color:#22d3ee\">Gmail connected ✓</h2>" +
       "<p>The token was saved to <code>.env</code> on this machine (never logged).</p>" +
-      "<p>You're all set — go back to <a style=\"color:#22d3ee\" href=\"https://localhost:" + PORT + "/\">Evie</a> and say " +
+      "<p>You're all set — go back to <a style=\"color:#22d3ee\" href=\"https://localhost:" + PORT + "/\">Artemis</a> and say " +
       "<strong>“check my email.”</strong></p></body>"
     );
     closeAuthSideDoor();
@@ -2942,6 +3837,15 @@ async function handleRequest(req, res) {
 
   if (url.pathname === "/gym" && req.method === "GET") {
     res.writeHead(302, { Location: "/gym.html" });
+    res.end();
+    return;
+  }
+
+  // The spoken-command reference. Self-contained on purpose — fonts are inlined
+  // so it reads identically with the network down, which is when you are most
+  // likely to need to remember what she still answers to.
+  if (url.pathname === "/commands" && req.method === "GET") {
+    res.writeHead(302, { Location: "/commands.html" });
     res.end();
     return;
   }
@@ -3163,6 +4067,93 @@ async function handleRequest(req, res) {
   // due reminders: the cockpit polls every 30s; due ones are marked fired on
   // read (single consumer) and announced out loud client-side. Reminders that
   // came due while the app was closed fire on the next open, flagged overdue.
+  // ---- presence bus: shared live state for the dashboard and the pill -------
+  // One source of truth for presentation mode, activity state, active-task
+  // label, and mic amplitude. The dashboard POSTs its real state; the floating
+  // pill subscribes and renders it — never a second, invented state machine.
+  if (url.pathname === "/api/presence" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(presenceSnapshot()));
+    return;
+  }
+  if (url.pathname === "/api/presence" && req.method === "POST") {
+    try {
+      const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
+      updatePresence(body);
+      res.writeHead(204).end();
+    } catch (e) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid presence update" }));
+    }
+    return;
+  }
+  if (url.pathname === "/api/presence/command" && req.method === "POST") {
+    try {
+      const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
+      const command = String(body.command || "");
+      if (!["cancel", "mute", "unmute", "restore", "pill", "background", "approve", "deny"].includes(command)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "unknown command" }));
+        return;
+      }
+      broadcastPresence("command", { command, at: Date.now() });
+      res.writeHead(204).end();
+    } catch (e) {
+      res.writeHead(400).end();
+    }
+    return;
+  }
+  if (url.pathname === "/api/presence/events") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+    res.write(`event: state\ndata: ${JSON.stringify(presenceSnapshot())}\n\n`);
+    presenceClients.add(res);
+    const heartbeat = setInterval(() => { try { res.write(": ping\n\n"); } catch (e) {} }, 15000);
+    req.on("close", () => { clearInterval(heartbeat); presenceClients.delete(res); });
+    return;
+  }
+
+  // ---- offline / local-only mode -------------------------------------------
+  if (url.pathname === "/api/offline" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ...offlineState(), localBrainAvailable: allowedBrains(BRAIN_CHAIN).length > 0 }));
+    return;
+  }
+  if (url.pathname === "/api/offline" && req.method === "POST") {
+    try {
+      const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
+      setOffline(!!body.offline);
+      broadcastPresence("offline", offlineState());
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ...offlineState(), localBrainAvailable: allowedBrains(BRAIN_CHAIN).length > 0 }));
+    } catch (e) {
+      res.writeHead(400).end();
+    }
+    return;
+  }
+
+  // ---- macOS permission status ---------------------------------------------
+  if (url.pathname === "/api/permissions" && req.method === "GET") {
+    try {
+      const snap = await permissionSnapshot();
+      const guidance = {};
+      for (const [name, status] of Object.entries(snap)) {
+        if (name === "platform") continue;
+        if (status !== "granted") guidance[name] = permissionGuidance(name);
+      }
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ ...snap, guidance }));
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "permission probe failed" }));
+    }
+    return;
+  }
+
   if (url.pathname === "/api/reminders/due") {
     try {
       const now = Date.now();
@@ -3279,22 +4270,15 @@ async function handleRequest(req, res) {
           // A small gist, not the whole subject: sender's display name plus a
           // few sanitized words. Spoken as data to the USER only — sentinels,
           // tags and control chars stripped, hard-capped.
-          const gist = (m) => {
-            const clean = (v, cap) => String(v || "")
-              .replace(/<[^>]*>/g, " ")
-              .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-              .replace(/\s+/g, " ").trim().slice(0, cap);
-            let who = clean((m.from || "").split("<")[0].replace(/["']/g, ""), 40) || "someone";
-            // bare address (no display name): speak only the part before the @
-            if (who.includes("@")) who = who.split("@")[0].replace(/[._-]+/g, " ").trim() || "someone";
-            const about = clean(m.subject, 46);
-            return about ? `from ${who}, about ${about}` : `from ${who}`;
-          };
+          // LEVEL 0 only: WHO it is from. The subject is deliberately absent —
+          // an order confirmation should not be read aloud because you opened
+          // the app. "What are they about?" escalates to Level 1.
+          const gist = (m) => `from ${senderName(m.from)}`;
           const first = n > 0 ? gist(mails[0]) : "";
           mailClause = n === 0
             ? pick(["Inbox is quiet, nothing waiting.", "Nothing new in the mail.", "Your inbox is all clear."])
             : n === 1
-              ? pick([`One email came in — ${first}.`, `There's one email waiting, ${first}.`])
+              ? pick([`One email came in, ${first}.`, `There's one email waiting, ${first}.`])
               : n >= 10
                 ? `The inbox piled up a bit — at least ten waiting, the newest ${first}.`
                 : pick([`${n} emails came in — the newest ${first}.`, `${n} new emails, the latest ${first}.`]);
@@ -3331,10 +4315,68 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // ---- self-diagnostics ------------------------------------------------
+  // The snapshot is already sanitised by the health manager; nothing here
+  // re-adds detail, so no endpoint can leak what the manager stripped.
+  if (url.pathname === "/api/health" && req.method === "GET") {
+    const deep = url.searchParams.get("deep") === "1";
+    const started = Date.now();
+    const snapshot = deep ? await healthRuntime.runDeep() : await healthRuntime.runQuick();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true,
+      snapshot,
+      badge: healthBadge(snapshot),
+      reply: healthReply(snapshot),
+      detail: deep ? fullDiagnosticText(snapshot) : null,
+      durationMs: Date.now() - started,
+      startupMs: healthRuntime.startupDurationMs()
+    }));
+    return;
+  }
+
+  // The dashboard owns the wake listener, the audio engine and the pill, so it
+  // posts their state here. Treated as dated evidence, never as fact that stays
+  // true — a report that stops arriving becomes UNKNOWN, not HEALTHY.
+  if (url.pathname === "/api/health/report" && req.method === "POST") {
+    try {
+      const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
+      healthRuntime.reportClient(body);
+      res.writeHead(204).end();
+    } catch (e) {
+      res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "invalid health report" }));
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/health/history" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, history: healthRuntime.health.history() }));
+    return;
+  }
+
+  // Fault injection — DEVELOPMENT ONLY. Unless ARTEMIS_DEV_FAULTS=1 was set at
+  // launch this route does not exist at all, which is why it cannot be reached
+  // casually in a normal build.
+  if (url.pathname === "/api/health/fault" && req.method === "POST") {
+    if (!DEV_FAULTS) {
+      res.writeHead(404, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: false, error: "not found" }));
+      return;
+    }
+    const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
+    if (body.clear !== undefined) healthRuntime.clearFault(body.clear || null);
+    if (body.set) healthRuntime.setFault(body.set);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, faults: healthRuntime.activeFaults() }));
+    return;
+  }
+
   if (url.pathname === "/api/status") {
     let notesCount = 0;
     try { notesCount = (JSON.parse(await fs.readFile(join(DATA_DIR, "notes.json"), "utf8")) || []).length; } catch (e) {}
     const eleven = await elevenUsage(); // real ElevenLabs char headroom (cached)
+    const voicebox = voiceboxEnabled ? await voiceboxTts.refresh() : voiceboxTts.info();
+    const voiceAvailable = Boolean(deepgramApiKey) || elevenEnabled || minimaxEnabled || voicebox.available;
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
@@ -3345,10 +4387,11 @@ async function handleRequest(req, res) {
         chatEnabled: Boolean(anthropicApiKey) || openAiCompatActive(),
         llmProvider: openAiCompatActive() ? BRAIN.name : Boolean(anthropicApiKey) ? "anthropic" : "none",
         llmModel: openAiCompatActive() ? BRAIN.model : ANTHROPIC_MODEL,
-        voiceEnabled: Boolean(deepgramApiKey) || elevenEnabled || minimaxEnabled,
+        voiceEnabled: voiceAvailable,
         sttEnabled: Boolean(deepgramApiKey),
         elevenEnabled: elevenEnabled,
-        ttsProvider: Boolean(deepgramApiKey) || elevenEnabled || minimaxEnabled
+        voicebox,
+        ttsProvider: voiceAvailable
           ? resolveTtsProvider("")
           : "none",
         // Anthropic has built-in search; NVIDIA needs Tavily/Brave for live web answers.
@@ -3360,6 +4403,7 @@ async function handleRequest(req, res) {
         // the engine listens for another.
         localWake: activeWakeStatus(),
         code: codeFingerprint(),
+        owner: ownershipState(),
         serverTime: Date.now()
       })
     );
@@ -3377,6 +4421,8 @@ async function handleRequest(req, res) {
     try {
       const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
       const messages = sanitizeMessages(body.messages); // block role:"system" injection
+      dropAllPending();
+      updateServerPresence({ approvalState: null });
       const radarIntent = opportunityRadarIntent(messages);
       const notesIntent = meetingNotesIntent(messages);
       if (radarIntent) {
@@ -3398,6 +4444,152 @@ async function handleRequest(req, res) {
         const result = await dispatchMeetingNotes(messages, { intent: notesIntent });
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
         res.end(JSON.stringify(result));
+        return;
+      }
+      const chatHealth = healthCheckIntent(messages);
+      if (chatHealth) {
+        const run = await runHealthTurn(chatHealth);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: true, reply: run.reply, sources: [],
+          clientActions: run.clientActions, toolsUsed: [],
+          intent: "conversation", mailUntrusted: false, health: run.health
+        }));
+        return;
+      }
+      const chatShutdown = shutdownIntent(messages);
+      if (chatShutdown) {
+        const run = runShutdownTurn(chatShutdown);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: true, reply: run.reply, sources: [],
+          clientActions: run.clientActions, toolsUsed: [],
+          intent: "executable_action", mailUntrusted: false
+        }));
+        return;
+      }
+      const chatMailFollowup = emailFollowupIntent(messages);
+      if (chatMailFollowup) {
+        const run = runEmailFollowupTurn(chatMailFollowup);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: true,
+          reply: run.reply,
+          sources: [],
+          clientActions: [],
+          toolsUsed: [],
+          intent: "executable_action",
+          mailUntrusted: !!run.screenUntrusted
+        }));
+        return;
+      }
+      // Installed-app launch serves this endpoint too — same routing, same
+      // honesty, different transport.
+      const chatAppIntent = openAppIntent(messages);
+      if (chatAppIntent) {
+        const run = await runOpenAppTurn(chatAppIntent);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: run.ok !== false,
+          reply: run.reply,
+          sources: [],
+          clientActions: run.clientActions || [],
+          toolsUsed: run.toolsUsed || [],
+          intent: chatAppIntent.intent,
+          mailUntrusted: false
+        }));
+        return;
+      }
+      const chatGym = gymSessionIntent(messages);
+      if (chatGym) {
+        const directGym = await dispatchGymSession(messages, { intent: chatGym });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: directGym.ok !== false,
+          reply: directGym.reply,
+          sources: [],
+          clientActions: directGym.clientActions,
+          toolsUsed: directGym.toolsUsed,
+          intent: directGym.intent,
+          mailUntrusted: false
+        }));
+        return;
+      }
+      const chatLocal = await prepareDirectLocal(messages);
+      if (chatLocal) {
+        if (chatLocal.kind === "wrong-app" || chatLocal.kind === "pending") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            ok: true,
+            reply: chatLocal.reply,
+            sources: [],
+            clientActions: [],
+            toolsUsed: [],
+            intent: chatLocal.intent.intent,
+            mailUntrusted: false,
+            ...(chatLocal.pendingAction ? { pendingAction: chatLocal.pendingAction } : {})
+          }));
+          return;
+        }
+        const { run, directLocal } = chatLocal;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: run.ok !== false,
+          reply: run.reply,
+          sources: [],
+          clientActions: run.clientActions || [],
+          toolsUsed: [directLocal.tool],
+          intent: directLocal.intent.intent,
+          mailUntrusted: false
+        }));
+        return;
+      }
+      // The contextual tier serves this endpoint too — identical routing and
+      // safety semantics to /api/chat/stream, different transport only.
+      const contextualRun = await runContextualTurn(messages);
+      if (contextualRun) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: contextualRun.ok !== false,
+          reply: contextualRun.reply,
+          sources: [],
+          clientActions: contextualRun.clientActions || [],
+          toolsUsed: contextualRun.toolsUsed || [],
+          intent: contextualRun.intent.intent,
+          mailUntrusted: !!contextualRun.screenUntrusted,
+          ...(contextualRun.pendingAction ? { pendingAction: contextualRun.pendingAction } : {})
+        }));
+        return;
+      }
+      const chatScreen = screenReadIntent(messages);
+      const chatNoBrain =
+        (!anthropicApiKey && !openAiCompatActive()) ||
+        (isOffline() && allowedBrains(BRAIN_CHAIN).length === 0);
+      if (chatScreen && chatNoBrain) {
+        const run = await dispatchDirectSkill("read_screen", { target: chatScreen.perceptionTarget || "auto" });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: run.ok !== false,
+          reply: screenReadReply(run),
+          sources: [],
+          clientActions: run.clientActions || [],
+          toolsUsed: ["read_screen"],
+          intent: chatScreen.intent,
+          mailUntrusted: true
+        }));
+        return;
+      }
+      if (isOffline() && allowedBrains(BRAIN_CHAIN).length === 0) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          ok: false,
+          reply: "That needs the cloud brain, and local-only mode is on. Add a local model (OLLAMA_BRAIN_MODEL) to answer offline.",
+          sources: [],
+          clientActions: [],
+          toolsUsed: [],
+          intent: "conversation",
+          mailUntrusted: false
+        }));
         return;
       }
       // Code-owned radar and meeting-note reads need no model. Every other chat
@@ -3522,6 +4714,13 @@ async function handleRequest(req, res) {
     try {
       const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
       const outcome = consumePending(body.confirmId, body.decision);
+      // Whatever the outcome, the approval gate is no longer open, and a
+      // contextual task waiting on it is finished one way or the other.
+      updateServerPresence({ approvalState: null });
+      if (outcome.pending && outcome.pending.envelope) {
+        workingCtx.endTask(outcome.pending.envelope.turnId || null, "closed");
+        updateServerPresence({ currentTask: null, activeContext: null });
+      }
       const pending = outcome.pending;
       if (outcome.status === "missing") {
         res.writeHead(200, confirmHeaders);
@@ -3548,8 +4747,72 @@ async function handleRequest(req, res) {
         }));
         return;
       }
+      const caps = currentCaps();
+      const validated = validateToolCall(pending.name, pending.params, caps);
+      if (!validated.ok) {
+        res.writeHead(200, confirmHeaders);
+        res.end(JSON.stringify({ reply: "That action is no longer valid — " + (validated.error || "bad arguments") + "." }));
+        return;
+      }
+      const params = validated.args;
+      const pre = await precheckSkill(pending.name, params);
+      if (pre.ok === false) {
+        res.writeHead(200, confirmHeaders);
+        res.end(JSON.stringify({ reply: pre.summary || "I can't do that." }));
+        return;
+      }
       const skill = getSkill(pending.name);
-      const r = await skill.execute(pending.params, skillCtx);
+      // A confirmed contextual action must still match the screen it was
+      // approved against: revalidate the authorization envelope and run the
+      // keystroke under the Terminal-UI lease (plan Rev 5 — TOCTOU guard).
+      if (pending.envelope && pending.envelope.revalidate) {
+        const confirmedRun = await terminalUiLease.run(async () => {
+          const check = await contextualDispatcher.revalidate(pending.envelope);
+          if (!check.ok) return { blocked: true, reason: check.reason };
+          return { blocked: false, result: await dispatchDirectSkill(pending.name, params) };
+        });
+        if (confirmedRun.blocked) {
+          await skillCtx.appendAction({
+            skill: pending.name,
+            params,
+            result: { ok: false, summary: "not executed — " + confirmedRun.reason },
+            confirmed: true
+          });
+          res.writeHead(200, confirmHeaders);
+          res.end(JSON.stringify({
+            reply: naturalReply({ kind: "revalidation_failed" }, { pick: contextualReplyPicker }),
+            clientActions: []
+          }));
+          return;
+        }
+        const cr = confirmedRun.result;
+        if (cr.ok !== false) {
+          workingCtx.recordCommand({
+            tool: pending.name,
+            args: params,
+            // interactive provenance survives confirmation — a confirmed menu
+            // keystroke is still not repeatable (Codex reinspection)
+            risk: pending.envelope.interactive ? "interactive" : "confirmed",
+            targetId: pending.envelope.evidence
+              ? [pending.envelope.evidence.windowId, pending.envelope.evidence.tabTty].filter(Boolean).join(":") || null
+              : null,
+            contextHash: pending.envelope.evidence ? pending.envelope.evidence.tailHash : null
+          });
+        }
+        res.writeHead(200, confirmHeaders);
+        res.end(JSON.stringify({
+          reply: cr.reply || "Done.",
+          clientActions: cr.clientActions || []
+        }));
+        return;
+      }
+      if (FAKE_TOOLS) {
+        const run = await dispatchDirectSkill(pending.name, params);
+        res.writeHead(200, confirmHeaders);
+        res.end(JSON.stringify({ reply: run.reply || "Done.", clientActions: run.clientActions || [] }));
+        return;
+      }
+      const r = await skill.execute(params, skillCtx);
       if (pending.name === "save_note" && r.ok !== false) invalidateVaultGraphCache();
       const nudgeResponse =
         pending.name === "nudge_email" ? confirmedNudgeResponse(r) : null;
@@ -3590,6 +4853,8 @@ async function handleRequest(req, res) {
       const body = JSON.parse((await readRequestBody(req)).toString("utf8") || "{}");
       messages = sanitizeMessages(body.messages); // block role:"system" injection
       tone = body.tone;
+      dropAllPending();
+      updateServerPresence({ approvalState: null });
     } catch (error) {
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Invalid chat request." }));
@@ -3623,12 +4888,265 @@ async function handleRequest(req, res) {
       try { res.end(); } catch (e) {}
       return;
     }
+    // Deterministic computer-agent commands: the registry already derived the
+    // tool AND its argument from the user's words, so these execute code-owned,
+    // before any brain-availability check — a provider outage must never take
+    // "open Terminal" or "minimize yourself" down with it. The same registry
+    // skill, precheck and confirm policy apply; only model reasoning is skipped.
+    const preparedLocal = await prepareDirectLocal(messages);
+    if (preparedLocal) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const send = (ev, data) => {
+        try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
+      };
+      const intent = preparedLocal.intent || (preparedLocal.directLocal && preparedLocal.directLocal.intent);
+      send("intent_pending", { intent: intent.intent, family: intent.family });
+      if (preparedLocal.kind === "wrong-app") {
+        send("token", { t: preparedLocal.reply });
+        send("done", { sources: [], model: "local-code", clientActions: [], toolsUsed: [], intent: intent.intent, mailUntrusted: false });
+        try { res.end(); } catch (e) {}
+        return;
+      }
+      if (preparedLocal.kind === "pending") {
+        send("token", { t: preparedLocal.reply });
+        send("done", {
+          sources: [],
+          model: "local-code",
+          clientActions: [],
+          toolsUsed: [],
+          intent: intent.intent,
+          mailUntrusted: false,
+          pendingAction: preparedLocal.pendingAction
+        });
+        try { res.end(); } catch (e) {}
+        return;
+      }
+      const { run, directLocal } = preparedLocal;
+      send("tool", { name: directLocal.tool, family: intent.family, phase: "start" });
+      send("tool", { name: directLocal.tool, family: intent.family, phase: "end", ok: run.ok });
+      send("token", { t: run.reply });
+      send("done", {
+        sources: [],
+        model: "local-code",
+        clientActions: run.clientActions,
+        toolsUsed: [directLocal.tool],
+        intent: intent.intent,
+        mailUntrusted: false
+      });
+      try { res.end(); } catch (e) {}
+      return;
+    }
+    // "Run a self-check": deterministic, and deliberately reachable with every
+    // brain down — that is when the user most wants to ask what is wrong.
+    const wantsHealth = healthCheckIntent(messages);
+    if (wantsHealth) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const sendH = (ev, data) => {
+        try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
+      };
+      const run = await runHealthTurn(wantsHealth);
+      sendH("token", { t: run.reply });
+      sendH("done", {
+        sources: [], model: "local-code", clientActions: run.clientActions,
+        toolsUsed: [], intent: "conversation", mailUntrusted: false, health: run.health
+      });
+      try { res.end(); } catch (e) {}
+      return;
+    }
+    // "Artemis, shut down": deterministic, works with every brain down.
+    const wantsShutdown = shutdownIntent(messages);
+    if (wantsShutdown) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const send = (ev, data) => {
+        try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
+      };
+      const run = runShutdownTurn(wantsShutdown);
+      send("intent_pending", { intent: "executable_action", family: "presentation" });
+      send("token", { t: run.reply });
+      send("done", {
+        sources: [],
+        model: "local-code",
+        clientActions: run.clientActions,
+        toolsUsed: [],
+        intent: "executable_action",
+        mailUntrusted: false
+      });
+      try { res.end(); } catch (e) {}
+      return;
+    }
+    // Email follow-up ("what are those about?", "read the second one"):
+    // answered from the set she just announced, zero brain, zero re-fetch.
+    const mailFollowup = emailFollowupIntent(messages);
+    if (mailFollowup) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const send = (ev, data) => {
+        try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
+      };
+      send("intent_pending", { intent: "executable_action", family: "email" });
+      const run = runEmailFollowupTurn(mailFollowup);
+      if (run.screenUntrusted) send("mail_taint", { mailUntrusted: true });
+      send("token", { t: run.reply });
+      send("done", {
+        sources: [],
+        model: "local-code",
+        clientActions: [],
+        toolsUsed: [],
+        intent: "executable_action",
+        mailUntrusted: !!run.screenUntrusted
+      });
+      try { res.end(); } catch (e) {}
+      return;
+    }
+    // "Open <App>": generic installed-application launch. Resolution is a
+    // local disk lookup and the launch is the normal computer_control skill —
+    // works with every brain down and in local-only mode. Unknown targets get
+    // an honest "not installed" (with a web offer only in hybrid mode), never
+    // a silent Google search.
+    const appIntent = openAppIntent(messages);
+    if (appIntent) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const send = (ev, data) => {
+        try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
+      };
+      send("intent_pending", { intent: appIntent.intent, family: "navigate" });
+      const run = await runOpenAppTurn(appIntent);
+      if (run.kind === "launched") {
+        send("tool", { name: "computer_control", family: "computer", phase: "start" });
+        send("tool", { name: "computer_control", family: "computer", phase: "end", ok: run.ok });
+      }
+      send("token", { t: run.reply });
+      send("done", {
+        sources: [],
+        model: "local-code",
+        clientActions: run.clientActions || [],
+        toolsUsed: run.toolsUsed || [],
+        intent: appIntent.intent,
+        mailUntrusted: false
+      });
+      try { res.end(); } catch (e) {}
+      return;
+    }
+    // Contextual tier: deictic turns ("pick the second one", "type one and
+    // press enter", "tell Claude yes") resolved against the live screen. Local
+    // by construction — it must work with every cloud provider down — and it
+    // never falls into the generative forced-tool loop (plan Rev 5).
+    const contextualProbeText = lastUserText(messages);
+    const contextualProbe = classifyIntent(contextualProbeText, currentCaps(), messages);
+    if (contextualDispatcher.contextualTrigger(contextualProbe, contextualProbeText)) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const send = (ev, data) => {
+        try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
+      };
+      const turnAbort = new AbortController();
+      req.on("close", () => { if (!res.writableEnded) turnAbort.abort(new Error("client disconnected")); });
+      send("intent_pending", { intent: contextualProbe.intent, family: contextualProbe.family });
+      send("interpreting", {});
+      const run = (await runContextualTurn(messages, { signal: turnAbort.signal })) || {
+        reply: "I lost track of that one — can you say it again?",
+        clientActions: [], toolsUsed: [], intent: contextualProbe, screenUntrusted: false
+      };
+      if (run.toolsUsed && run.toolsUsed.length) {
+        for (const name of run.toolsUsed) send("tool", { name, family: "contextual", phase: "start" });
+        for (const name of run.toolsUsed) send("tool", { name, family: "contextual", phase: "end", ok: run.ok !== false });
+      }
+      // Screen-derived text in the reply is persistent provenance: the turn is
+      // flagged untrusted so a poisoned menu label can't become trusted
+      // history for a later model turn.
+      if (run.screenUntrusted) send("mail_taint", { mailUntrusted: true });
+      send("token", { t: run.reply });
+      send("done", {
+        sources: [],
+        model: run.tier === "local-brain" ? "local-brain" : run.tier === "cloud-brain" ? currentBrain().model : "local-code",
+        clientActions: run.clientActions || [],
+        toolsUsed: run.toolsUsed || [],
+        intent: run.intent.intent,
+        turnId: run.turnId || null,
+        mailUntrusted: !!run.screenUntrusted,
+        ...(run.pendingAction ? { pendingAction: run.pendingAction } : {})
+      });
+      try { res.end(); } catch (e) {}
+      return;
+    }
+    // A screen read is a local read. When no brain is configured or reachable
+    // at all, gather the local context anyway and return the raw result rather
+    // than refusing the whole command. (With a working brain, the ordinary loop
+    // runs read_screen and interprets it; a mid-turn brain failure falls back
+    // below, in the catch.)
+    const screenIntent = screenReadIntent(messages);
+    const noBrainAtAll =
+      (!anthropicApiKey && !nvidiaActive) ||
+      (isOffline() && allowedBrains(BRAIN_CHAIN).length === 0);
+    if (screenIntent && noBrainAtAll) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const send = (ev, data) => {
+        try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
+      };
+      send("intent_pending", { intent: screenIntent.intent, family: "perception" });
+      send("tool", { name: "read_screen", family: "perception", phase: "start" });
+      const run = await dispatchDirectSkill("read_screen", { target: screenIntent.perceptionTarget || "auto" });
+      send("tool", { name: "read_screen", family: "perception", phase: "end", ok: run.ok });
+      // The raw read embeds attacker-influenceable screen text in the reply —
+      // it must persist as untrusted history, exactly like mail-derived text.
+      send("mail_taint", { mailUntrusted: true });
+      send("token", { t: screenReadReply(run) });
+      send("done", {
+        sources: [],
+        model: "local-code",
+        clientActions: run.clientActions,
+        toolsUsed: ["read_screen"],
+        intent: screenIntent.intent,
+        mailUntrusted: true
+      });
+      try { res.end(); } catch (e) {}
+      return;
+    }
     if (!radarIntent && !notesIntent && !anthropicApiKey && !nvidiaActive) {
       res.writeHead(503, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         error:
           "No brain configured — add GROQ_API_KEY, NVIDIA_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BRAIN_MODEL to .env"
       }));
+      return;
+    }
+    // Local-only mode with no local brain: refuse honestly rather than reaching
+    // for a cloud model. Code-owned reads (radar/notes) still work offline.
+    if (isOffline() && !radarIntent && !notesIntent && allowedBrains(BRAIN_CHAIN).length === 0) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      const spoken = "That needs the cloud brain, and local-only mode is on. Add a local model (OLLAMA_BRAIN_MODEL) to answer offline.";
+      res.write(`event: error\ndata: ${JSON.stringify({ error: "local-only mode: no local brain", spoken })}\n\n`);
+      try { res.end(); } catch (e) {}
       return;
     }
     res.writeHead(200, {
@@ -3806,6 +5324,32 @@ async function handleRequest(req, res) {
       }
     } catch (error) {
       console.error("/api/chat/stream error:", error.message);
+      // A screen-read turn does not die with the brain: the perception itself
+      // is local. Gather the context anyway and hand over the raw read with an
+      // honest note that interpretation is unavailable — far better than
+      // "my brain isn't answering" for a command the machine could half-serve.
+      if (screenIntent) {
+        try {
+          send("reset", {});
+          send("tool", { name: "read_screen", family: "perception", phase: "start" });
+          const run = await dispatchDirectSkill("read_screen", { target: screenIntent.perceptionTarget || "auto" });
+          send("tool", { name: "read_screen", family: "perception", phase: "end", ok: run.ok });
+          send("mail_taint", { mailUntrusted: true });
+          send("token", { t: screenReadReply(run) });
+          send("done", {
+            sources: [],
+            model: "local-code",
+            clientActions: run.clientActions,
+            toolsUsed: ["read_screen"],
+            intent: screenIntent.intent,
+            mailUntrusted: true
+          });
+          res.end();
+          return;
+        } catch (fallbackError) {
+          console.error("screen-read fallback error:", fallbackError.message);
+        }
+      }
       // Say something. A failed turn used to write to the log and go silent,
       // which from the user's side is indistinguishable from not being heard —
       // they repeat themselves into a void. Whatever went wrong, she owes them
@@ -3827,18 +5371,106 @@ async function handleRequest(req, res) {
   }
 
   // Speech-to-text (mic audio -> transcript) via Deepgram
+  // What the voice pipeline may use right now. The client checks this BEFORE
+  // opening a session, so a missing local model is a visible setup state
+  // rather than a swallowed utterance — and so it knows to send PCM.
+  if (url.pathname === "/api/stt/status" && req.method === "GET") {
+    const local = localSttStatus();
+    const decision = chooseSttProvider({
+      offline: isOffline(),
+      cloudConfigured: !!deepgramApiKey,
+      localReady: local.ready
+    });
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({
+      provider: decision.provider,
+      fallback: decision.fallback,
+      reason: decision.reason,
+      cloudForbidden: decision.cloudForbidden,
+      mode: isOffline() ? "local-only" : "hybrid",
+      // linear16 is what the local engine consumes with no transcode; the
+      // browser resamples once and posts raw PCM when this is true.
+      wantsPcm: decision.provider === STT_LOCAL || decision.fallback === STT_LOCAL,
+      sampleRate: STT_SAMPLE_RATE,
+      channels: 1,
+      local: { ready: local.ready, reason: local.reason, tier: local.tier, hint: setupHint(local) },
+      message: decision.provider ? "" : sttUnavailableMessage(decision)
+    }));
+    return;
+  }
+
   if (url.pathname === "/api/stt" && req.method === "POST") {
-    if (!deepgramApiKey) {
+    const localStatus = localSttStatus();
+    const decision = chooseSttProvider({
+      offline: isOffline(),
+      cloudConfigured: !!deepgramApiKey,
+      localReady: localStatus.ready
+    });
+    if (!decision.provider) {
+      // Nothing may run. Say which mode caused it rather than pretending the
+      // user said nothing.
       res.writeHead(503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "DEEPGRAM_API_KEY not set in .env" }));
+      res.end(JSON.stringify({ error: sttUnavailableMessage(decision), mode: decision.cloudForbidden ? "local-only" : "hybrid" }));
       return;
     }
+    const audio = await readRequestBody(req);
+    const contentType = String(req.headers["content-type"] || "audio/webm");
+    const isPcm = /audio\/(pcm|l16|x-raw)/i.test(contentType) || /linear16/i.test(contentType);
+
+    // ---- local transcription (the only path allowed in local-only mode) ----
+    const runLocal = async () => {
+      if (!isPcm) {
+        // The local engine consumes linear16 only; the browser does the single
+        // decode/resample. A compressed body here means the client did not ask
+        // /api/stt/status first.
+        return { ok: false, error: "expects-pcm" };
+      }
+      const language = url.searchParams.get("language") || undefined;
+      const out = await transcribeLocal(audio, { language });
+      if (out.ok) {
+        console.log("[stt] local " + JSON.stringify({
+          audioSec: out.audioSec, ms: out.msElapsed, rtf: out.realtime, tier: localStatus.tier
+        }));
+      }
+      return out;
+    };
+
+    if (decision.provider === STT_LOCAL) {
+      const out = await runLocal();
+      if (!out.ok) {
+        res.writeHead(out.error === "expects-pcm" ? 415 : 500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          error: out.error === "expects-pcm"
+            ? "Local speech needs raw 16 kHz mono PCM."
+            : localFailureMessage(isOffline()),
+          provider: "local",
+          detail: out.error || "",
+          hint: out.hint || ""
+        }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        transcript: out.transcript,
+        provider: "local",
+        audioSec: out.audioSec,
+        ms: out.msElapsed,
+        realtime: out.realtime
+      }));
+      return;
+    }
+
+    // ---- cloud (hybrid only — unreachable when cloudForbidden) -------------
     bumpUsage("stt");
+    const cloudStarted = Date.now();
     try {
-      const audio = await readRequestBody(req);
-      const contentType = req.headers["content-type"] || "audio/webm";
+      // Deepgram takes the same linear16 the local engine does, so the client
+      // sends ONE format either way and nothing is transcoded twice.
+      const dgUrl = isPcm
+        ? `https://api.deepgram.com/v1/listen?model=${STT_MODEL}&smart_format=true&punctuate=true&encoding=linear16&sample_rate=${STT_SAMPLE_RATE}&channels=1`
+        : `https://api.deepgram.com/v1/listen?model=${STT_MODEL}&smart_format=true&punctuate=true`;
       const dgRes = await fetchWithTimeout(
-        `https://api.deepgram.com/v1/listen?model=${STT_MODEL}&smart_format=true&punctuate=true`,
+        dgUrl,
         {
           method: "POST",
           headers: { Authorization: `Token ${deepgramApiKey}`, "Content-Type": contentType },
@@ -3850,19 +5482,35 @@ async function handleRequest(req, res) {
         // a 401/429 from Deepgram must NOT masquerade as "user said nothing"
         const errBody = await dgRes.text().catch(() => "");
         console.error("/api/stt Deepgram HTTP " + dgRes.status + ": " + errBody.slice(0, 200));
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Speech service error (" + dgRes.status + ") — check the Deepgram key/quota." }));
-        return;
+        throw new Error("cloud-http-" + dgRes.status);
       }
       const data = await dgRes.json();
       const transcript =
         data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ transcript }));
+      res.end(JSON.stringify({ transcript, provider: "deepgram", ms: Date.now() - cloudStarted }));
     } catch (error) {
       console.error("/api/stt error:", error.message);
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Transcription failed." }));
+      // HYBRID ONLY: a cloud failure may fall back to local. In local-only the
+      // cloud was never called, so this branch cannot leak a cloud attempt.
+      const next = afterCloudFailure(decision);
+      if (next === STT_LOCAL) {
+        const out = await runLocal();
+        if (out.ok) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            transcript: out.transcript,
+            provider: "local",
+            fellBack: true,
+            audioSec: out.audioSec,
+            ms: out.msElapsed,
+            realtime: out.realtime
+          }));
+          return;
+        }
+      }
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Speech service error — check the Deepgram key/quota." }));
     }
     return;
   }
@@ -3870,7 +5518,7 @@ async function handleRequest(req, res) {
   // Streaming TTS (GET): pipe audio chunks to the client as they generate so the
   // browser can start playing the first frames ~0.5s in instead of waiting ~1.3s.
   if (url.pathname === "/api/tts" && req.method === "GET") {
-    if (!deepgramApiKey && !elevenEnabled && !minimaxEnabled) {
+    if (!deepgramApiKey && !elevenEnabled && !minimaxEnabled && !voiceboxEnabled) {
       res.writeHead(503).end();
       return;
     }
@@ -3879,8 +5527,18 @@ async function handleRequest(req, res) {
       res.writeHead(400).end();
       return;
     }
-    const provider = resolveTtsProvider(url.searchParams.get("provider"));
+    let provider = resolveTtsProvider(url.searchParams.get("provider"));
     try {
+      const wantedVoicebox = provider === "voicebox";
+      if (wantedVoicebox) {
+        const decision = await voiceboxTtsDecision(text, url.searchParams.get("profile"));
+        if (decision.audio) {
+          sendVoiceboxAudio(res, text, decision.audio, true);
+          return;
+        }
+        provider = decision.fallbackProvider;
+      }
+
       // Edge neural voices (free, human-sounding): synthesized server-side via
       // the zero-dep WS client. Non-streaming (whole clip at once) — sentence
       // pipelining in the client overlaps the latency.
@@ -3890,7 +5548,11 @@ async function handleRequest(req, res) {
         try {
           const buf = await edgeTtsSynthesize(text, edgeVoice);
           bumpUsage("tts:edge", text.length);
-          res.writeHead(200, { "Content-Type": "audio/mpeg", "X-TTS-Provider": "edge", "Cache-Control": "no-store" });
+          res.writeHead(200, {
+            "Content-Type": "audio/mpeg",
+            "X-TTS-Provider": wantedVoicebox ? "edge-fallback" : "edge",
+            "Cache-Control": "no-store"
+          });
           res.end(buf);
           return;
         } catch (e) {
@@ -3914,7 +5576,7 @@ async function handleRequest(req, res) {
           bumpUsage("tts:minimax", text.length);
           res.writeHead(200, {
             "Content-Type": "audio/mpeg",
-            "X-TTS-Provider": "minimax",
+            "X-TTS-Provider": wantedVoicebox ? "minimax-fallback" : "minimax",
             "Cache-Control": "no-store"
           });
           res.end(audio);
@@ -3941,6 +5603,7 @@ async function handleRequest(req, res) {
 
       let upstream = null;
       let used = "deepgram";
+      let usageProvider = "deepgram";
       let wantedEleven = false;
       if (provider === "elevenlabs" && elevenEnabled) {
         // allow a specific ElevenLabs voice id from the picker (strictly validated)
@@ -3948,7 +5611,10 @@ async function handleRequest(req, res) {
         const vid = /^[A-Za-z0-9]{16,40}$/.test(reqVoice) ? reqVoice : elevenVoiceId;
         wantedEleven = true;
         upstream = await elevenTTSResponse(text, vid);
-        if (upstream && upstream.ok) used = "elevenlabs";
+        if (upstream && upstream.ok) {
+          used = wantedVoicebox ? "elevenlabs-fallback" : "elevenlabs";
+          usageProvider = "elevenlabs";
+        }
         else upstream = null;
       }
       if (!upstream) {
@@ -3956,13 +5622,14 @@ async function handleRequest(req, res) {
         // accent and fall back to Deepgram's British Pandora, not the US default
         const fallbackVoice = wantedEleven ? "aura-2-pandora-en" : url.searchParams.get("voice");
         upstream = await deepgramTTSResponse(text, fallbackVoice);
-        used = "deepgram";
+        used = wantedVoicebox || wantedEleven ? "deepgram-fallback" : "deepgram";
+        usageProvider = "deepgram";
       }
       if (!upstream || !upstream.ok || !upstream.body) {
         res.writeHead(502).end();
         return;
       }
-      bumpUsage("tts:" + used, text.length);
+      bumpUsage("tts:" + usageProvider, text.length);
       res.writeHead(200, { "Content-Type": "audio/mpeg", "X-TTS-Provider": used, "Cache-Control": "no-store" });
       const reader = upstream.body.getReader();
       // barge-in aborts playback mid-stream: on client disconnect a pending
@@ -3990,7 +5657,7 @@ async function handleRequest(req, res) {
 
   // Text-to-speech (Claude reply -> spoken audio): ElevenLabs (preferred) or Deepgram
   if (url.pathname === "/api/tts" && req.method === "POST") {
-    if (!deepgramApiKey && !elevenEnabled && !minimaxEnabled) {
+    if (!deepgramApiKey && !elevenEnabled && !minimaxEnabled && !voiceboxEnabled) {
       res.writeHead(503).end();
       return;
     }
@@ -4001,11 +5668,29 @@ async function handleRequest(req, res) {
         res.writeHead(400).end();
         return;
       }
-      const provider = resolveTtsProvider(body.provider);
+      let provider = resolveTtsProvider(body.provider);
       let buf = null;
       let usedProvider = "deepgram";
       let usageProvider = "deepgram";
       let wantedMinimax = false;
+      const wantedVoicebox = provider === "voicebox";
+      if (wantedVoicebox) {
+        const decision = await voiceboxTtsDecision(text, body.profile);
+        if (decision.audio) {
+          sendVoiceboxAudio(res, text, decision.audio);
+          return;
+        }
+        provider = decision.fallbackProvider;
+      }
+      if (provider === "edge") {
+        try {
+          buf = await edgeTtsSynthesize(text, "en-GB-SoniaNeural");
+          usedProvider = wantedVoicebox ? "edge-fallback" : "edge";
+          usageProvider = "edge";
+        } catch (error) {
+          console.error("Edge TTS fallback failed:", error.message);
+        }
+      }
       if (provider === "elevenlabs" && elevenEnabled) {
         const vid =
           typeof body.voice === "string" && /^[A-Za-z0-9]{16,40}$/.test(body.voice)
@@ -4013,20 +5698,20 @@ async function handleRequest(req, res) {
             : elevenVoiceId;
         buf = await ttsElevenLabs(text, vid);
         if (buf) {
-          usedProvider = "elevenlabs";
+          usedProvider = wantedVoicebox ? "elevenlabs-fallback" : "elevenlabs";
           usageProvider = "elevenlabs";
         }
       } else if (provider === "minimax" && minimaxEnabled) {
         wantedMinimax = true;
         buf = await minimaxTTS(text);
         if (buf) {
-          usedProvider = "minimax";
+          usedProvider = wantedVoicebox ? "minimax-fallback" : "minimax";
           usageProvider = "minimax";
         }
       }
       if (!buf) {
         buf = await ttsDeepgram(text, body.voice); // fallback / Deepgram path
-        usedProvider = wantedMinimax ? "deepgram-fallback" : "deepgram";
+        usedProvider = wantedVoicebox || wantedMinimax ? "deepgram-fallback" : "deepgram";
         usageProvider = "deepgram";
       }
       if (!buf) {
@@ -4068,26 +5753,49 @@ async function handleRequest(req, res) {
 }
 
 server.listen(PORT, HOST, () => {
+  if (voiceboxEnabled) {
+    // Voicebox loads its multi-gigabyte model lazily. Start that work alongside
+    // the server so the first spoken answer does not pay the cold-start cost.
+    void voiceboxTts.preload().then((voicebox) => {
+      if (voicebox.available) {
+        const state = voicebox.modelLoaded ? "ready" : "available (lazy load)";
+        console.log(`Voicebox TTS ${state}: ${voicebox.profile.name} (${voicebox.profile.id}) at ${voicebox.baseUrl}`);
+      } else {
+        console.log(`Voicebox TTS unavailable — existing fallbacks remain active: ${voicebox.error}`);
+      }
+    });
+  }
+  // Startup self-check. Deliberately AFTER listen and behind a short delay:
+  // core services (voicebox preload, gmail, the dashboard connecting) need a
+  // moment to settle, and a check that runs before them would report faults
+  // that are really just "not started yet". Lightweight probes only, so this
+  // never becomes part of the startup cost the user feels.
+  setTimeout(() => {
+    void healthRuntime.startupCheck().then(({ snapshot, durationMs }) => {
+      console.log(`[health] startup check ${durationMs}ms — ${snapshot.overall}` +
+        (snapshot.issueCount ? ` (${snapshot.issueCount} issue${snapshot.issueCount === 1 ? "" : "s"})` : ""));
+      broadcastPresence("health", healthPresencePayload(snapshot));
+      // Silence is the correct output for a healthy machine.
+      const say = startupAnnouncement(snapshot);
+      if (say) broadcastPresence("health-say", { text: say, level: "startup" });
+      healthRuntime.startWatchdog();
+    }).catch((e) => console.error("[health] startup check failed:", e && e.message));
+  }, 3000);
+
   const scheme = httpsActive ? "https" : "http";
-  console.log(`Evie running at ${scheme}://localhost:${PORT}` + (EXPOSED ? "" : " (localhost only)"));
+  console.log(`Artemis running at ${scheme}://localhost:${PORT}` + (EXPOSED ? "" : " (localhost only)"));
   if (EXPOSED) {
     console.log("Reachable on your network:");
     for (const ip of lanIPs()) {
-      console.log(`  ${scheme}://${ip}:${PORT}` + (ACCESS_TOKEN ? `/?key=${ACCESS_TOKEN}` : "") + "   ← open this on your phone");
+      console.log(`  ${scheme}://${ip}:${PORT}/   ← open this on your phone`);
     }
-    if (!process.env.ARTEMIS_ACCESS_TOKEN) {
-      console.log(`  access token (auto-generated this run): ${ACCESS_TOKEN}`);
-      console.log("  → set ARTEMIS_ACCESS_TOKEN in .env to keep it stable across restarts");
-    }
-    if (!USE_HTTPS) {
-      console.log("  ⚠ HTTP mode: a phone's mic/voice-in will NOT work off-device (browsers require HTTPS).");
-      console.log("    Set ARTEMIS_HTTPS=1 to enable voice from your phone (you'll accept a self-signed cert once).");
-    }
+    console.log("  Access token configured: yes");
+    if (!process.env.ARTEMIS_ACCESS_TOKEN) console.log("  Set ARTEMIS_ACCESS_TOKEN in .env to keep the generated credential stable across restarts.");
   } else {
     // Bound to loopback, but a tunnel/reverse proxy can still forward remote
     // clients — those now must authenticate (see requestIsRemote).
     console.log("  (loopback only — any tunneled/remote client must present the access token;");
-    console.log("   set ARTEMIS_ACCESS_TOKEN + ARTEMIS_ALLOWED_HOSTS before exposing Evie.)");
+    console.log("   set ARTEMIS_ACCESS_TOKEN + ARTEMIS_ALLOWED_HOSTS before exposing Artemis.)");
   }
   if (stripeSecretKey) {
     console.log("Revenue celebration: Stripe polling enabled.");
@@ -4124,6 +5832,15 @@ function shutdown(signal, code = 0) {
   shuttingDown = true;
   console.log(`\n${signal} received — flushing state and draining connections…`);
   try { if (usageDirty) writeUsageNow(); } catch (e) {}
+  // server.close() waits for open connections to END, and an SSE stream never
+  // does — so every quit sat out the hard timeout and had to be SIGKILLed
+  // (proven: "server.stop.kill reason=did not exit within 3s"). The presence
+  // streams are ours and are meaningless once we are going away, so close them
+  // first and the drain finishes in milliseconds.
+  for (const client of presenceClients) {
+    try { client.end(); } catch (e) { try { client.destroy(); } catch (e2) {} }
+  }
+  presenceClients.clear();
   const hard = setTimeout(() => process.exit(code), 4000); // never hang on a stuck socket
   server.close(() => { clearTimeout(hard); process.exit(code); });
 }

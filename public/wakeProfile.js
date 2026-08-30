@@ -50,6 +50,24 @@ export function validateProfile(p) {
       if (!/^[0-9a-f]{64}$/i.test(String(sha))) errs.push(`bad sha256 for ${url}`);
     }
   }
+  const evaluation = p.evaluation;
+  if (!evaluation || typeof evaluation !== "object") {
+    errs.push("missing release evaluation");
+  } else {
+    if (evaluation.verdict !== "PASS") errs.push("evaluation verdict is not PASS");
+    if (!/^[0-9a-f]{64}$/i.test(String(evaluation.artifactSha256 || ""))) {
+      errs.push("evaluation is not bound to an artifact sha256");
+    } else if (p.assets && p.assets[p.classifierUrl] &&
+               evaluation.artifactSha256.toLowerCase() !== String(p.assets[p.classifierUrl]).toLowerCase()) {
+      errs.push("evaluation artifact hash does not match classifier");
+    }
+    if (typeof evaluation.threshold !== "number" || evaluation.threshold !== p.threshold) {
+      errs.push("evaluation threshold does not match profile");
+    }
+    if (!evaluation.version || typeof evaluation.version !== "string") {
+      errs.push("missing evaluation version");
+    }
+  }
   if (p.aliasPattern) {
     try { new RegExp(p.aliasPattern, "i"); } catch (e) { errs.push("aliasPattern is not a valid regex"); }
   }

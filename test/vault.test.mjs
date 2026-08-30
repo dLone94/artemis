@@ -162,7 +162,13 @@ test("vault tools are capability-gated, routed, and taint note reads", () => {
   assert.equal(toolByName("save_note", { vault: true }).family, "vault");
   assert.equal(
     needsConfirmation("save_note", { tainted: true }, { vault: true }),
-    false
+    true,
+    "a tainted turn cannot write attacker text into the vault without a yes"
+  );
+  assert.equal(
+    needsConfirmation("save_note", { tainted: false }, { vault: true }),
+    false,
+    "a user-asked note still writes without a prompt"
   );
 
   const save = classifyIntent("save this in my Obsidian vault", { vault: true });

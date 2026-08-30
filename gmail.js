@@ -8,6 +8,9 @@
 //      http://localhost:4100/auth/google — approve, copy the refresh token
 //      it prints into .env as GOOGLE_REFRESH_TOKEN, restart again.
 
+import { randomBytes } from "node:crypto";
+import { assertNetwork } from "./networkPolicy.js";
+
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 // gmail.modify authorizes read + labels/trash and Google also accepts it for
@@ -27,7 +30,11 @@ export function gmailAuthReady() {
 }
 
 // ---- one-time consent flow (loopback) --------------------------------------
+let pendingOauth = null;
+
 export function gmailAuthUrl(port) {
+  const state = randomBytes(16).toString("hex");
+  pendingOauth = { state, exp: Date.now() + 10 * 60 * 1000 };
   const q = new URLSearchParams({
     client_id: env("GOOGLE_CLIENT_ID"),
     redirect_uri: `http://localhost:${port}/auth/google/callback`,
@@ -35,10 +42,19 @@ export function gmailAuthUrl(port) {
     access_type: "offline",
     prompt: "consent", // force a refresh_token even on re-auth
     scope: SCOPES,
+    state
   });
   return "https://accounts.google.com/o/oauth2/v2/auth?" + q;
 }
+
+export function takeGmailOauthState(state) {
+  const pending = pendingOauth;
+  pendingOauth = null;
+  if (!pending || Date.now() > pending.exp) return false;
+  return pending.state === String(state || "");
+}
 export async function gmailExchangeCode(code, port) {
+  assertNetwork("gmail");
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -70,6 +86,7 @@ function clearAccessTokenCache() {
   profileCacheGeneration++;
 }
 async function accessToken() {
+  assertNetwork("gmail");
   if (cache.token && Date.now() < cache.exp) return cache.token;
   const generation = profileCacheGeneration;
   const res = await fetch(TOKEN_URL, {
@@ -94,6 +111,7 @@ async function accessToken() {
   return cache.token;
 }
 async function gapi(path) {
+  assertNetwork("gmail");
   const generation = profileCacheGeneration;
   const token = await accessToken();
   if (generation !== profileCacheGeneration) {
@@ -304,6 +322,7 @@ export async function readMessage(id) {
 // Move one message to Gmail's recoverable Trash. A refresh token granted under
 // the old readonly scope gets a 403 until the user completes consent again.
 export async function trashMessage(id) {
+  assertNetwork("gmail");
   const token = await accessToken();
   const res = await fetch(`${API}/messages/${encodeURIComponent(id)}/trash`, {
     method: "POST",

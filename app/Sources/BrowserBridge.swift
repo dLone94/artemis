@@ -66,14 +66,18 @@ final class BrowserBridge: NSObject, WKUIDelegate, WKScriptMessageHandler {
                  initiatedByFrame frame: WKFrameInfo,
                  type: WKMediaCaptureType,
                  decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-        decisionHandler(.grant)
+        if type == .microphone {
+            decisionHandler(.grant)
+        } else {
+            decisionHandler(.deny)
+        }
     }
 
     // JS dialogs would otherwise be silently dropped in a WKWebView.
     func webView(_ wv: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let a = NSAlert()
-        a.messageText = "Evie"
+        a.messageText = "Artemis"
         a.informativeText = message
         a.addButton(withTitle: "OK")
         a.runModal()

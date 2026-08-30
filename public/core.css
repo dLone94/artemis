@@ -1,0 +1,88 @@
+/* ARTEMIS CORE — hero visualization + the hierarchy pass around it.
+ *
+ * Loaded LAST so it can lower the emphasis of existing chrome without editing
+ * five stylesheets that already cascade into each other. Everything here is
+ * additive: no rule removes a control, hides data, or disables a feature.
+ *
+ * The hierarchy this file enforces, brightest to quietest:
+ *   1. the Core (canvas)      2. state label   3. active task
+ *   4. conversation           5. context       6. system diagnostics
+ */
+
+/* ---- 1. the Core canvas ---- */
+.core-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---- 3. active task ---- */
+/* The Core canvas owns the reference identity lockup (ARTEMIS / INTELLIGENCE CORE).
+   Live state and the active task remain DOM readouts: #hudState and #coreTask
+   are accessible, stay synchronized with the presence bus, and the reference
+   dashboard promotes #coreTask into its ACTIVE TASK bar. The base surface keeps
+   this mirror visually hidden when that bar is not present. */
+.core-task {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- 6. system diagnostics recede ---- */
+/* The ops wall (UPTIME, SYSTEM LOAD, MEMORY, RESPONSE MS, NEURAL CHAIN, TOKEN
+   BUDGETS, SIGNALS, SUBSYSTEMS) stays fully functional and fully readable —
+   it just stops competing with the Core for attention. Hovering or focusing a
+   panel restores it to full strength, so the data is never harder to actually
+   read, only harder to be distracted by. */
+.ops-panel {
+  opacity: 0.58;
+  filter: saturate(0.82);
+  transition: opacity 220ms ease, filter 220ms ease;
+}
+.ops-panel:hover,
+.ops-panel:focus-within {
+  opacity: 1;
+  filter: none;
+}
+.ops-panel .ops-num { font-weight: 500; opacity: 0.9; }
+.ops-panel .ops-label { opacity: 0.72; }
+.ops-panel .ops-chart { opacity: 0.66; }
+/* The sweeping scan line on every panel was eight independent animations
+   pulling the eye away from the middle of the screen at once. */
+.ops-panel .ops-scan { opacity: 0.35; animation-duration: 9s; }
+
+/* ---- bottom bar: primary voice control leads, toggles follow ---- */
+/* The mic is the primary interaction and already carries the most visual
+   weight, so this only subordinates the secondary toggles. Deliberately scoped
+   to toggles that are OFF: an active toggle keeps full strength (the contrast
+   now makes ON *more* legible, not less), and `.is-na` is left to the existing
+   unavailable styling rather than dimmed twice. */
+.cockpit .dock .wake-toggle:not(.on):not(.is-na) {
+  opacity: 0.7;
+  transition: opacity 180ms ease;
+}
+.cockpit .dock .wake-toggle:not(.on):not(.is-na):hover,
+.cockpit .dock .wake-toggle:not(.on):not(.is-na):focus-visible {
+  opacity: 1;
+}
+
+/* Reduced motion: the Core already renders a single static frame from JS
+   (prefersReducedMotion in orbShared.js). This covers the CSS-driven chrome
+   around it so the whole centre column agrees. */
+@media (prefers-reduced-motion: reduce) {
+  .ops-panel .ops-scan { animation: none; }
+}
+
+/* ---- responsive ---- */
+/* The Core sizes itself from the SHORTER axis of its own slot and draws its
+   own text inside that bound (ArtemisCore.resize / _drawLabel / _fit), so it
+   cannot collide with the side panels, the skills strip or the dock at any
+   window size — there is no fixed-pixel assumption left here to protect.
+   Capability labels drop out below LABEL_MIN_RADIUS rather than crowding. */

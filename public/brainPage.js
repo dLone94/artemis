@@ -8,7 +8,7 @@
 
 import { BrainOrb } from "./brainOrb.js";
 import { prefersReducedMotion } from "./orbShared.js";
-import { MOON_INFO } from "./voiceOrb.js";
+import { MOON_INFO } from "./coreCapabilities.js";
 import { FALLBACK_PROFILE, resolveWakeProfile } from "./wakeProfile.js";
 
 // This page does NOT load main.js, so it resolves the wake profile itself.

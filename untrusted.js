@@ -34,7 +34,14 @@ export const MAIL_UNTRUSTED_SKILLS = new Set([
   "check_messages",
   "meeting_notes",
   "search_notes",
-  "read_note"
+  "read_note",
+  // Screen text is the same class of attacker-controlled input: a reply that
+  // quotes it must not become trusted conversation history for a later model
+  // turn (contextual-tier hardening, 2026-08-25).
+  "read_screen",
+  "fetch_page",
+  "web_research",
+  "research_investment"
 ]);
 
 // Skills whose output feeds text controlled by somebody outside this process
@@ -42,7 +49,13 @@ export const MAIL_UNTRUSTED_SKILLS = new Set([
 export const UNTRUSTED_SKILLS = new Set([
   ...MAIL_UNTRUSTED_SKILLS,
   "opportunity_radar",
-  "research_investment"
+  "research_investment",
+  // Screen content and shell output can contain attacker-controlled text (a
+  // web page rendered on screen, a command that echoes a poisoned file), so a
+  // turn that reads them is tainted: later mutations then require a spoken yes.
+  "read_screen",
+  "run_command",
+  "computer_control"
 ]);
 
 const MAIL_TAINT_BLOCKED_TOOLS = new Set([
@@ -68,6 +81,21 @@ export function historyHasMailTaint(messages) {
 export function mailSafeHistoryContent(content, mailUntrusted) {
   if (!mailUntrusted) return String(content == null ? "" : content);
   return "[Earlier assistant reply derived from untrusted third-party data; details omitted from model history.]";
+}
+
+/** Bound, role-filtered history with taint preserved so follow-up turns stay gated. */
+export function sanitizeChatMessages(raw) {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+    .map((m) => {
+      const mailUntrusted = m.role === "assistant" && m.mailUntrusted === true;
+      return {
+        role: m.role,
+        content: mailSafeHistoryContent(String(m.content ?? ""), mailUntrusted),
+        mailUntrusted
+      };
+    })
+    .slice(-40);
 }
 
 // Browser-open actions produced in a tainted turn are a prompt-injection

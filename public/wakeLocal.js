@@ -20,6 +20,10 @@
 // STT — no MediaRecorder, no chunk streaming, no ordering hazards.
 
 import { resolveWakeProfile, FALLBACK_PROFILE } from "./wakeProfile.js";
+// Adaptive capture: noise-relative VAD, bounded gain for quiet speech, and the
+// per-utterance profile (NORMAL / FAR_FIELD / WHISPER). Replaces the absolute
+// 0.010 speech floor that made whispered and distant speech undetectable.
+import { createAudioFrontEnd } from "./audioFrontEnd.js";
 
 let ort = null;
 let melSess = null, embSess = null, wwSess = null;
@@ -47,16 +51,59 @@ let sinceInfer = 0;
 let inferBusy = false; // one inference at a time — overlap spirals CPU on slow devices
 let micGen = 0;        // bumped by closeMic so an in-flight openMic knows it went stale
 
+// ---- wake liveness -----------------------------------------------------------
+// THE failure this exists to catch: an AudioContext can be created (or left)
+// SUSPENDED — autoplay policy, or the page being hidden when it was built. A
+// suspended context delivers no frames to the worklet, so no inference runs and
+// nothing ever fires, while `running` is still true and the HUD still says
+// "listening". The wake word looked armed and did nothing. Frames are the only
+// honest proof that audio is flowing, so we count them and watch.
+let framesSeen = 0;
+let lastFrameAt = 0;
+let watchdog = 0;
+let healRetries = 0;
+let lastHealth = "";
+const HEAL_MAX = 3;              // bounded — never an infinite restart loop
+const STALL_MS = 4000;           // detect-mode silence that means "no audio at all"
+
+/** One line per real transition. Never per frame, never raw audio. */
+function wakeLog(event, detail) {
+  const line = detail ? `[wake] ${event}: ${detail}` : `[wake] ${event}`;
+  if (line === lastHealth) return;   // no log spam while a state persists
+  lastHealth = line;
+  try { console.log(line); } catch (e) {}
+}
+
+/** Diagnostics for the UI/tests: is audio genuinely reaching the detector? */
+export function wakeHealth(now = Date.now()) {
+  return {
+    running,
+    mode,
+    contextState: ctx ? ctx.state : "none",
+    framesSeen,
+    msSinceFrame: lastFrameAt ? now - lastFrameAt : null,
+    stalled: !!(running && mode === "detect" && lastFrameAt && now - lastFrameAt > STALL_MS),
+    healRetries
+  };
+}
+
 // ambient noise floor (RMS), learned continuously while in detect mode so the
 // command endpointer adapts to the room instead of using a magic constant
 let noiseFloor = 0.004;
+// The adaptive front end owns level analysis for CAPTURE. Detection keeps its
+// own cheap RMS path so the always-on cost stays exactly what it was.
+const frontEnd = createAudioFrontEnd({ applyGain: false });
+/** Pin/release the capture profile ("FAR_FIELD" | "WHISPER" | null = AUTO). */
+export function setCaptureProfile(name) { return frontEnd.setOverride(name); }
+/** Metadata only — profile, floor, gain, SNR. Never audio. */
+export function captureDiagnostics() { return frontEnd.diagnostics(); }
 
 // command-capture state
 let capBuf = [], capLen = 0, capStart = 0, capHeard = false, capQuiet = 0;
-let capResolve = null, capSafety = 0, capOnLevel = null;
-const CAP_SILENCE_MS = 750;   // quiet-after-speech = done. 1100ms was the single
-                              // largest chunk of dead air in every exchange; 750 still
-                              // survives a mid-sentence breath
+let capResolve = null, capSafety = 0, capOnLevel = null, capPeakRms = 0;
+const CAP_SILENCE_MS = 550;   // quiet-after-speech = done. The adaptive noise floor
+                              // still protects normal breaths without adding most of
+                              // a second after every command
 const CAP_NOSPEECH_MS = 4500; // never spoke → give up
 const CAP_MAX_MS = 12000;     // hard cap per command
 const PREROLL_MS = 1200;      // audio kept from BEFORE detection fired
@@ -138,6 +185,8 @@ async function infer() {
 }
 
 function pushFrame(f) {
+  framesSeen += 1;
+  lastFrameAt = Date.now();
   // always slide the 1280-sample frame into the rolling 2 s buffer — it feeds
   // detection AND the command pre-roll, so it must stay fresh in every mode
   audio.copyWithin(0, f.length);
@@ -177,15 +226,23 @@ function captureFrame(f, rms) {
   capOnLevel && capOnLevel(rms);
   const now = performance.now();
   const dur = now - capStart;
-  const speechThresh = Math.max(noiseFloor * 3.5, 0.010); // adapts to the room
-  if (rms > speechThresh) { capHeard = true; capQuiet = 0; }
+  // Noise-RELATIVE threshold from the active profile. The old
+  // `max(noiseFloor * 3.5, 0.010)` could never fire for a whisper (~0.005) or
+  // for speech from a couple of metres, because the constant outranked the
+  // room. The profile's minSpeech is a denoising net an order of magnitude
+  // lower, so quiet speech in a quiet room is now detectable.
+  const prof = frontEnd.profile;
+  const speechThresh = Math.max(noiseFloor * prof.speechRatio, prof.minSpeech);
+  if (rms > speechThresh) { capHeard = true; capQuiet = 0; capPeakRms = Math.max(capPeakRms, rms); }
   else if (capHeard && !capQuiet) capQuiet = now;
   // The hard cap must budget for the wait-for-speech window: with a 20s
   // follow-up wait, a fixed 12s ceiling closed the mic at 12s no matter what
   // the caller asked for. Waits at or below the default keep the exact old
   // ceiling; longer waits extend it by the difference.
   const capCeiling = CAP_MAX_MS + Math.max(0, capWaitForSpeechMs - CAP_NOSPEECH_MS);
-  if ((capHeard && capQuiet && now - capQuiet > CAP_SILENCE_MS) ||
+  // Quiet speech has longer internal gaps; the profile decides how long a
+  // pause means "finished" instead of one constant for every voice level.
+  if ((capHeard && capQuiet && now - capQuiet > prof.silenceMs) ||
       (!capHeard && dur > capWaitForSpeechMs) ||
       dur > capCeiling) {
     finishCapture(capHeard);
@@ -193,6 +250,13 @@ function captureFrame(f, rms) {
 }
 
 function finishCapture(gotSpeech) {
+  // One classification per completed utterance — stable, and it cannot flap
+  // mid-sentence the way per-frame classification did.
+  if (gotSpeech && capPeakRms > 0) {
+    frontEnd.observeUtterance({ rms: capPeakRms, noiseFloor });
+    wakeLog("capture", JSON.stringify(frontEnd.diagnostics()));
+  }
+  capPeakRms = 0;
   const resolve = capResolve;
   capResolve = null;
   if (capSafety) { clearTimeout(capSafety); capSafety = 0; }
@@ -297,6 +361,14 @@ async function openMic(startupGeneration = micGen) {
   pendingMicStream = null; pendingMicContext = null;
   micStream = stream; ctx = c; node = n; keepAlive = pendingKeepAlive;
   filled = 0; sinceInfer = 0;
+  // A context built under the autoplay policy — or while the page was hidden —
+  // starts SUSPENDED and silently delivers nothing. Resuming is the difference
+  // between "armed" and actually listening.
+  if (c.state !== "running") {
+    try { await c.resume(); } catch (e) {}
+    wakeLog("context resumed", c.state);
+  }
+  lastFrameAt = Date.now();   // give the watchdog a fair starting point
 }
 
 async function closeMic() {
@@ -316,6 +388,66 @@ async function closeMic() {
       void pendingContext.close().catch(() => {});
     }
   } catch (e) {}
+}
+
+/**
+ * Wake self-healing. While we are supposed to be DETECTING, frames must keep
+ * arriving; if they stop, the pipeline is alive in name only. Recovery is
+ * escalating and BOUNDED — resume the context first (the cheap, common fix),
+ * then rebuild the mic, then give up with a visible error rather than spinning.
+ */
+function startWatchdog() {
+  stopWatchdog();
+  healRetries = 0;
+  watchdog = setInterval(async () => {
+    if (!running || mode !== "detect") return;      // capture/idle legitimately quiet
+    const health = wakeHealth();
+    if (!health.stalled) { healRetries = 0; return; }
+    if (healRetries >= HEAL_MAX) {
+      wakeLog("failure", "audio stalled and could not be recovered — check microphone permission/device");
+      try { onDetectCb && onDetectCb({ error: "wake-audio-stalled" }); } catch (e) {}
+      stopWatchdog();
+      return;
+    }
+    healRetries += 1;
+    wakeLog("suspended", `no audio for ${health.msSinceFrame}ms (context ${health.contextState}) — heal ${healRetries}/${HEAL_MAX}`);
+    // 1. cheapest fix: the context merely got suspended.
+    if (ctx && ctx.state !== "running") {
+      try { await ctx.resume(); } catch (e) {}
+      lastFrameAt = Date.now();
+      if (ctx.state === "running") { wakeLog("re-armed", "context resumed"); return; }
+    }
+    // 2. rebuild the mic graph, with backoff between attempts.
+    try {
+      const gen = micGen;
+      await closeMic();
+      await new Promise((r) => setTimeout(r, 250 * healRetries));
+      if (!running) return;
+      await openMic(micGen);
+      void gen;
+      wakeLog("re-armed", "microphone rebuilt");
+    } catch (e) {
+      wakeLog("heal failed", (e && e.message) || "unknown");
+    }
+  }, 2000);
+  if (watchdog && watchdog.unref) watchdog.unref();
+}
+
+function stopWatchdog() {
+  if (watchdog) clearInterval(watchdog);
+  watchdog = 0;
+}
+
+// The page coming back into view is the single most common moment for a
+// suspended context, so resume proactively instead of waiting for the stall.
+if (typeof document !== "undefined" && document.addEventListener) {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || !running || !ctx) return;
+    if (ctx.state !== "running") {
+      ctx.resume().then(() => wakeLog("re-armed", "visible again")).catch(() => {});
+      lastFrameAt = Date.now();
+    }
+  });
 }
 
 export async function startLocalWake(_cfg, onDetect) {
@@ -340,6 +472,8 @@ export async function startLocalWake(_cfg, onDetect) {
       if (startupGeneration !== micGen) throw new Error("superseded");
       await openMic(startupGeneration);
       mode = "detect"; running = true;
+      startWatchdog();
+      wakeLog("armed", profile && profile.id);
       return true;
     } catch (e) {
       console.warn("openWakeWord failed to start — falling back:", e && e.message);
@@ -361,6 +495,8 @@ export async function startLocalWake(_cfg, onDetect) {
 
 export async function stopLocalWake({ preserveCapture = false } = {}) {
   running = false; mode = "idle";
+  stopWatchdog();
+  wakeLog("stopped");
   if (cancelLoading) cancelLoading();
   // closeMic stops tracks synchronously before its first await, so even when a
   // meeting keeps the already-buffered partial WAV, the hard mic stop is not

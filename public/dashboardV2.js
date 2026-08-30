@@ -1,4 +1,4 @@
-import { MOON_INFO } from "./voiceOrb.js";
+import { MOON_INFO } from "./coreCapabilities.js";
 
 const body = document.body;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -34,7 +34,7 @@ function initializeDashboardV2() {
 
   const shell = document.createElement("main");
   shell.className = "v2-shell";
-  shell.setAttribute("aria-label", "Evie command center");
+  shell.setAttribute("aria-label", "Artemis command center");
   shell.innerHTML = shellMarkup();
   body.appendChild(shell);
 
@@ -42,9 +42,64 @@ function initializeDashboardV2() {
   slot("header").appendChild(required.header);
   slot("stage").appendChild(required.stage);
   slot("hub-readouts").append(required.state, required.tool);
+  // The Core's active-task line becomes the ACTIVE TASK bar above the hub
+  // (reference composition). Optional on purpose — a page without it must not
+  // knock the whole layout back to v1.
+  const coreTask = document.getElementById("coreTask");
+  if (coreTask && slot("task")) slot("task").appendChild(coreTask);
+  else if (coreTask) slot("hub-readouts").appendChild(coreTask);
+  // The live waveform reads under the Core, not inside the dock (reference).
+  const hudWave = document.getElementById("hudWave");
+  if (hudWave) slot("hub-readouts").appendChild(hudWave);
   slot("comms").appendChild(required.comms);
   slot("context").appendChild(required.context);
   slot("dock").appendChild(required.dock);
+
+  // ---- command bar (reference: mic · input · minimal controls) --------------
+  // Voice is the primary interaction: the mic orb moves out of the toggle row
+  // to lead the bar; the toggle/selector row becomes an on-demand drawer. All
+  // existing controls keep their ids and handlers — nothing is removed.
+  {
+    const dock = required.dock;
+    const mic = dock.querySelector("#micToggle");
+    const form = dock.querySelector("#cmdForm");
+    if (mic && form) dock.insertBefore(mic, form);
+    const controls = document.createElement("div");
+    controls.className = "v3-dock-controls";
+    const mkBtn = (label, title, onClick) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "v3-dock-btn";
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener("click", onClick);
+      controls.appendChild(b);
+      return b;
+    };
+    mkBtn("✕", "Stop the current task", () => {
+      try { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); } catch (e) {}
+      fetch("/api/presence/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: "cancel" })
+      }).catch(() => {});
+    });
+    mkBtn("◱ PILL", "Switch to the floating pill", () => {
+      fetch("/api/presence/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: "pill" })
+      }).catch(() => {});
+    });
+    const more = mkBtn("⋯", "More controls (voice, tone, toggles)", () => {
+      const open = dock.dataset.more === "1";
+      dock.dataset.more = open ? "0" : "1";
+      more.setAttribute("aria-expanded", open ? "false" : "true");
+    });
+    more.setAttribute("aria-expanded", "false");
+    if (form) form.after(controls);
+    dock.dataset.more = "0";
+  }
 
   const brand = required.header.querySelector(".hud-brand");
   if (brand) {
@@ -116,9 +171,11 @@ function initializeDashboardV2() {
     const roots = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
     if (ids.some((id) => !roots[id])) return false;
 
-    slot("system").append(roots.opsCpu, roots.opsMem);
+    // UPTIME belongs with the machine truth (reference SYSTEM layout), not
+    // with context diagnostics.
+    slot("system").append(roots.opsCpu, roots.opsMem, roots.opsUp);
     slot("neural").append(roots.opsBrain, roots.opsTtfw);
-    slot("context-stats").append(roots.opsTokens, roots.opsCounts, roots.opsUp, roots.opsSkills);
+    slot("context-stats").append(roots.opsTokens, roots.opsCounts, roots.opsSkills);
     opsMounted = true;
     body.classList.add("v2-ops-mounted");
     updateCounts();
@@ -377,8 +434,18 @@ function initializeDashboardV2() {
 
 function shellMarkup() {
   return `
-    <div class="v2-header-slot" data-v2-slot="header"></div>
-    <section class="v2-map" aria-label="Evie subsystem architecture">
+    <aside class="v4-state-rail" aria-label="Artemis state matrix">
+      ${stateCardMarkup("idle", "IDLE")}
+      ${stateCardMarkup("listening", "LISTENING")}
+      ${stateCardMarkup("thinking", "THINKING")}
+      ${stateCardMarkup("executing", "EXECUTING")}
+      ${stateCardMarkup("speaking", "SPEAKING")}
+      ${stateCardMarkup("approval", "APPROVAL", true)}
+      ${stateCardMarkup("error", "ERROR")}
+    </aside>
+    <div class="v4-dashboard-frame">
+      <div class="v2-header-slot" data-v2-slot="header"></div>
+      <section class="v2-map" aria-label="Artemis subsystem architecture">
       <svg class="v2-spokes" aria-hidden="true" preserveAspectRatio="none">
         <defs>
           ${["system", "neural", "comms", "context"].map(spokeGradientMarkup).join("")}
@@ -398,7 +465,7 @@ function shellMarkup() {
       </section>
 
       <section class="v2-panel v2-panel--neural" data-v2-panel="neural" aria-labelledby="v2NeuralTitle">
-        <header class="v2-panel-heading"><h2 id="v2NeuralTitle">NEURAL CHAIN</h2><i aria-hidden="true"></i></header>
+        <header class="v2-panel-heading"><h2 id="v2NeuralTitle">BRAIN</h2><i aria-hidden="true"></i></header>
         <div class="v2-panel-content v2-neural-stats" data-v2-slot="neural"></div>
       </section>
 
@@ -408,7 +475,7 @@ function shellMarkup() {
       </section>
 
       <section class="v2-panel v2-panel--context" data-v2-panel="context" aria-labelledby="v2ContextTitle">
-        <header class="v2-panel-heading"><h2 id="v2ContextTitle">CONTEXT &amp; MEMORY</h2><i aria-hidden="true"></i></header>
+        <header class="v2-panel-heading"><h2 id="v2ContextTitle">CONTEXT</h2><i aria-hidden="true"></i></header>
         <div class="v2-panel-content v2-context-content">
           <div class="v2-context-main" data-v2-slot="context"></div>
           <div class="v2-context-stats" data-v2-slot="context-stats"></div>
@@ -416,9 +483,12 @@ function shellMarkup() {
       </section>
 
       <div class="v2-center-column">
-        <section class="v2-hub" data-v2-hub aria-label="Evie orchestration core">
+        <div class="v3-task-bar" aria-label="Active task">
+          <span class="v3-task-label">ACTIVE TASK</span>
+          <span class="v3-task-slot" data-v2-slot="task"></span>
+        </div>
+        <section class="v2-hub" data-v2-hub aria-label="Artemis orchestration core">
           <div class="v2-stage-slot" data-v2-slot="stage"></div>
-          ${hubRingMarkup()}
           <div class="v2-hub-readouts" data-v2-slot="hub-readouts"></div>
         </section>
         <section class="v2-skills" aria-labelledby="v2SkillsSummary">
@@ -429,8 +499,24 @@ function shellMarkup() {
           <ul class="v2-skill-list" data-v2-skills></ul>
         </section>
       </div>
-    </section>
-    <div class="v2-dock-slot" data-v2-slot="dock"></div>`;
+      </section>
+      <div class="v2-dock-slot" data-v2-slot="dock"></div>
+    </div>`;
+}
+
+function stateCardMarkup(state, label, hasActions = false) {
+  return `<article class="v4-state-card" data-v4-state="${state}" aria-label="${label} state">
+    <div class="v4-mini-core" aria-hidden="true"><i></i><b></b><em></em><span></span></div>
+    <div class="v4-state-copy">
+      <strong>${label}</strong>
+      <span data-v4-state-detail>—</span>
+      ${hasActions ? `<div class="v4-approval-actions">
+        <button type="button" data-v4-confirm="yes" disabled>Allow</button>
+        <button type="button" data-v4-confirm="no" disabled>Deny</button>
+      </div>` : ""}
+    </div>
+    <i class="v4-card-grip" aria-hidden="true"></i>
+  </article>`;
 }
 
 function spokeMarkup(name, delay) {
@@ -552,19 +638,15 @@ function spokeChevronsPath(points) {
   }).join("");
 }
 
-function hubRingMarkup() {
-  return `<svg class="v2-hub-rings" viewBox="0 0 200 200" aria-hidden="true">
-    <g class="v2-hub-outer-rotor"><circle class="v2-hub-ring v2-hub-ring--outer" cx="100" cy="100" r="96" pathLength="100"></circle></g>
-    <circle class="v2-hub-ring v2-hub-ring--solid" cx="100" cy="100" r="86"></circle>
-    <g class="v2-hub-inner-rotor"><circle class="v2-hub-ring v2-hub-ring--dash" cx="100" cy="100" r="79" pathLength="100"></circle></g>
-    <g class="v2-hub-radar"><path d="M100 100 100 8A92 92 0 0 1 128.4 12.5Z"></path></g>
-    <path class="v2-hub-ticks" d="M100 1v9M100 190v9M1 100h9M190 100h9M28 28l7 7M165 165l7 7M28 172l7-7M165 35l7-7"></path>
-    <g class="v2-hub-nodes">
-      <circle cx="100" cy="4" r="3.7"></circle><circle cx="196" cy="100" r="3.7"></circle>
-      <circle cx="100" cy="196" r="3.7"></circle><circle cx="4" cy="100" r="3.7"></circle>
-    </g>
-  </svg>`;
-}
+// RETIRED 2026-08-13 — hubRingMarkup() used to draw a second ring system here:
+// two rotating rotors, a radar wedge, ticks and four cardinal dots. The Eve
+// Intelligence Core now renders all of that on canvas as its orbital layer, and
+// stacking two independent ring systems on the same centre read as clutter and
+// paid for two infinite CSS rotor animations that duplicated canvas work.
+//
+// Only the DECORATIVE rings were removed. The `.v2-spoke` system below is
+// FUNCTIONAL — pulseSpoke() fires on real comms/neural/context/system events —
+// and is kept intact as the structural framing between the hub and the panels.
 
 function wireSphereMarkup() {
   return `<svg viewBox="0 0 92 92">
@@ -716,6 +798,12 @@ function installPerformanceGuard(shell, panels) {
     const opsHistory = new Float32Array(75); // decaying activity blips
     let running = 0;
     let lastTool = "";
+    window.addEventListener("artemis-turn", (event) => {
+      const d = event.detail || {};
+      if (d.phase === "begin" || (d.phase === "event" && (d.event === "done" || d.event === "error"))) {
+        running = 0;
+      }
+    });
     window.addEventListener("artemis-tool", (event) => {
       const d = event.detail || {};
       const name = String(d.family || d.name || "tool");

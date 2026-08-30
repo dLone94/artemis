@@ -56,6 +56,12 @@ const artemisProfile = (overrides = {}) => ({
     "/oww/melspectrogram.onnx": sha(REAL["/oww/melspectrogram.onnx"]),
     "/oww/embedding_model.onnx": sha(REAL["/oww/embedding_model.onnx"])
   },
+  evaluation: {
+    verdict: "PASS",
+    artifactSha256: sha(ARTEMIS),
+    threshold: 0.72,
+    version: "test-eval-v1"
+  },
   ...overrides
 });
 
@@ -111,6 +117,26 @@ const opts = { onWarn: (m) => warnings.push(m) };
   assert.ok(r.bytes[p.classifierUrl], "verified bytes are handed back so the file can't change after the check");
   console.log("  ✓ a hash-verified custom profile is adopted with its own threshold");
 }
+
+// ---- release gate: only an exactly bound PASS may become active -------------
+for (const [label, evaluation] of [
+  ["failed verdict", { verdict: "FAIL", artifactSha256: sha(ARTEMIS), threshold: 0.72, version: "test-eval-v1" }],
+  ["wrong artifact", { verdict: "PASS", artifactSha256: "0".repeat(64), threshold: 0.72, version: "test-eval-v1" }],
+  ["wrong threshold", { verdict: "PASS", artifactSha256: sha(ARTEMIS), threshold: 0.99, version: "test-eval-v1" }],
+  ["missing evaluation version", { verdict: "PASS", artifactSha256: sha(ARTEMIS), threshold: 0.72 }]
+]) {
+  warnings.length = 0;
+  const p = artemisProfile({ evaluation });
+  stubFetch({
+    ...baseFiles(),
+    "/oww/manifest.json": JSON.stringify({ active: p.id, profiles: { [p.id]: p } }),
+    [p.classifierUrl]: ARTEMIS
+  });
+  const r = await resolveWakeProfile(opts);
+  assert.equal(r.profile.id, FALLBACK_PROFILE.id, `${label} must not become active`);
+  assert.equal(r.fellBack, true);
+}
+console.log("  ✓ failed or unbound evaluations can never activate a custom wake model");
 
 // ---- corrupt / truncated asset: roll back, do not run unverified ------------
 {
@@ -230,16 +256,21 @@ const readPublic = (rel) => readFileSync(join(PUBLIC, rel), "utf8");
     console.log("  ○ no manifest bundled — active-profile integrity check skipped");
   } else {
     const active = manifest.profiles && manifest.profiles[manifest.active];
-    assert.ok(active, `manifest names active profile "${manifest.active}" but does not define it`);
-    assert.deepEqual(validateProfile(active), [], "the bundled active profile must be well-formed");
+    if (manifest.active == null) {
+      assert.equal(active, undefined, "an explicit rollback has no custom active profile");
+      console.log("  ✓ bundled manifest explicitly rolls back to the built-in profile");
+    } else {
+      assert.ok(active, `manifest names active profile "${manifest.active}" but does not define it`);
+      assert.deepEqual(validateProfile(active), [], "the bundled active profile must be release-gated and well-formed");
 
-    for (const [url, expected] of Object.entries(active.assets)) {
-      const onDisk = join(OWW, String(url).replace(/^\/oww\//, ""));
-      const got = sha(readFileSync(onDisk));
-      assert.equal(got, String(expected).toLowerCase(),
-        `${url} on disk does not match the hash the manifest declares — the engine would roll back while the manifest still advertises "${active.phrase}"`);
+      for (const [url, expected] of Object.entries(active.assets)) {
+        const onDisk = join(OWW, String(url).replace(/^\/oww\//, ""));
+        const got = sha(readFileSync(onDisk));
+        assert.equal(got, String(expected).toLowerCase(),
+          `${url} on disk does not match the hash the manifest declares — the engine would roll back while the manifest still advertises "${active.phrase}"`);
+      }
+      console.log(`  ✓ active profile "${active.id}" (${active.phrase}) verifies against the bytes on disk`);
     }
-    console.log(`  ✓ active profile "${active.id}" (${active.phrase}) verifies against the bytes on disk`);
   }
 }
 
@@ -269,9 +300,11 @@ const readPublic = (rel) => readFileSync(join(PUBLIC, rel), "utf8");
     // Serve the REAL files, so this exercises the real resolution rule against
     // the real bundle rather than a fixture that could drift from it.
     const served = { "/oww/manifest.json": readFileSync(join(OWW, "manifest.json")) };
-    const active = manifest.profiles[manifest.active];
-    for (const url of Object.keys(active.assets)) {
-      served[url] = readFileSync(join(OWW, String(url).replace(/^\/oww\//, "")));
+    const active = manifest.active == null ? null : manifest.profiles[manifest.active];
+    if (active) {
+      for (const url of Object.keys(active.assets)) {
+        served[url] = readFileSync(join(OWW, String(url).replace(/^\/oww\//, "")));
+      }
     }
     for (const [url, buf] of Object.entries(REAL)) served[url] = buf;
 
@@ -279,13 +312,13 @@ const readPublic = (rel) => readFileSync(join(PUBLIC, rel), "utf8");
     stubFetch(served);
     const r = await resolveWakeProfile(opts);
 
-    assert.equal(r.profile.id, active.id,
-      "the bundled manifest verifies, so resolution must adopt its active profile");
-    assert.equal(r.profile.phrase, active.phrase,
-      "the phrase the UI will display must equal the phrase the active profile declares");
-    assert.equal(r.fellBack, false, "a fully verifying bundle is not a rollback");
+    assert.equal(r.profile.id, active ? active.id : FALLBACK_PROFILE.id,
+      active ? "the bundled manifest verifies, so resolution must adopt its active profile" : "active:null uses the built-in profile");
+    assert.equal(r.profile.phrase, active ? active.phrase : FALLBACK_PROFILE.phrase,
+      "the phrase the UI will display must equal the profile the engine runs");
+    assert.equal(r.fellBack, false, "a clean active profile or explicit rollback resolves normally");
     assert.deepEqual(warnings, [], "a clean bundle must resolve without warnings");
-    console.log(`  ✓ resolution adopts "${active.id}" and reports the phrase the UI will show`);
+    console.log(`  ✓ resolution adopts "${active ? active.id : FALLBACK_PROFILE.id}" and reports the phrase the UI will show`);
   }
 }
 

@@ -13,13 +13,18 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # The repo path is baked in so the app always runs the current working copy.
 sed "s|__ARTEMIS_ROOT__|$ROOT|g" "$HERE/Info.plist.in" > "$APP/Contents/Info.plist"
 
-# Icon. Regenerated from makeicon.swift when missing, so a fresh clone doesn't
-# need the binary committed — every size is drawn at its own resolution rather
-# than downsampled, which is what keeps it legible at 16px.
-if [ ! -f "$HERE/AppIcon.icns" ]; then
+# Build stamp: logged at launch so a stale binary can never masquerade as the
+# current build (a pill-less Aug 10 binary cost a full debugging round).
+STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ) $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+/usr/libexec/PlistBuddy -c "Add :ArtemisBuildStamp string $STAMP" "$APP/Contents/Info.plist" 2>/dev/null ||
+  /usr/libexec/PlistBuddy -c "Set :ArtemisBuildStamp $STAMP" "$APP/Contents/Info.plist"
+
+# Icon. Regenerated whenever the master artwork or builder changes, so an
+# incremental build always packages the current design.
+if [ ! -f "$HERE/AppIcon.icns" ] || [ "$HERE/AppIcon-source.png" -nt "$HERE/AppIcon.icns" ] || [ "$HERE/makeicon.swift" -nt "$HERE/AppIcon.icns" ]; then
   echo "generating app icon…"
   swiftc -O -o "$OUT/makeicon" "$HERE/makeicon.swift"
-  ( cd "$HERE" && "$OUT/makeicon" "$HERE/AppIcon.icns" )
+  ( cd "$HERE" && "$OUT/makeicon" "$HERE/AppIcon.icns" "$HERE/AppIcon-source.png" )
 fi
 cp "$HERE/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
@@ -53,4 +58,4 @@ echo "built $APP"
 echo ""
 echo "⚠ rebuild note: if hold-fn dictation or WhatsApp sends stop working,"
 echo "  re-trust the app: System Settings → Privacy & Security → Accessibility →"
-echo "  remove Evie (−) and re-add it (+), then reopen Evie."
+echo "  remove Artemis (−) and re-add it (+), then reopen Artemis."

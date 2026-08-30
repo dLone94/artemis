@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Artemis Core</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #e9f7fb;
+    --dim: #8aa4af;
+    --shell: rgba(5, 13, 20, 0.96);
+    --calm: #66899a;
+    --live: #35d0ff;
+    --work: #76cfff;
+    --hold: #ffcf6a;
+    --fault: #ff6f84;
+    --ok: #57e39a;
+    --tone: var(--calm);
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden; background: transparent;
+    color: var(--ink);
+    /* scale: 8 micro · 10.5 base · 15 state (≥1.3 between steps) */
+    font: 10.5px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  .tone-calm  { --tone: var(--calm); }
+  .tone-live  { --tone: var(--live); }
+  .tone-work  { --tone: var(--work); }
+  .tone-hold  { --tone: var(--hold); }
+  .tone-fault { --tone: var(--fault); }
+  .tone-ok    { --tone: var(--ok); }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden;
+    clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap;
+  }
+
+  #presence {
+    position: fixed; inset: 0;
+    --copy-shift: -8px;
+    -webkit-app-region: drag;
+  }
+
+  /* Active copy grows out of the core. Compact mode removes the toolbar
+     silhouette entirely: the floating identity is one circular object. */
+  .wing {
+    position: absolute; left: 38px; right: 4px; top: 7px; bottom: 7px;
+    background: linear-gradient(155deg, rgba(20, 45, 59, 0.94), rgba(5, 13, 20, 0.97) 65%), var(--shell);
+    clip-path: polygon(18px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 18px 100%, 0 50%);
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--tone) 24%, transparent),
+      inset 0 0 0 1px color-mix(in srgb, var(--tone) 18%, transparent),
+      0 4px 8px rgba(0, 0, 0, 0.42);
+    opacity: 1;
+    transform: scaleX(1);
+    transform-origin: left center;
+    transition: transform 220ms var(--ease-out), opacity 160ms ease-out;
+  }
+  #presence[data-size="compact"] .wing { opacity: 0; transform: scaleX(0.08); }
+
+  #core {
+    position: absolute; left: 4px; top: 4px; width: 60px; height: 60px;
+    border: 0; border-radius: 50%; padding: 0;
+    background: radial-gradient(circle at 48% 44%, rgba(21, 55, 73, 0.98), rgba(4, 10, 16, 0.99) 72%);
+    color: inherit;
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--tone) 34%, transparent),
+      inset 0 0 16px rgba(0, 0, 0, 0.75),
+      0 0 8px color-mix(in srgb, var(--tone) 27%, transparent);
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    transition: box-shadow 220ms ease-out, transform 220ms var(--ease-out);
+    z-index: 3;
+  }
+  #core:hover { transform: scale(1.035); }
+  #core:focus-visible { outline: 2px solid var(--tone); outline-offset: -2px; }
+  #core canvas { display: block; width: 60px; height: 60px; }
+  #presence[data-state="listening"] #core,
+  #presence[data-state="speaking"] #core {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--tone) 58%, transparent),
+      inset 0 0 18px rgba(5, 36, 50, 0.78),
+      0 0 8px color-mix(in srgb, var(--tone) 38%, transparent);
+  }
+
+  #status {
+    position: absolute; left: 72px; right: 92px; top: 14px;
+    min-width: 0;
+    opacity: 1; transform: translateX(0);
+    transition: opacity 150ms ease-out, transform 220ms var(--ease-out);
+    -webkit-app-region: no-drag;
+  }
+  #presence[data-size="compact"] #status,
+  #presence[data-size="compact"] #signal,
+  #presence[data-size="compact"] #controls {
+    opacity: 0; pointer-events: none; transform: translateX(var(--copy-shift));
+  }
+  .meta { display: flex; align-items: center; gap: 6px; min-width: 0; height: 11px; }
+  #capability {
+    flex: 0 0 auto; max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--tone); font-size: 8px; font-weight: 650; letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  #brain {
+    margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--dim); font: 600 8px/1.1 ui-monospace, "SFMono-Regular", monospace;
+    letter-spacing: 0.04em;
+  }
+  #label {
+    margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--ink); font-size: 15px; font-weight: 620; letter-spacing: 0.005em;
+  }
+  #task {
+    margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--dim); font-size: 10.5px;
+  }
+  #task:empty { display: none; }
+
+  #signal {
+    position: absolute; right: 66px; top: 29px; width: 20px; height: 18px;
+    display: flex; align-items: center; justify-content: center; gap: 2px;
+    opacity: 1; transform: translateX(0);
+    transition: opacity 150ms ease-out, transform 220ms var(--ease-out);
+    -webkit-app-region: no-drag;
+  }
+  #signal i {
+    width: 2px; height: 14px; border-radius: 2px; background: var(--tone);
+    opacity: 0.78; transform: scaleY(0.12); transform-origin: center;
+    transition: transform 90ms linear, opacity 180ms ease-out;
+  }
+  #presence:not([data-voice="1"]) #signal i { opacity: 0.18; transform: scaleY(0.12) !important; }
+
+  #controls {
+    position: absolute; right: 10px; top: 25px;
+    display: flex; gap: 5px;
+    opacity: 1; transform: translateX(0);
+    transition: opacity 150ms ease-out, transform 220ms var(--ease-out);
+    -webkit-app-region: no-drag;
+  }
+  .icon-btn {
+    width: 23px; height: 23px; display: grid; place-items: center;
+    border: 0; border-radius: 50%;
+    background: rgba(232, 247, 251, 0.065); color: var(--dim); cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(232, 247, 251, 0.07);
+    transition: color 150ms ease-out, background 150ms ease-out;
+  }
+  .icon-btn:hover, .icon-btn:focus-visible { color: var(--ink); background: rgba(53, 208, 255, 0.13); outline: none; }
+  .icon-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+  .icon-btn.on { color: var(--fault); }
+
+  #approval {
+    position: absolute; left: 72px; right: 12px; top: 79px;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px;
+    align-items: end;
+    opacity: 0; pointer-events: none; transform: translateY(-6px);
+    transition: opacity 150ms ease-out, transform 220ms var(--ease-out);
+    -webkit-app-region: no-drag;
+  }
+  #presence[data-size="approval"] #approval { opacity: 1; pointer-events: auto; transform: translateY(0); }
+  #approvalPrompt {
+    align-self: center; max-height: 43px; overflow: hidden;
+    color: var(--ink); font-size: 10.5px; line-height: 1.45; text-wrap: pretty;
+  }
+  .approval-actions { display: flex; gap: 6px; }
+  .approval-actions button {
+    min-width: 62px; height: 31px; border: 0; border-radius: 10px;
+    font: 650 10.5px/1 -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer;
+  }
+  #allow { background: var(--ok); color: #041b10; }
+  #deny { background: rgba(232, 247, 251, 0.08); color: var(--ink); box-shadow: inset 0 0 0 1px rgba(232, 247, 251, 0.1); }
+  .approval-actions button:focus-visible { outline: 2px solid var(--tone); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .wing, #core, #status, #signal, #controls, #approval { transition: none; }
+    #core:hover { transform: none; }
+  }
+</style>
+</head>
+<body>
+  <main id="presence" class="tone-calm" data-size="compact" data-state="idle" data-motion="drift" data-voice="0">
+    <div class="wing" aria-hidden="true"></div>
+    <button id="core" type="button" aria-label="Show the full Artemis dashboard" title="Show Artemis">
+      <canvas width="128" height="128" aria-hidden="true"></canvas>
+      <span class="sr-only" id="coreStatus">Artemis is idle</span>
+    </button>
+    <section id="status" aria-live="polite">
+      <div class="meta"><span id="capability">ARTEMIS</span><span id="brain"></span></div>
+      <div id="label">Idle</div>
+      <div id="task"></div>
+    </section>
+    <div id="signal" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div id="controls">
+      <button class="icon-btn" id="mute" type="button" aria-label="Mute microphone" title="Mute microphone">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5a2.5 2.5 0 0 1 5 0v4a2.5 2.5 0 0 1-5 0zM3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5M5.5 14.5h5"/></svg>
+      </button>
+      <button class="icon-btn" id="cancel" type="button" aria-label="Stop the current task" title="Stop current task">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1"/></svg>
+      </button>
+    </div>
+    <section id="approval" aria-label="Approval required">
+      <div id="approvalPrompt">Confirm?</div>
+      <div class="approval-actions">
+        <button id="deny" type="button">Deny</button>
+        <button id="allow" type="button">Allow</button>
+      </div>
+    </section>
+  </main>
+
+<script type="module">
+import { pillView, PILL_SIZES } from "./presencePill.js";
+
+const presence = document.getElementById("presence");
+const core = document.getElementById("core");
+const coreStatus = document.getElementById("coreStatus");
+const capabilityEl = document.getElementById("capability");
+const brainEl = document.getElementById("brain");
+const labelEl = document.getElementById("label");
+const taskEl = document.getElementById("task");
+const approvalPrompt = document.getElementById("approvalPrompt");
+const approvalEl = document.getElementById("approval");
+const controlsEl = document.getElementById("controls");
+const muteBtn = document.getElementById("mute");
+const bars = [...document.querySelectorAll("#signal i")];
+const canvas = document.querySelector("#core canvas");
+const ctx = canvas.getContext("2d");
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const TONES = Object.freeze({
+  calm: [102, 137, 154], live: [53, 208, 255], work: [118, 207, 255],
+  hold: [255, 207, 106], fault: [255, 111, 132], ok: [87, 227, 154]
+});
+const rgba = (rgb, alpha) => `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+
+let view = pillView({ state: "idle" });
+let muted = false;
+let sizeClass = "";
+let enteredAt = performance.now();
+let previousState = view.state;
+let lastFrame = 0;
+
+function toShell(payload) {
+  try { window.webkit.messageHandlers.artemisPill.postMessage(payload); } catch (e) {}
+}
+async function command(name) {
+  try {
+    await fetch("/api/presence/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: name })
+    });
+  } catch (e) {}
+}
+
+core.onclick = () => {
+  toShell({ action: "restore" });
+  command("restore");
+};
+document.getElementById("cancel").onclick = () => command("cancel");
+muteBtn.onclick = () => command(view.muted ? "unmute" : "mute");
+document.getElementById("allow").onclick = () => command("approve");
+document.getElementById("deny").onclick = () => command("deny");
+
+function requestSize(next) {
+  if (next === sizeClass) return;
+  sizeClass = next;
+  const size = PILL_SIZES[next] || PILL_SIZES.compact;
+  toShell({ action: "resize", size: next, width: size.width, height: size.height });
+}
+function taskWithoutCapability(task, capability) {
+  const prefix = capability ? capability + " · " : "";
+  if (prefix && task.startsWith(prefix)) return task.slice(prefix.length);
+  const suffix = capability ? " · " + capability : "";
+  return suffix && task.endsWith(suffix) ? task.slice(0, -suffix.length) : task;
+}
+
+function render() {
+  if (view.state !== previousState) {
+    previousState = view.state;
+    enteredAt = performance.now();
+  }
+  const nextSize = view.showApproval ? "approval" : view.sizeClass;
+  requestSize(nextSize);
+  controlsEl.inert = nextSize === "compact";
+  approvalEl.inert = nextSize !== "approval";
+  presence.className = "tone-" + view.tone;
+  presence.dataset.size = nextSize;
+  presence.dataset.state = view.state;
+  presence.dataset.motion = view.motion;
+  presence.dataset.voice = view.state === "listening" || view.state === "speaking" ? "1" : "0";
+  capabilityEl.textContent = view.capability || "ARTEMIS";
+  brainEl.textContent = [view.brainLabel, view.brainStatus].filter(Boolean).join(" · ");
+  labelEl.textContent = view.label;
+  taskEl.textContent = taskWithoutCapability(view.task || "", view.capability || "");
+  if (view.showApproval) approvalPrompt.textContent = view.approval.prompt;
+  muted = !!view.muted;
+  muteBtn.classList.toggle("on", muted);
+  muteBtn.setAttribute("aria-label", muted ? "Unmute microphone" : "Mute microphone");
+  muteBtn.title = muted ? "Unmute microphone" : "Mute microphone";
+
+  const spokenStatus = `Artemis is ${view.label.toLowerCase()}${view.task ? ": " + view.task : ""}`;
+  coreStatus.textContent = spokenStatus;
+  core.setAttribute("aria-label", spokenStatus + ". Show the full dashboard.");
+  core.title = spokenStatus;
+  bars.forEach((bar, index) => {
+    const weight = [0.62, 1, 0.78, 0.48][index];
+    bar.style.transform = `scaleY(${Math.max(0.12, (view.signal || 0) * weight).toFixed(3)})`;
+  });
+  if (reducedMotion) draw(performance.now());
+}
+
+function arc(radius, start, length, color, width, blur = 0) {
+  ctx.beginPath();
+  ctx.arc(64, 64, radius, start, start + length);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.shadowColor = color;
+  ctx.shadowBlur = blur;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+function draw(now) {
+  const seconds = now / 1000;
+  const sinceEnter = Math.max(0, (now - enteredAt) / 1000);
+  const color = TONES[view.tone] || TONES.calm;
+  const signal = view.signal || 0;
+  const energy = view.energy || 0.12;
+  const motion = view.motion;
+  const faultOffset = motion === "fault" ? Math.sin(seconds * 17) * 1.1 : 0;
+  ctx.clearRect(0, 0, 128, 128);
+  ctx.save();
+  ctx.translate(faultOffset, -faultOffset * 0.35);
+
+  // Voice halo is strictly signal-driven. With silent input/output it vanishes.
+  if ((motion === "listen" || motion === "speak") && signal > 0.015) {
+    ctx.beginPath();
+    ctx.arc(64, 64, 52 + signal * 4, 0, Math.PI * 2);
+    ctx.strokeStyle = rgba(color, 0.12 + signal * 0.28);
+    ctx.lineWidth = 1.5 + signal * 2;
+    ctx.shadowColor = rgba(color, 0.5);
+    ctx.shadowBlur = 7 + signal * 7;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Eight capability rails. A real active capability lights exactly one.
+  const segmentLength = Math.PI * 2 / 8 - 0.22;
+  const railRotation = motion === "reason" ? seconds * 0.42 : motion === "drift" ? seconds * 0.035 : 0;
+  for (let index = 0; index < 8; index += 1) {
+    const start = -Math.PI / 2 + index * Math.PI * 2 / 8 + railRotation;
+    const active = index === view.activeSegment;
+    const voiceLift = (motion === "listen" || motion === "speak") ? signal * 0.22 : 0;
+    arc(48, start, segmentLength, rgba(color, active ? 0.94 : 0.18 + voiceLift), active ? 3.2 : 1.35, active ? 7 : 0);
+  }
+
+  // Counter-rotating inner mechanisms make reasoning visibly distinct.
+  const reasonSpin = motion === "reason" ? seconds * 1.15 : motion === "work" ? seconds * 0.32 : seconds * 0.05;
+  const reverseSpin = motion === "reason" ? -seconds * 0.82 : -seconds * 0.025;
+  arc(38, reasonSpin, 1.42, rgba(color, 0.35 + energy * 0.35), 1.8);
+  arc(38, reasonSpin + Math.PI, 0.62, rgba(color, 0.24 + energy * 0.28), 1.1);
+  arc(31, reverseSpin + 0.7, 1.86, rgba(color, 0.24 + energy * 0.38), 1.5);
+  if (motion === "hold") {
+    arc(42, -Math.PI / 2, Math.PI * 1.45, rgba(color, 0.78), 2.2, 5);
+  } else if (motion === "fault") {
+    arc(42, seconds * 0.12, 0.75, rgba(color, 0.9), 2.4, 5);
+    arc(42, seconds * 0.12 + Math.PI, 0.42, rgba(color, 0.55), 1.4);
+  }
+
+  const settle = motion === "settle" ? Math.max(0, 1 - sinceEnter / 1.2) : 0;
+  const irisRadius = 13 + signal * 7 + settle * 4;
+  const gradient = ctx.createRadialGradient(60, 59, 1, 64, 64, irisRadius + 9);
+  gradient.addColorStop(0, rgba([232, 251, 255], 0.98));
+  gradient.addColorStop(0.18, rgba(color, 0.95));
+  gradient.addColorStop(0.62, rgba(color, 0.34));
+  gradient.addColorStop(1, rgba(color, 0));
+  ctx.beginPath();
+  ctx.arc(64, 64, irisRadius + energy * 2, 0, Math.PI * 2);
+  ctx.fillStyle = gradient;
+  ctx.shadowColor = rgba(color, 0.7);
+  ctx.shadowBlur = 8 + signal * 8 + settle * 5;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.beginPath();
+  ctx.arc(64, 64, 4.2 + signal * 1.8, 0, Math.PI * 2);
+  ctx.fillStyle = rgba([236, 253, 255], 0.94);
+  ctx.fill();
+  ctx.restore();
+}
+
+function animate(now) {
+  // Idle drifts at 12 fps; active states render at 30 fps. Reduced motion
+  // renders only when real state changes.
+  const interval = view.motion === "drift" ? 82 : 33;
+  if (now - lastFrame >= interval) { lastFrame = now; draw(now); }
+  requestAnimationFrame(animate);
+}
+
+const PREVIEW = Object.freeze({
+  idle: { state: "idle", brain: { model: "qwen3.5:4b", local: true } },
+  listening: { state: "listening", amplitude: 0.72, brain: { model: "qwen3.5:4b", local: true } },
+  thinking: { state: "thinking", interpreting: true, brain: { model: "qwen3.5:4b", local: true } },
+  executing: { state: "executing", task: "Terminal · Running tests", capability: "terminal", brain: { model: "qwen3.5:4b", local: true } },
+  speaking: { state: "speaking", amplitude: 0.58, brain: { model: "qwen3.5:4b", local: true } },
+  approval: { state: "waiting", approvalState: { prompt: "Allow Artemis to run the selected Terminal command?", tool: "computer_control" }, capability: "computer", brain: { model: "qwen3.5:4b", local: true } },
+  error: { state: "error", task: "Terminal isn't accepting input" }
+});
+
+const previewName = new URLSearchParams(location.search).get("preview");
+if (previewName && PREVIEW[previewName]) {
+  view = pillView(PREVIEW[previewName]);
+  render();
+} else {
+  function connect() {
+    const source = new EventSource("/api/presence/events");
+    source.addEventListener("state", (event) => {
+      try { view = pillView(JSON.parse(event.data)); render(); } catch (e) {}
+    });
+    source.onerror = () => { source.close(); setTimeout(connect, 1500); };
+  }
+  connect();
+  render();
+}
+if (!reducedMotion) requestAnimationFrame(animate);
+</script>
+</body>
+</html>

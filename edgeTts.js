@@ -5,6 +5,7 @@
 
 import { wsConnect } from "./wsClient.js";
 import { randomBytes, createHash } from "crypto";
+import { assertNetwork } from "./networkPolicy.js";
 
 const TRUSTED = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"; // Edge's public client token
 const CHROMIUM = "136.0.3240.50"; // keep reasonably current — old versions get 403
@@ -24,6 +25,7 @@ const escapeXml = (s) =>
 
 // Synthesize `text` with an Edge neural voice → resolves to an MP3 Buffer.
 export function edgeTtsSynthesize(text, voice = "en-GB-SoniaNeural") {
+  assertNetwork("cloud_tts");
   return new Promise((resolve, reject) => {
     const reqId = randomBytes(16).toString("hex");
     const path =

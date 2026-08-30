@@ -3,7 +3,10 @@
 // Extensible: add a provider to support a new site. X/YouTube need the logged-in
 // browser-extension path (deferred) — not reachable from a plain server.
 
+import { assertNetwork } from "./networkPolicy.js";
+
 async function fetchJson(url) {
+  assertNetwork("web");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10000);
   try {

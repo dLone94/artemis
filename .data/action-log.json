@@ -1,0 +1,2682 @@
+[
+  {
+    "at": 1782734183926,
+    "skill": "remember_note",
+    "params": {
+      "text": "Prefers tea in the morning, not coffee."
+    },
+    "result": {
+      "ok": true,
+      "summary": "Noted."
+    }
+  },
+  {
+    "at": 1782734186193,
+    "skill": "send_message",
+    "params": {
+      "to": "Mom",
+      "body": "I'm running 10 minutes late."
+    },
+    "result": {
+      "ok": true,
+      "simulated": true,
+      "to": "Mom",
+      "body": "I'm running 10 minutes late.",
+      "summary": "(Simulated) I would text Mom, but SMS isn't connected yet — add Twilio keys to actually send."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1782734681482,
+    "skill": "web_research",
+    "params": {
+      "site": "hackernews",
+      "query": "local-first software",
+      "limit": 10
+    },
+    "result": {
+      "ok": true,
+      "summary": "Found 10 results on hackernews."
+    }
+  },
+  {
+    "at": 1782734699077,
+    "skill": "web_research",
+    "params": {
+      "site": "github",
+      "query": "open source voice assistant",
+      "limit": 8
+    },
+    "result": {
+      "ok": true,
+      "summary": "Found 8 results on github."
+    }
+  },
+  {
+    "at": 1782855203363,
+    "skill": "web_research",
+    "params": {
+      "site": "github",
+      "query": "Jarvis AI voice assistant",
+      "limit": 8
+    },
+    "result": {
+      "ok": true,
+      "summary": "Found 8 results on github."
+    }
+  },
+  {
+    "at": 1782857875690,
+    "skill": "web_research",
+    "params": {
+      "site": "github",
+      "query": "Jill pizza Hamburg"
+    },
+    "result": {
+      "ok": true,
+      "summary": "No results found."
+    }
+  },
+  {
+    "at": 1782858952010,
+    "skill": "remember_note",
+    "params": {
+      "text": "User's daughter is named Emma, and user's wife is named Isabella."
+    },
+    "result": {
+      "ok": true,
+      "summary": "Noted."
+    }
+  },
+  {
+    "at": 1782858993686,
+    "skill": "remember_note",
+    "params": {
+      "text": "User's daughter is named Emma. User's wife is named Isabella, nickname Bella — so \"Isabella\" or \"Bella\" both refer to his wife."
+    },
+    "result": {
+      "ok": true,
+      "summary": "Noted."
+    }
+  },
+  {
+    "at": 1782859163262,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Emilias%20Familien%20Cafe%2C%20Hamburg",
+      "label": "Emilias Familien Café in Hamburg, Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Emilias Familien Café in Hamburg, Google Maps."
+    }
+  },
+  {
+    "at": 1782861052697,
+    "skill": "open_url",
+    "params": {
+      "label": "Instagram",
+      "url": "https://www.instagram.com/"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Instagram."
+    }
+  },
+  {
+    "at": 1782861488923,
+    "skill": "open_url",
+    "params": {
+      "label": "Phönix All you can eat China Restaurant in Google Maps",
+      "url": "https://www.google.com/maps/search/?api=1&query=Ph%C3%B6nix+All+you+can+eat+China+Restaurant+Hamburg"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Phönix All you can eat China Restaurant in Google Maps."
+    }
+  },
+  {
+    "at": 1782861959975,
+    "skill": "open_url",
+    "params": {
+      "label": "Piccoli Pasti in Google Maps",
+      "url": "https://www.google.com/maps/search/?api=1&query=Piccoli+Pasti+Hamburg"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Piccoli Pasti in Google Maps."
+    }
+  },
+  {
+    "at": 1782862307058,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Pizzeria+Da+Vittorio+Hamburg",
+      "label": "Pizzeria Da Vittorio in Hamburg"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Pizzeria Da Vittorio in Hamburg."
+    }
+  },
+  {
+    "at": 1782863453907,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Cafe+Schmidt+Hamburg",
+      "label": "Cafe Schmidt in Hamburg"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Cafe Schmidt in Hamburg."
+    }
+  },
+  {
+    "at": 1782863846214,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.instagram.com",
+      "label": "Instagram"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Instagram."
+    }
+  },
+  {
+    "at": 1782863848002,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Erikas+Eck+Hamburg",
+      "label": "Erikas Eck in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Erikas Eck in Google Maps."
+    }
+  },
+  {
+    "at": 1782907085691,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Ph%C3%B6nix+All+You+Can+Eat+Hamburg",
+      "label": "Phönix All You Can Eat in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Phönix All You Can Eat in Google Maps."
+    }
+  },
+  {
+    "at": 1782907155473,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Ph%C3%B6nix+All+You+Can+Eat+Hamburg",
+      "label": "Phönix All You Can Eat in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Phönix All You Can Eat in Google Maps."
+    }
+  },
+  {
+    "at": 1782931773394,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.instagram.com",
+      "label": "Instagram"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Instagram."
+    }
+  },
+  {
+    "at": 1782931801803,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Ph%C3%B6nix+All+You+Can+Eat+Hamburg",
+      "label": "Phönix All You Can Eat in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Phönix All You Can Eat in Google Maps."
+    }
+  },
+  {
+    "at": 1782931804929,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Ph%C3%B6nix%20All%20You%20Can%20Eat%20Hamburg"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening https://www.google.com/maps/search/?api=1&query=Ph%C3%B6nix%20All%20You%20Can%20Eat%20Hamburg."
+    }
+  },
+  {
+    "at": 1782931808663,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Ph%C3%B6nix%20All%20You%20Can%20Eat%20Hamburg",
+      "label": "Phönix All You Can Eat in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Phönix All You Can Eat in Google Maps."
+    }
+  },
+  {
+    "at": 1782931811839,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Ph%C3%B6nix+All+You+Can+Eat+Hamburg",
+      "label": "Phönix All You Can Eat in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Phönix All You Can Eat in Google Maps."
+    }
+  },
+  {
+    "at": 1782932043018,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Google+Maps",
+      "label": "Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Google Maps."
+    }
+  },
+  {
+    "at": 1782932087112,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=John%27s+Pizzeria+of+Times+Square"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening https://www.google.com/maps/search/?api=1&query=John%27s+Pizzeria+of+Times+Square."
+    }
+  },
+  {
+    "at": 1782932172046,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Pizzeria+Da+Vittorio+Hamburg",
+      "label": "Pizzeria Da Vittorio in Hamburg"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Pizzeria Da Vittorio in Hamburg."
+    }
+  },
+  {
+    "at": 1782932233524,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Pizzeria+Da+Vittorio+Hamburg",
+      "label": "Pizzeria Da Vittorio in Hamburg"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Pizzeria Da Vittorio in Hamburg."
+    }
+  },
+  {
+    "at": 1782942612100,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening https://www.google.com/maps."
+    }
+  },
+  {
+    "at": 1782943547792,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": false,
+      "summary": "Email isn't connected yet. Finish the Gmail setup in .env (GOOGLE_CLIENT_ID/SECRET, then visit /auth/google once)."
+    }
+  },
+  {
+    "at": 1782943628947,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1782943632079,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.instagram.com",
+      "label": "Instagram"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Instagram."
+    }
+  },
+  {
+    "at": 1782943635908,
+    "skill": "web_research",
+    "params": {
+      "site": "hackernews",
+      "query": "top",
+      "limit": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "Found 5 results on hackernews."
+    }
+  },
+  {
+    "at": 1782944126679,
+    "skill": "web_research",
+    "params": {
+      "site": "hackernews",
+      "query": "top story",
+      "limit": 1
+    },
+    "result": {
+      "ok": true,
+      "summary": "Found 1 results on hackernews."
+    }
+  },
+  {
+    "at": 1782944130617,
+    "skill": "open_url",
+    "params": {
+      "url": "https://themarkup.org/google-the-giant/2020/11/19/as-antitrust-pressure-mounts-google-to-pull-back-benefit-to-news-sites-that-adopted-its-preferred-mobile-technology",
+      "label": "Google AMP article on The Markup"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Google AMP article on The Markup."
+    }
+  },
+  {
+    "at": 1782944856037,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1782945181868,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "5 unread email(s)."
+    }
+  },
+  {
+    "at": 1782945197948,
+    "skill": "read_email",
+    "params": {
+      "number": 3
+    },
+    "result": {
+      "ok": true,
+      "summary": "Read \"Oceania  Vista\t   Topalov,Todor Rosenov\t\t2nd Engineer\t3/7/2026 - PEME\" from \"Todorov, Milen\" <Milen.Todorov@vships.com>."
+    }
+  },
+  {
+    "at": 1782947825973,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com/results?search_query=uplifting+feel+good+songs"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening https://www.youtube.com/results?search_query=uplifting+feel+good+songs."
+    }
+  },
+  {
+    "at": 1782947828530,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com/results?search_query=relaxing+music",
+      "label": "Relaxing music on YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Relaxing music on YouTube."
+    }
+  },
+  {
+    "at": 1782947831110,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com/results?search_query=uplifting+feel+good+music",
+      "label": "Uplifting feel-good music on YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Uplifting feel-good music on YouTube."
+    }
+  },
+  {
+    "at": 1782947853617,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com/results?search_query=relaxing+music+for+calm+mind",
+      "label": "Relaxing music for calm mind on YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Relaxing music for calm mind on YouTube."
+    }
+  },
+  {
+    "at": 1782948093961,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com/results?search_query=soft+piano+relaxing+no+lyrics"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening https://www.youtube.com/results?search_query=soft+piano+relaxing+no+lyrics."
+    }
+  },
+  {
+    "at": 1782948430252,
+    "skill": "play_media",
+    "params": {
+      "query": "uplifting happy music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Songs that'll make you dance the whole day ~ Mood booster playlist on YouTube."
+    }
+  },
+  {
+    "at": 1782948434372,
+    "skill": "play_media",
+    "params": {
+      "query": "relaxing music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Flying: Relaxing Sleep Music for Meditation, Stress Relief & Relaxation by Peder B. Helland on YouTube."
+    }
+  },
+  {
+    "at": 1782948437833,
+    "skill": "play_media",
+    "params": {
+      "query": "bohemian rhapsody"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Queen – Bohemian Rhapsody (Official Video Remastered) on YouTube."
+    }
+  },
+  {
+    "at": 1782948454725,
+    "skill": "play_media",
+    "params": {
+      "query": "uplifting happy music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Songs that'll make you dance the whole day ~ Mood booster playlist on YouTube."
+    }
+  },
+  {
+    "at": 1782948457691,
+    "skill": "play_media",
+    "params": {
+      "query": "relaxing music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Flying: Relaxing Sleep Music for Meditation, Stress Relief & Relaxation by Peder B. Helland on YouTube."
+    }
+  },
+  {
+    "at": 1782948463069,
+    "skill": "play_media",
+    "params": {
+      "query": "bohemian rhapsody"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Queen – Bohemian Rhapsody (Official Video Remastered) on YouTube."
+    }
+  },
+  {
+    "at": 1782948590351,
+    "skill": "play_media",
+    "params": {
+      "query": "soft piano music for sadness"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Sad Emotional Piano - One Hour Version on YouTube."
+    }
+  },
+  {
+    "at": 1782948608667,
+    "skill": "play_media",
+    "params": {
+      "query": "calm piano music for sadness"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Sad Piano Music, Calming Music, Relaxation Music, Meditation Music, Instrumental Music, ☯2883 on YouTube."
+    }
+  },
+  {
+    "at": 1783021494727,
+    "skill": "open_url",
+    "params": {
+      "url": "https://wisprflow.ai"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening https://wisprflow.ai."
+    }
+  },
+  {
+    "at": 1783023379234,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1783024731221,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "5 unread email(s)."
+    }
+  },
+  {
+    "at": 1783024945227,
+    "skill": "play_media",
+    "params": {
+      "query": "calm piano music for peace and healing"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Relaxing Piano Music: Romantic Music, Beautiful Relaxing Music, Sleep Music, Stress Relief ★122 on YouTube."
+    }
+  },
+  {
+    "at": 1783025401166,
+    "skill": "play_media",
+    "params": {
+      "query": "calm piano music for sadness"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Sad Piano Music, Calming Music, Relaxation Music, Meditation Music, Instrumental Music, ☯2883 on YouTube."
+    }
+  },
+  {
+    "at": 1783026701718,
+    "skill": "play_media",
+    "params": {
+      "query": "best classic piano music Chopin Debussy Satie"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Peaceful Classical Piano | Chopin, Debussy, Satie... on YouTube."
+    }
+  },
+  {
+    "at": 1783084781905,
+    "skill": "add_contact",
+    "params": {
+      "alias": "mom",
+      "name": "Maria",
+      "phone": "+359888111222"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Saved Maria to your contacts."
+    }
+  },
+  {
+    "at": 1783084785883,
+    "skill": "send_message",
+    "params": {
+      "to": "mom",
+      "body": "hello from the cockpit"
+    },
+    "cancelled": true
+  },
+  {
+    "at": 1783086339738,
+    "skill": "set_reminder",
+    "params": {
+      "text": "call the port agent",
+      "minutes": 45
+    },
+    "result": {
+      "ok": true,
+      "summary": "Reminder set for 04:30 PM — I'll say it out loud."
+    }
+  },
+  {
+    "at": 1783086420919,
+    "skill": "set_reminder",
+    "params": {
+      "text": "check the engine room log",
+      "time": "21:00"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Reminder set for 09:00 PM — I'll say it out loud."
+    }
+  },
+  {
+    "at": 1783086422827,
+    "skill": "list_reminders",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "1 pending reminder(s): 1. check the engine room log — 09:00 PM"
+    }
+  },
+  {
+    "at": 1783086423550,
+    "skill": "cancel_reminder",
+    "params": {
+      "number": 1
+    },
+    "result": {
+      "ok": true,
+      "summary": "Cancelled: check the engine room log."
+    }
+  },
+  {
+    "at": 1783102976727,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1783103406558,
+    "skill": "play_media",
+    "params": {
+      "query": "Sunset Lover Petit Biscuit"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Petit Biscuit - Sunset Lover (Music Video) on YouTube."
+    }
+  },
+  {
+    "at": 1783104514532,
+    "skill": "open_url",
+    "params": {
+      "url": "https://twitter.com",
+      "label": "X (Twitter)"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening X (Twitter)."
+    }
+  },
+  {
+    "at": 1783105381173,
+    "skill": "set_reminder",
+    "params": {
+      "text": "test the mutex",
+      "minutes": 30
+    },
+    "result": {
+      "ok": true,
+      "summary": "Reminder set for 09:33 PM — I'll say it out loud."
+    }
+  },
+  {
+    "at": 1783105434744,
+    "skill": "add_contact",
+    "params": {
+      "alias": "mum",
+      "name": "Maria",
+      "phone": "+359888111222"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Saved Maria to your contacts."
+    }
+  },
+  {
+    "at": 1783105438700,
+    "skill": "send_message",
+    "params": {
+      "to": "mum",
+      "body": "hi from the test"
+    },
+    "result": {
+      "ok": true,
+      "simulated": true,
+      "to": "+359888111222",
+      "body": "hi from the test",
+      "summary": "(Simulated) I would text Maria, but SMS isn't connected yet — add Twilio keys to actually send."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1783106848436,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1783248946197,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Miniatur+Wunderland+Hamburg",
+      "label": "Miniatur Wunderland in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Miniatur Wunderland in Google Maps."
+    }
+  },
+  {
+    "at": 1783248946198,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Hamburg+Dungeon",
+      "label": "Hamburg Dungeon in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Hamburg Dungeon in Google Maps."
+    }
+  },
+  {
+    "at": 1783248946199,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Planetarium+Hamburg",
+      "label": "Planetarium Hamburg in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Planetarium Hamburg in Google Maps."
+    }
+  },
+  {
+    "at": 1783248946199,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Fischmarkt+Hamburg",
+      "label": "Fischmarkt Hamburg in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Fischmarkt Hamburg in Google Maps."
+    }
+  },
+  {
+    "at": 1784929687923,
+    "skill": "play_media",
+    "params": {
+      "query": "smooth jazz piano late night"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Ethereal Piano Late Night Jazz - Soothing of Sleep Jazz Piano Music & Delicate Jazz Music for Relax on YouTube."
+    }
+  },
+  {
+    "at": 1784929689801,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1784929771694,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1784929789651,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1784929797412,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1784929805328,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1784930376481,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.google.com/maps/search/?api=1&query=Emilia's+Caf%C3%A9+Varna+Bulgaria",
+      "label": "Emilia's Café in Google Maps"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Emilia's Café in Google Maps."
+    }
+  },
+  {
+    "at": 1784930572874,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1784931270141,
+    "skill": "play_media",
+    "params": {
+      "query": "classic piano music relaxing"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Peaceful Classical Piano - Debussy, Chopin, Liszt... on YouTube."
+    }
+  },
+  {
+    "at": 1784931317882,
+    "skill": "play_media",
+    "params": {
+      "query": "rain sounds for sleep, heavy rain with thunder, 10 hours"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing 10 Hours EPIC THUNDER & RAIN,  Rainstorm Sounds For Relaxing, Focus or Sleep  White Noise on YouTube."
+    }
+  },
+  {
+    "at": 1784931665796,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1784931816283,
+    "skill": "open_url",
+    "params": {
+      "url": "https://web.whatsapp.com",
+      "label": "WhatsApp Web"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening WhatsApp Web."
+    }
+  },
+  {
+    "at": 1785012264323,
+    "skill": "send_message",
+    "params": {
+      "to": "wife",
+      "body": "I’m sorry. I love you. I’m here."
+    },
+    "cancelled": true
+  },
+  {
+    "at": 1785012300779,
+    "skill": "send_message",
+    "params": {
+      "to": "wife",
+      "body": "I love you."
+    },
+    "result": {
+      "ok": true,
+      "simulated": true,
+      "to": "wife",
+      "body": "I love you.",
+      "summary": "(Simulated) I would text wife, but SMS isn't connected yet — add Twilio keys to actually send."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785012428779,
+    "skill": "send_message",
+    "params": {
+      "to": "wife",
+      "body": "I love you."
+    },
+    "result": {
+      "ok": true,
+      "simulated": true,
+      "to": "wife",
+      "body": "I love you.",
+      "summary": "(Simulated) I would text wife, but SMS isn't connected yet — add Twilio keys to actually send."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785012479113,
+    "skill": "send_message",
+    "params": {
+      "to": "wife",
+      "body": "I love you."
+    },
+    "result": {
+      "ok": true,
+      "simulated": true,
+      "to": "wife",
+      "body": "I love you.",
+      "summary": "(Simulated) I would text wife, but SMS isn't connected yet — add Twilio keys to actually send."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785012702652,
+    "skill": "send_message",
+    "params": {
+      "to": "wife",
+      "body": "I love you."
+    },
+    "result": {
+      "ok": false,
+      "summary": "I don't have a number saved for wife. Tell me the number and I'll remember it."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785012903769,
+    "skill": "send_message",
+    "params": {
+      "to": "wife",
+      "body": "I love you."
+    },
+    "result": {
+      "ok": false,
+      "summary": "I don't have a number saved for wife. Tell me the number and I'll remember it."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785012945183,
+    "skill": "send_message",
+    "params": {
+      "to": "wife",
+      "body": "I love you."
+    },
+    "result": {
+      "ok": false,
+      "summary": "I don't have a number saved for wife. Tell me the number and I'll remember it."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785013031818,
+    "skill": "send_message",
+    "params": {
+      "to": "wife",
+      "body": "I love you."
+    },
+    "result": {
+      "ok": false,
+      "summary": "I don't have a number saved for wife. Tell me the number and I'll remember it."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785093009619,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785093144172,
+    "skill": "research_investment",
+    "params": {
+      "topic": "Kenyan treasury bills",
+      "country": "KEN",
+      "currency": "KES"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I've pulled what I can on Kenyan treasury bills: 4 sourced figures and 5 sources arguing against it. Full evidence pack saved. Shall I walk you through it?"
+    }
+  },
+  {
+    "at": 1785093396344,
+    "skill": "research_investment",
+    "params": {
+      "topic": "Kenyan treasury bills",
+      "country": "KEN",
+      "currency": "KES"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I've pulled what I can on Kenyan treasury bills: 4 sourced figures and 5 sources arguing against it. Full evidence pack saved. Shall I walk you through it?"
+    }
+  },
+  {
+    "at": 1785100840523,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785100855627,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785101001157,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785102136925,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785102182996,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785102263278,
+    "skill": "open_url",
+    "params": {
+      "url": "https://www.youtube.com",
+      "label": "YouTube"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785168564396,
+    "skill": "play_media",
+    "params": {
+      "query": "jazz music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Calm Autumn & Jazz Relaxing Music 🍂 Cozy Coffee Shop Ambience with Smooth Piano Jazz Music on YouTube."
+    }
+  },
+  {
+    "at": 1785168565405,
+    "skill": "open_url",
+    "params": {
+      "label": "YouTube",
+      "url": "https://www.youtube.com"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785168565980,
+    "skill": "open_url",
+    "params": {
+      "label": "YouTube",
+      "url": "https://www.youtube.com"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785168566590,
+    "skill": "open_url",
+    "params": {
+      "label": "YouTube",
+      "url": "https://www.youtube.com"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785168652938,
+    "skill": "play_media",
+    "params": {
+      "query": "jazz music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Calm Autumn & Jazz Relaxing Music 🍂 Cozy Coffee Shop Ambience with Smooth Piano Jazz Music on YouTube."
+    }
+  },
+  {
+    "at": 1785168654036,
+    "skill": "open_url",
+    "params": {
+      "label": "YouTube",
+      "url": "https://www.youtube.com"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785168957482,
+    "skill": "play_media",
+    "params": {
+      "query": "jazz music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Calm Autumn & Jazz Relaxing Music 🍂 Cozy Coffee Shop Ambience with Smooth Piano Jazz Music on YouTube."
+    }
+  },
+  {
+    "at": 1785168980367,
+    "skill": "open_url",
+    "params": {
+      "label": "YouTube",
+      "url": "https://www.youtube.com"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785169027036,
+    "skill": "play_media",
+    "params": {
+      "query": "relaxing music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Flying: Relaxing Sleep Music for Meditation, Stress Relief & Relaxation by Peder B. Helland on YouTube."
+    }
+  },
+  {
+    "at": 1785169521544,
+    "skill": "play_media",
+    "params": {
+      "query": "roast battle"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Comics Unchained | Roast Battle LA #412 w/ Jody Miller + Omid Singh + Frank Castillo + Ric Diez on YouTube."
+    }
+  },
+  {
+    "at": 1785169863731,
+    "skill": "play_media",
+    "params": {
+      "query": "jazz music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Calm Autumn & Jazz Relaxing Music 🍂 Cozy Coffee Shop Ambience with Smooth Piano Jazz Music on YouTube."
+    }
+  },
+  {
+    "at": 1785170048745,
+    "skill": "open_url",
+    "params": {
+      "label": "YouTube",
+      "url": "https://www.youtube.com/"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785170048957,
+    "skill": "open_url",
+    "params": {
+      "label": "YouTube",
+      "url": "https://www.youtube.com/"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785170127020,
+    "skill": "open_url",
+    "params": {
+      "label": "YouTube",
+      "url": "https://www.youtube.com"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening YouTube."
+    }
+  },
+  {
+    "at": 1785170321854,
+    "skill": "play_media",
+    "params": {
+      "query": "relaxing music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Flying: Relaxing Sleep Music for Meditation, Stress Relief & Relaxation by Peder B. Helland on YouTube."
+    }
+  },
+  {
+    "at": 1785171571198,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785180970878,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785180997825,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785181047491,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785187770344,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "Inbox zero — no unread email."
+    }
+  },
+  {
+    "at": 1785187770892,
+    "skill": "check_email",
+    "params": {
+      "label": "Spam",
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "Inbox zero — no unread email."
+    }
+  },
+  {
+    "at": 1785188121786,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "Inbox zero — no unread email."
+    }
+  },
+  {
+    "at": 1785260478456,
+    "skill": "daily_brief",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "Mail first: you have 1 unread email. None of them look personal. For today, you have no reminders due. Money minute: USD to Kenyan shilling is 129.4897 KES per 1 USD (as of 2026-07-28, ExchangeRate-API (open endpoint)). The Treasury yield is unreachable right now. And around the world, Wildfires are raging in France and Spain, forcing over 250,000 to flee, while the US and Iran are working on a deal. Iran war costs have reached $37.5 billion. Shall I dig into any of these?"
+    }
+  },
+  {
+    "at": 1785260583118,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785260632269,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785260658567,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785260716788,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "cancelled": true
+  },
+  {
+    "at": 1785260718983,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785260737537,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785264773725,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785264857196,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "cancelled": true
+  },
+  {
+    "at": 1785265580456,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785265968349,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785266026144,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "result": {
+      "ok": false,
+      "summary": "I can read your mail but I'm not authorized to delete yet — open Artemis's Gmail settings link to re-authorize, then try again.",
+      "content": "I can read your mail but I'm not authorized to delete yet — open Artemis's Gmail settings link to re-authorize, then try again."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785266539845,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785266592070,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785266621148,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "result": {
+      "ok": true,
+      "summary": "Moved 1 to trash: the one from noreply-apps-scripts-notifications@google.com.",
+      "content": "Moved 1 to trash: the one from noreply-apps-scripts-notifications@google.com."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785344364287,
+    "skill": "opportunity_radar",
+    "params": {
+      "action": "run"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. Opportunity Radar from 2026-07-29. I found 4 sourced research leads. Finding 1. User theme: Africa-linked opportunities. What: this weekly sweep surfaced a research lead from Opportunity Radar source one. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Source: Opportunity Radar source one. Finding 2. User theme: global macro. What: this weekly sweep surfaced a research lead from Opportunity Radar source two. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Source: Opportunity Radar source two. Finding 3. User theme: Africa-linked opportunities. What: this weekly sweep surfaced a research lead from Opportunity Radar source three. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Source: Opportunity Radar source three. Finding 4. User theme: global macro. What: this weekly sweep surfaced a research lead from Opportunity Radar source four. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Source: Opportunity Radar source four. Verified market context: The exchange-rate reference is 129.4819 KES per 1 USD (as of 2026-07-29, Verified exchange-rate source); The US ten-year Treasury benchmark is 4.61 % — US Treasury 10 Yr (as of 2026-07-28, US Department of the Treasury)."
+    }
+  },
+  {
+    "at": 1785344991063,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785345039290,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "result": {
+      "ok": true,
+      "summary": "Moved 1 to trash: the one from noreply-apps-scripts-notifications@google.com."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785345094179,
+    "skill": "check_email",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "Inbox zero — no unread email."
+    }
+  },
+  {
+    "at": 1785347308700,
+    "skill": "check_messages",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "Nothing new on WhatsApp."
+    }
+  },
+  {
+    "at": 1785436546198,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785436648594,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "result": {
+      "ok": true,
+      "summary": "Moved 1 to trash: the one from noreply-apps-scripts-notifications@google.com."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785523616921,
+    "skill": "check_email",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785523635777,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "result": {
+      "ok": true,
+      "summary": "Moved 1 to trash: the one from noreply-apps-scripts-notifications@google.com."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785523671028,
+    "skill": "check_messages",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "I can't check WhatsApp's unread count. Grant Artemis access in System Settings → Privacy & Security → Accessibility."
+    }
+  },
+  {
+    "at": 1785523689444,
+    "skill": "check_messages",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "I can't check WhatsApp's unread count. Grant Artemis access in System Settings → Privacy & Security → Accessibility."
+    }
+  },
+  {
+    "at": 1785604929968,
+    "skill": "check_email",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785604941815,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "result": {
+      "ok": true,
+      "summary": "Moved 1 to trash: the one from noreply-apps-scripts-notifications@google.com."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785604963496,
+    "skill": "check_email",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "Inbox zero — no unread email."
+    }
+  },
+  {
+    "at": 1785608720485,
+    "skill": "send_message",
+    "params": {
+      "body": "Hello, what's up?",
+      "phone": "359898606869",
+      "to": "wife"
+    },
+    "cancelled": true
+  },
+  {
+    "at": 1785608757327,
+    "skill": "send_message",
+    "params": {
+      "body": "Hello, what's up?",
+      "phone": "359898606869",
+      "to": "wife"
+    },
+    "cancelled": true
+  },
+  {
+    "at": 1785608788567,
+    "skill": "send_message",
+    "params": {
+      "body": "Hey, baby. I love you.",
+      "phone": "359898606869",
+      "to": "wife"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I couldn't press send myself — WhatsApp is open with your message to wife typed in; press Enter to send it."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785608900489,
+    "skill": "check_messages",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "I can't check WhatsApp's unread count. Grant Artemis access in System Settings → Privacy & Security → Accessibility. I also can't read Notification Centre details; grant Full Disk Access in System Settings → Privacy & Security → Full Disk Access."
+    }
+  },
+  {
+    "at": 1785609394836,
+    "skill": "send_message",
+    "params": {
+      "body": "Hey, baby. I love you.",
+      "phone": "359898606869",
+      "to": "wife"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I couldn't press send myself — WhatsApp is open with your message to wife typed in; press Enter to send it."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785609443551,
+    "skill": "send_message",
+    "params": {
+      "body": "Am I Mama, this is why I'm",
+      "phone": "+359898606869",
+      "to": "wife"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I couldn't press send myself — WhatsApp is open with your message to wife typed in; press Enter to send it."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785609605680,
+    "skill": "send_message",
+    "params": {
+      "body": "I love you",
+      "phone": "359898606869",
+      "to": "wife"
+    },
+    "result": {
+      "ok": true,
+      "summary": "macOS is blocking me from pressing send — enable Artemis under System Settings → Privacy & Security → Accessibility, then ask me again. Meanwhile WhatsApp is open with your message to wife typed in; press Enter to send it."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785609762119,
+    "skill": "send_message",
+    "params": {
+      "body": "I love you",
+      "to": "wife"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Sent — your message to wife is on its way in WhatsApp."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785609773396,
+    "skill": "play_media",
+    "params": {
+      "query": "relaxing music"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Playing Flying: Relaxing Sleep Music for Meditation, Stress Relief & Relaxation by Peder B. Helland on YouTube."
+    }
+  },
+  {
+    "at": 1785610426175,
+    "skill": "send_message",
+    "params": {
+      "body": "I love you more than you love me.",
+      "phone": "+359898606869",
+      "to": "wife"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Sent — your message to wife is on its way in WhatsApp."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785610441907,
+    "skill": "add_contact",
+    "params": {
+      "alias": "wife",
+      "phone": "+359898606869"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Saved wife to your contacts."
+    }
+  },
+  {
+    "at": 1785610539486,
+    "skill": "send_message",
+    "params": {
+      "body": "Just a heads‑up: I told the weather in Varna to be sunny, but I think the forecast is actually my love for you—always bright and a little unpredictable! 😄",
+      "to": "wife"
+    },
+    "cancelled": true
+  },
+  {
+    "at": 1785610579504,
+    "skill": "send_message",
+    "params": {
+      "body": "If my love for you were a weather forecast, it’d be 100% chance of sunshine with a side of occasional thunder‑claps of laughter. 🌞😆",
+      "to": "wife"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Sent — your message to wife is on its way in WhatsApp."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785610732568,
+    "skill": "send_message",
+    "params": {
+      "body": "Hey, Brian. I miss you, bro. Where are you?",
+      "phone": "+15854094207",
+      "to": "Brian"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Sent — your message to Brian is on its way in WhatsApp."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785610748754,
+    "skill": "add_contact",
+    "params": {
+      "alias": "Brian",
+      "phone": "+15854094207"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Saved Brian to your contacts."
+    }
+  },
+  {
+    "at": 1785777786821,
+    "skill": "open_url",
+    "params": {
+      "label": "Google",
+      "url": "https://www.google.com/search?q=weather+in+bulgaria"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Opening Google."
+    }
+  },
+  {
+    "at": 1785777868434,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785777894925,
+    "skill": "check_email",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785777916924,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "result": {
+      "ok": true,
+      "summary": "Moved 1 to trash: the one from noreply-apps-scripts-notifications@google.com."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1785777928532,
+    "skill": "check_email",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "Inbox zero — no unread email."
+    }
+  },
+  {
+    "at": 1785860466594,
+    "skill": "check_email",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785860654908,
+    "skill": "check_email",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "1 unread email(s)."
+    }
+  },
+  {
+    "at": 1785860736239,
+    "skill": "delete_email",
+    "params": {
+      "numbers": [
+        1
+      ]
+    },
+    "result": {
+      "ok": true,
+      "summary": "Moved 1 to trash: the one from noreply-apps-scripts-notifications@google.com."
+    },
+    "confirmed": true
+  },
+  {
+    "at": 1786031441606,
+    "skill": "opportunity_radar",
+    "params": {
+      "action": "run"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. Opportunity Radar from 2026-08-06. I found 4 sourced research leads. Finding 1. User theme: Africa-linked opportunities. What: this weekly sweep surfaced a research lead from Opportunity Radar source one. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Source: Opportunity Radar source one. Finding 2. User theme: global macro. What: this weekly sweep surfaced a research lead from Opportunity Radar source two. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Source: Opportunity Radar source two. Finding 3. User theme: Africa-linked opportunities. What: this weekly sweep surfaced a research lead from Opportunity Radar source three. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Source: Opportunity Radar source three. Finding 4. User theme: global macro. What: this weekly sweep surfaced a research lead from Opportunity Radar source four. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Source: Opportunity Radar source four. Verified market context: The exchange-rate reference is 129.3566 KES per 1 USD (as of 2026-08-06, Verified exchange-rate source); The US ten-year Treasury benchmark is 4.63 % — US Treasury 10 Yr (as of 2026-08-05, US Department of the Treasury)."
+    }
+  },
+  {
+    "at": 1786295559464,
+    "skill": "money_map",
+    "params": {
+      "action": "show",
+      "field": "contract_monthly_income"
+    },
+    "result": {
+      "ok": false,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. Show does not accept the field argument."
+    }
+  },
+  {
+    "at": 1786295559776,
+    "skill": "money_map",
+    "params": {
+      "action": "answer",
+      "field": "contract_monthly_income"
+    },
+    "result": {
+      "ok": false,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. Keep the user's original spoken answer in raw_answer."
+    }
+  },
+  {
+    "at": 1786295560464,
+    "skill": "money_map",
+    "params": {
+      "action": "answer",
+      "field": "contract_monthly_income"
+    },
+    "result": {
+      "ok": false,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. Keep the user's original spoken answer in raw_answer."
+    }
+  },
+  {
+    "at": 1786296141761,
+    "skill": "opportunity_radar",
+    "params": {
+      "action": "run"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. Opportunity Radar from 2026-08-09. I found 4 sourced research leads. Ranked by how fast and cheap they are to test. Finding 1. User theme: Africa-linked opportunities. What: this weekly sweep surfaced a research lead from Opportunity Radar source one. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Confidence low. Next step: Review this source this week and write down one claim to verify. Source: Opportunity Radar source one. Finding 2. User theme: global macro. What: this weekly sweep surfaced a research lead from Opportunity Radar source two. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Confidence low. Next step: Review this source this week and write down one claim to verify. Source: Opportunity Radar source two. Finding 3. User theme: Africa-linked opportunities. What: this weekly sweep surfaced a research lead from Opportunity Radar source three. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Confidence low. Next step: Review this source this week and write down one claim to verify. Source: Opportunity Radar source three. Finding 4. User theme: global macro. What: this weekly sweep surfaced a research lead from Opportunity Radar source four. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Confidence low. Next step: Review this source this week and write down one claim to verify. Source: Opportunity Radar source four. Verified market context: The exchange-rate reference is 129.4229 KES per 1 USD (as of 2026-08-09, Verified exchange-rate source); The US ten-year Treasury benchmark is 4.65 % — US Treasury 10 Yr (as of 2026-08-07, US Department of the Treasury)."
+    }
+  },
+  {
+    "at": 1786298456500,
+    "skill": "money_map",
+    "params": {
+      "action": "show",
+      "field": "contract_monthly_income"
+    },
+    "result": {
+      "ok": false,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. Show does not accept the field argument."
+    }
+  },
+  {
+    "at": 1786298456982,
+    "skill": "money_map",
+    "params": {
+      "action": "answer",
+      "field": "contract_monthly_income"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. During a paid ship-contract month, roughly how much comes in after tax and personal shipboard costs, in whole units, and which three-letter currency should this map use?"
+    }
+  },
+  {
+    "at": 1786345646164,
+    "skill": "daily_brief",
+    "params": {},
+    "result": {
+      "ok": true,
+      "summary": "Mail first: your inbox is clear and 1 thread looks stuck — ask me about follow-ups. For today, you have no reminders due. Money minute: USD to Kenyan shilling is 129.359 KES per 1 USD (as of 2026-08-10, ExchangeRate-API (open endpoint)). The Treasury yield is unreachable right now. And around the world, Tensions rise between Italy and Spain over migrant influx, while thousands face drone strikes and water shortages in el-Obeid. Diplomatic spats and humanitarian crises unfold globally. Shall I dig into any of these?"
+    }
+  },
+  {
+    "at": 1786445690454,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "2 unread email(s)."
+    }
+  },
+  {
+    "at": 1786446112849,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "2 unread email(s)."
+    }
+  },
+  {
+    "at": 1787495374602,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": false,
+      "summary": "I couldn't open Terminal."
+    }
+  },
+  {
+    "at": 1787495376839,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": false,
+      "summary": "I couldn't open Terminal."
+    }
+  },
+  {
+    "at": 1787553485096,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787554575411,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787554619509,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787554642575,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787554714655,
+    "skill": "run_command",
+    "params": {
+      "command": "echo 'Hello from AI'",
+      "working_directory": "/"
+    },
+    "result": {
+      "ok": false,
+      "summary": "That's outside your approved workspace."
+    }
+  },
+  {
+    "at": 1787554799953,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_and_run",
+      "text": "echo AI"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I ran `echo AI` in Terminal."
+    }
+  },
+  {
+    "at": 1787554834329,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787554860882,
+    "skill": "run_command",
+    "params": {
+      "command": "echo AI",
+      "working_directory": "/"
+    },
+    "result": {
+      "ok": false,
+      "summary": "That's outside your approved workspace."
+    }
+  },
+  {
+    "at": 1787599851784,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787599959338,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_text",
+      "text": "ai"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I typed `ai` in Terminal — it's waiting, not run."
+    }
+  },
+  {
+    "at": 1787600043700,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_and_run",
+      "text": "echo hello Artemis"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I ran `echo hello Artemis` in Terminal."
+    }
+  },
+  {
+    "at": 1787600045848,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_text",
+      "text": "tell Claude to continue"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I typed `tell Claude to continue` in Terminal — it's waiting, not run."
+    }
+  },
+  {
+    "at": 1787600750048,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787603218049,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787603297976,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787603315566,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "full"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the full dashboard."
+    }
+  },
+  {
+    "at": 1787603328152,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787603387244,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787603394821,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_text",
+      "text": "AI"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I typed `AI` in Terminal — it's waiting, not run."
+    }
+  },
+  {
+    "at": 1787603450464,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_and_run",
+      "text": "AI"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I ran `AI` in Terminal."
+    }
+  },
+  {
+    "at": 1787603464796,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_and_run",
+      "text": "ai"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I ran `ai` in Terminal."
+    }
+  },
+  {
+    "at": 1787603503430,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_text",
+      "text": "one and press enter, please"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I typed `one and press enter, please` in Terminal — it's waiting, not run."
+    }
+  },
+  {
+    "at": 1787603542331,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_and_run",
+      "text": "1"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I ran `1` in Terminal."
+    }
+  },
+  {
+    "at": 1787603680962,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "full"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the full dashboard."
+    }
+  },
+  {
+    "at": 1787682051761,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787722323557,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787738844779,
+    "skill": "opportunity_radar",
+    "params": {
+      "action": "run"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I'm a research assistant, not a licensed financial advisor. This is education and planning, not a promise of returns or a recommendation to buy anything. Opportunity Radar from 2026-08-26. I found 4 sourced research leads. Ranked by how fast and cheap they are to test. Finding 1. User theme: Africa-linked opportunities. What: this weekly sweep surfaced a research lead from Opportunity Radar source one. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Confidence low. Next step: Review this source this week and write down one claim to verify. Source: Opportunity Radar source one. Finding 2. User theme: global macro. What: this weekly sweep surfaced a research lead from Opportunity Radar source two. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Confidence low. Next step: Review this source this week and write down one claim to verify. Source: Opportunity Radar source two. Finding 3. User theme: Africa-linked opportunities. What: this weekly sweep surfaced a research lead from Opportunity Radar source three. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Confidence low. Next step: Review this source this week and write down one claim to verify. Source: Opportunity Radar source three. Finding 4. User theme: global macro. What: this weekly sweep surfaced a research lead from Opportunity Radar source four. Why now: it appeared in this sweep, but no dated catalyst was verified. Risks: source coverage is not proof of an opportunity; currency, access, liquidity, custody, fees, tax, and permanent loss still need checking. Horizon: treat this as a lead for further research, not a timing signal. Confidence low. Next step: Review this source this week and write down one claim to verify. Source: Opportunity Radar source four. Verified market context: The exchange-rate reference is 129.456 KES per 1 USD (as of 2026-08-26, Verified exchange-rate source). Some requested market context was unavailable, so I did not substitute a number."
+    }
+  },
+  {
+    "at": 1787741796818,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787741811207,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "full"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the full dashboard."
+    }
+  },
+  {
+    "at": 1787764652381,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787764662723,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787764768376,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_text",
+      "text": "inside the terminal AI and paste it"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I typed `inside the terminal AI and paste it` in Terminal — it's waiting, not run."
+    }
+  },
+  {
+    "at": 1787850570555,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787850586901,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "full"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the full dashboard."
+    }
+  },
+  {
+    "at": 1787851745984,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "background"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the background."
+    }
+  },
+  {
+    "at": 1787858005719,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787858012841,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "full"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the full dashboard."
+    }
+  },
+  {
+    "at": 1787858250565,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal is open."
+    }
+  },
+  {
+    "at": 1787860727864,
+    "skill": "set_presentation",
+    "params": {
+      "mode": "pill"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Switching to the floating pill."
+    }
+  },
+  {
+    "at": 1787860736835,
+    "skill": "computer_control",
+    "params": {
+      "action": "open_application",
+      "name": "Terminal"
+    },
+    "result": {
+      "ok": true,
+      "summary": "Terminal's open."
+    }
+  },
+  {
+    "at": 1787860745535,
+    "skill": "computer_control",
+    "params": {
+      "action": "type_text",
+      "text": "inside local AI"
+    },
+    "result": {
+      "ok": true,
+      "summary": "I typed `inside local AI` in Terminal — it's waiting, not run."
+    }
+  },
+  {
+    "at": 1787861140478,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "2 unread email(s)."
+    }
+  },
+  {
+    "at": 1787861296118,
+    "skill": "check_email",
+    "params": {
+      "max": 5
+    },
+    "result": {
+      "ok": true,
+      "summary": "2 unread email(s)."
+    }
+  }
+]

@@ -73,7 +73,15 @@ async function confirmHandler(id, decision) {
   ]) {
     assert.equal(confirmationDecision(text), "no", `"${text}" must never confirm`);
   }
-  assert.equal(confirmationDecision("open it"), "yes");
+  assert.equal(confirmationDecision("open it", "open_url"), "yes",
+    "repeating the pending open-verb is consent for that open");
+  assert.equal(confirmationDecision("open it", "delete_email"), null,
+    "open-it must not approve a delete (or any other pending tool)");
+  assert.equal(confirmationDecision("send it later", "send_message"), null,
+    "a postponed send is not consent");
+  assert.equal(confirmationDecision("ok, send it later", "send_message"), null,
+    "ok plus later is still a postponement, not a yes");
+  assert.equal(confirmationDecision("delete them", "delete_email"), "yes");
   assert.equal(confirmationDecision("maybe"), null);
 
   console.log("PASS ✅  confirm-gate: a 'send' cannot fire without an explicit yes (0 calls on no/expired, 1 on yes)");
