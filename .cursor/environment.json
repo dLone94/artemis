@@ -1,0 +1,17 @@
+{
+  "name": "Artemis",
+  "install": "node --version",
+  "terminals": [
+    {
+      "name": "artemis-server",
+      "command": "node server.js",
+      "description": "Artemis voice assistant server, serving the cockpit UI and API at http://localhost:4100. Zero-dependency Node app: no build step and no npm install required."
+    }
+  ],
+  "ports": [
+    {
+      "name": "artemis",
+      "port": 4100
+    }
+  ]
+}
