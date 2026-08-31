@@ -102,7 +102,7 @@ import {
   announceEmails,
   summarizeEmails,
   detailEmail,
-  emailFollowupForText,
+  emailFollowupAgainst,
   resolveEmailReference,
   staleContextReply,
   ambiguityReply,
@@ -1445,35 +1445,15 @@ async function callClaude(messages, tone, opts = {}) {
 
       // SAFETY GATE: registry-confirmed skills (including local mutations after
       // untrusted reads) stop here and ask first. Execution is /api/confirm only.
-      const confirm = toolUses.find((b) => {
-        const skill = getSkill(b.name);
-        return skill && (
-          skill.requiresConfirmation ||
-          confirmNeeded(b, readUntrusted, caps)
-        );
-      });
-      if (confirm) {
-        const params = confirm.input || {};
-        const pre = await precheckSkill(confirm.name, params, skillCtx);
-        if (!pre.ok) {
-          return {
-            reply: pre.summary,
-            sources: dedupeSources(sources),
-            clientActions: [],
-            mailUntrusted
-          };
-        }
-        const confirmId = createPending(confirm.name, params);
-        return {
-          reply: confirmPromptFor(confirm.name, params),
-          sources: dedupeSources(sources),
-          mailUntrusted,
-          pendingAction: { confirmId, name: confirm.name, params }
-        };
-      }
+      // Mixed batches run the non-confirm calls first so a delete's precheck
+      // sees the listing this round just fetched — same rule as the NVIDIA loop.
+      const confirm = toolUses.find((b) => confirmNeeded(b, readUntrusted, caps));
+      const runnable = confirm
+        ? toolUses.filter((b) => !confirmNeeded(b, readUntrusted, caps))
+        : toolUses;
 
       const toolResults = [];
-      for (const block of toolUses) {
+      for (const block of runnable) {
         if (blockedAfterMailRead(block.name, mailUntrusted)) {
           toolResults.push({
             type: "tool_result",
@@ -1559,6 +1539,26 @@ async function callClaude(messages, tone, opts = {}) {
           }
         }
       }
+      if (confirm) {
+        const params = confirm.input || {};
+        const pre = await precheckSkill(confirm.name, params, skillCtx);
+        if (!pre.ok) {
+          return {
+            reply: pre.summary,
+            sources: dedupeSources(sources),
+            clientActions: dropTaintedOpens(clientActions, readUntrusted),
+            mailUntrusted
+          };
+        }
+        const confirmId = createPending(confirm.name, params);
+        return {
+          reply: confirmPromptFor(confirm.name, params),
+          sources: dedupeSources(sources),
+          clientActions: dropTaintedOpens(clientActions, readUntrusted),
+          mailUntrusted,
+          pendingAction: { confirmId, name: confirm.name, params }
+        };
+      }
       if (toolResults.length === 0) {
         return { reply: parsed.text || "(no response)", sources: dedupeSources(sources), clientActions: dropTaintedOpens(clientActions, readUntrusted), mailUntrusted };
       }
@@ -1640,6 +1640,68 @@ function callArguments(call) {
 }
 function confirmNeeded(call, tainted, caps) {
   return needsConfirmation(call.name, { tainted, args: callArguments(call) }, caps);
+}
+
+/** Split a tool batch into immediately-runnable reads vs. a confirm-gated mutation. */
+function partitionConfirmBatch(calls, state, caps) {
+  const list = Array.isArray(calls) ? calls : [];
+  const confirm = list.find((tc) => confirmNeeded(tc, state.readUntrusted, caps));
+  const runnable = list.filter((tc) => !confirmNeeded(tc, state.readUntrusted, caps));
+  return { confirm, runnable };
+}
+
+/**
+ * Mixed rounds (read + confirm-gated mutation) must run the reads FIRST so the
+ * mutation's precheck sees a fresh listing. Returning the confirm gate without
+ * running check_email is how "check my email and delete the unread ones" asked
+ * to trash yesterday's mail — or asked to confirm nothing, because the listing
+ * was empty. The backstop already does this; the primary loops must too.
+ *
+ * @returns {Promise<{kind:"ran"}|{kind:"recover"}|{kind:"precheck-failed",pre,name}|{kind:"pending",pending,reply}>}
+ */
+async function gateOrRunToolCalls(calls, convo, sources, clientActions, state, opts, extra = {}) {
+  const { confirm, runnable } = partitionConfirmBatch(calls, state, opts.caps);
+  if (runnable.length) {
+    convo.push({
+      role: "assistant",
+      content: extra.assistantContent ?? null,
+      tool_calls: runnable.map((tc) => ({
+        id: tc.id,
+        type: "function",
+        function: { name: tc.name, arguments: tc.arguments }
+      }))
+    });
+    await runToolCalls(runnable, convo, sources, clientActions, state, opts);
+  }
+  if (!confirm) return { kind: "ran" };
+  let params = {};
+  try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
+  const pre = await precheckSkill(confirm.name, params, skillCtx);
+  if (!pre.ok) {
+    state.rejected.push({ name: confirm.name, error: "precondition failed" });
+    if (!state.precheckRecovered && pre.content) {
+      state.precheckRecovered = true;
+      convo.push({
+        role: "assistant",
+        content: extra.assistantContent ?? null,
+        tool_calls: [{
+          id: confirm.id,
+          type: "function",
+          function: { name: confirm.name, arguments: confirm.arguments }
+        }]
+      });
+      convo.push({ role: "tool", tool_call_id: confirm.id, content: String(pre.content) });
+      return { kind: "recover" };
+    }
+    return { kind: "precheck-failed", pre, name: confirm.name };
+  }
+  const confirmId = createPending(confirm.name, params);
+  logTurn(state, { awaitingConfirm: confirm.name });
+  return {
+    kind: "pending",
+    pending: { confirmId, name: confirm.name, params },
+    reply: confirmPromptFor(confirm.name, params)
+  };
 }
 
 // ---- process ownership ------------------------------------------------------
@@ -2610,40 +2672,26 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
         const msg = (data.choices && data.choices[0] && data.choices[0].message) || {};
         const forced = openaiCompat.fromWire(data).toolCalls;
         if (forced.length) {
-          const confirm = forced.find((tc) => confirmNeeded(tc, state.readUntrusted, caps));
-          if (confirm) {
-            let params = {};
-            try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
-            const pre = await precheckSkill(confirm.name, params, skillCtx);
-            if (!pre.ok) {
-              state.rejected.push({ name: confirm.name, error: "precondition failed" });
-              // Recoverable ONCE per turn: hand the model the precheck's
-              // instruction as a tool result and let the loop continue (e.g.
-              // "call check_email first, then delete"). Ending the turn here
-              // spoke the summary while nothing happened — the exact bug.
-              if (!state.precheckRecovered && pre.content) {
-                state.precheckRecovered = true;
-                convo.push({ role: "assistant", content: null, tool_calls: [{ id: confirm.id, type: "function", function: { name: confirm.name, arguments: confirm.arguments } }] });
-                convo.push({ role: "tool", tool_call_id: confirm.id, content: String(pre.content) });
-                continue;
-              }
-              onText(pre.summary);
-              return finishTurn({ preconditionFailed: confirm.name });
-            }
-            const confirmId = createPending(confirm.name, params);
-            logTurn(state, { awaitingConfirm: confirm.name });
+          const gated = await gateOrRunToolCalls(
+            forced, convo, sources, clientActions, state, toolOpts,
+            { assistantContent: msg.content || null }
+          );
+          if (gated.kind === "recover") continue;
+          if (gated.kind === "precheck-failed") {
+            onText(gated.pre.summary);
+            return finishTurn({ preconditionFailed: gated.name });
+          }
+          if (gated.kind === "pending") {
             return {
-              reply: confirmPromptFor(confirm.name, params),
+              reply: gated.reply,
               sources: dedupeSources(sources),
               clientActions,
               toolsUsed: state.tools,
               intent: state.intent.intent,
               mailUntrusted: state.mailUntrusted,
-              pendingAction: { confirmId, name: confirm.name, params }
+              pendingAction: gated.pending
             };
           }
-          convo.push({ role: "assistant", content: msg.content || null, tool_calls: forced.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })) });
-          await runToolCalls(forced, convo, sources, clientActions, state, toolOpts);
           continue;   // the answer round streams normally
         }
         // no tool call: fall through to the streaming path, then the backstop
@@ -2750,40 +2798,28 @@ async function streamNvidia(messages, tone, onText, opts = {}) {
     if (toolCalls.length) {
       // SAFETY GATE — validated against the registry, and a mutation on a turn
       // that read untrusted text needs a spoken yes even if the skill itself
-      // doesn't normally ask.
-      const confirm = toolCalls.find((tc) => confirmNeeded(tc, state.readUntrusted, caps));
-      if (confirm) {
-        let params = {};
-        try { params = JSON.parse(confirm.arguments || "{}"); } catch (e) {}
-        // Ask only about things that could actually happen. Confirming an action
-        // whose preconditions already fail costs a whole round and then says no —
-        // which is precisely the loop this exists to prevent.
-        const pre = await precheckSkill(confirm.name, params, skillCtx);
-        if (!pre.ok) {
-          state.rejected.push({ name: confirm.name, error: "precondition failed" });
-          if (!state.precheckRecovered && pre.content) {
-            state.precheckRecovered = true;
-            convo.push({ role: "assistant", content: contentBuf || null, tool_calls: [{ id: confirm.id, type: "function", function: { name: confirm.name, arguments: confirm.arguments } }] });
-            convo.push({ role: "tool", tool_call_id: confirm.id, content: String(pre.content) });
-            continue;
-          }
-          onText(pre.summary);
-          return finishTurn({ preconditionFailed: confirm.name });
-        }
-        const confirmId = createPending(confirm.name, params);
-        logTurn(state, { awaitingConfirm: confirm.name });
+      // doesn't normally ask. Mixed batches run the reads first so a delete's
+      // precheck sees the listing this round just fetched.
+      const gated = await gateOrRunToolCalls(
+        toolCalls, convo, sources, clientActions, state, toolOpts,
+        { assistantContent: contentBuf || null }
+      );
+      if (gated.kind === "recover") continue;
+      if (gated.kind === "precheck-failed") {
+        onText(gated.pre.summary);
+        return finishTurn({ preconditionFailed: gated.name });
+      }
+      if (gated.kind === "pending") {
         return {
-          reply: confirmPromptFor(confirm.name, params),
+          reply: gated.reply,
           sources: dedupeSources(sources),
           clientActions,
           toolsUsed: state.tools,
           intent: state.intent.intent,
           mailUntrusted: state.mailUntrusted,
-          pendingAction: { confirmId, name: confirm.name, params }
+          pendingAction: gated.pending
         };
       }
-      convo.push({ role: "assistant", content: contentBuf || null, tool_calls: toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })) });
-      await runToolCalls(toolCalls, convo, sources, clientActions, state, toolOpts);
       continue; // next round streams the spoken answer
     }
 
@@ -3069,7 +3105,7 @@ async function dispatchDirectSkill(name, params) {
   const skill = getSkill(name);
   if (!skill) return { ok: false, reply: "That isn't connected right now.", content: "", clientActions: [] };
   if (typeof skill.precheck === "function") {
-    const pre = skill.precheck(params);
+    const pre = await skill.precheck(params, skillCtx);
     if (pre && pre.ok === false) {
       return { ok: false, reply: pre.summary || "I can't do that.", content: "", clientActions: [] };
     }
@@ -3097,8 +3133,9 @@ async function dispatchDirectSkill(name, params) {
   if (result.presentation) clientActions.push({ type: "presentation", mode: result.presentation });
   return {
     ok: result.ok !== false,
-    reply: result.summary || (result.ok !== false ? "Done." : "That didn't work."),
+    reply: result.spoken || result.summary || (result.ok !== false ? "Done." : "That didn't work."),
     content: result.content || "",
+    spoken: result.spoken,
     clientActions
   };
 }
@@ -3234,24 +3271,19 @@ function runShutdownTurn({ check }) {
   };
 }
 
-// Email follow-ups ride the set she JUST announced — no re-read of the inbox,
-// no model round, and no escalation she was not asked for. Level 1 summarises
-// the set; level 2/3 resolve one email by position or sender. A stale or empty
-// set says so honestly instead of silently listing the inbox again.
+// Email follow-ups ride the set she JUST announced — no re-read of the inbox
+// for metadata, no model round, and no escalation she was not asked for.
+// Level 1 summarises the set; level 2 details one email from that set; level 3
+// reads one email through the read_email skill so the permission gate, the
+// action log and the taint marking all still apply. A stale or empty set says
+// so honestly instead of silently listing the inbox again — and a level-3
+// phrasing with no fresh set is not claimed at all, so "open the second one"
+// can still mean an app.
 function emailFollowupIntent(messages) {
-  const text = lastUserText(messages);
-  const followup = emailFollowupForText(text);
-  if (!followup) return null;
-  // LEVEL 3 (read/open one email) deliberately does NOT shortcut: reading an
-  // email must keep going through the read_email skill, so the permission
-  // gate, the action log and the taint marking all still apply. Only the
-  // metadata levels — the set summary and one email's gist — are answered
-  // from the set already in hand.
-  if (followup.level >= 3) return null;
-  return { followup, emails: recentEmailSet(EMAIL_CONTEXT_TTL_MS) };
+  return emailFollowupAgainst(lastUserText(messages), recentEmailSet(EMAIL_CONTEXT_TTL_MS));
 }
 
-function runEmailFollowupTurn({ followup, emails }) {
+async function runEmailFollowupTurn({ followup, emails }) {
   if (!emails.length) {
     return { ok: true, reply: staleContextReply(), clientActions: [], toolsUsed: [] };
   }
@@ -3265,13 +3297,22 @@ function runEmailFollowupTurn({ followup, emails }) {
       : "I don't have that one in the set I just read. Want me to check the inbox again?";
     return { ok: true, reply, clientActions: [], toolsUsed: [] };
   }
-  // Level 2 and 3 both speak from the already-fetched item; nothing here opens
-  // a mailbox, and the text stays sanitized, untrusted DATA.
+  if (followup.level < 3) {
+    return {
+      ok: true,
+      reply: detailEmail(resolved.mail),
+      clientActions: [],
+      toolsUsed: [],
+      screenUntrusted: true
+    };
+  }
+  // Level 3 goes through the skill: fetch the body, log the action, taint the turn.
+  const run = await dispatchDirectSkill("read_email", { number: resolved.index + 1 });
   return {
-    ok: true,
-    reply: detailEmail(resolved.mail),
-    clientActions: [],
-    toolsUsed: [],
+    ok: run.ok !== false,
+    reply: run.spoken || run.reply,
+    clientActions: run.clientActions || [],
+    toolsUsed: ["read_email"],
     screenUntrusted: true
   };
 }
@@ -4470,14 +4511,14 @@ async function handleRequest(req, res) {
       }
       const chatMailFollowup = emailFollowupIntent(messages);
       if (chatMailFollowup) {
-        const run = runEmailFollowupTurn(chatMailFollowup);
+        const run = await runEmailFollowupTurn(chatMailFollowup);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
           ok: true,
           reply: run.reply,
           sources: [],
-          clientActions: [],
-          toolsUsed: [],
+          clientActions: run.clientActions || [],
+          toolsUsed: run.toolsUsed || [],
           intent: "executable_action",
           mailUntrusted: !!run.screenUntrusted
         }));
@@ -4999,14 +5040,14 @@ async function handleRequest(req, res) {
         try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) {}
       };
       send("intent_pending", { intent: "executable_action", family: "email" });
-      const run = runEmailFollowupTurn(mailFollowup);
+      const run = await runEmailFollowupTurn(mailFollowup);
       if (run.screenUntrusted) send("mail_taint", { mailUntrusted: true });
       send("token", { t: run.reply });
       send("done", {
         sources: [],
         model: "local-code",
-        clientActions: [],
-        toolsUsed: [],
+        clientActions: run.clientActions || [],
+        toolsUsed: run.toolsUsed || [],
         intent: "executable_action",
         mailUntrusted: !!run.screenUntrusted
       });

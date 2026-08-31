@@ -69,6 +69,7 @@ test("every terminal voice state routes back through re-arm", () => {
 });
 
 test("the capture state is broadcast so the mix can react to a REAL wake", () => {
-  assert.match(main, /detail: "capturing"/, "capture start is announced");
+  assert.match(main, /wakeCapturing\) \? "capturing"/, "listening during capture is remapped to capturing for the mix");
+  assert.match(main, /detail: mixState/, "the remapped state is what the bed hears");
   assert.match(main, /detail: "listening"/, "and capture end returns to armed");
 });

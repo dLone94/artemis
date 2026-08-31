@@ -166,6 +166,33 @@ try {
 
   console.log("  ✓ a failed precheck hands the model its instruction and the turn continues");
   console.log("  ✓ the second round sees both the rejected call and the recovery instruction");
+
+  // Mixed round: the model emits check_email AND delete_email together.
+  // The reads must actually run before the confirm gate is raised — otherwise
+  // we confirm against a stale listing (or confirm nothing, because there is
+  // no listing yet).
+  {
+    await brain.setScript([
+      {
+        toolCalls: [
+          { name: "check_email", arguments: { max: 10 } },
+          { name: "delete_email", arguments: { numbers: [1, 2, 3] } }
+        ]
+      },
+      { text: "Here is what I found." },
+      { text: "(spare round)" }
+    ]);
+    const events = await chat(PORT, "check my emails and delete them");
+    const done = events.find((entry) => entry.event === "done");
+    assert.ok(done, "the mixed turn should complete");
+    const tools = (done.data && done.data.toolsUsed) || [];
+    assert.ok(
+      tools.includes("check_email"),
+      `mixed batch must run the read before asking to confirm (toolsUsed=${JSON.stringify(tools)})`
+    );
+    console.log("  ✓ a mixed read+delete round runs check_email before the confirm gate");
+  }
+
   console.log("PASS ✅  precheck-recovery: a recoverable precondition keeps the turn alive");
 } catch (error) {
   failed = true;

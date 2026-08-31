@@ -9,8 +9,10 @@ import {
   dropPending,
   getPending,
   getSkill,
-  precheckSkill
+  precheckSkill,
+  recentEmailSet
 } from "../skills.js";
+import { EMAIL_CONTEXT_TTL_MS } from "../emailBriefing.js";
 import {
   classifyIntent,
   needsConfirmation,
@@ -119,6 +121,23 @@ async function offerConfirmation(params) {
   console.log("  ✓ an empty listing asks for check_email before offering confirmation");
 }
 
+// 3b) An expired listing is the same as no listing: don't trash or read from it.
+{
+  await recordListing(inbox);
+  assert.equal(recentEmailSet().length, 2, "a fresh listing is referable");
+  assert.equal(
+    recentEmailSet(1, Date.now() + EMAIL_CONTEXT_TTL_MS + 1).length,
+    0,
+    "the same listing is empty once the follow-up window expires"
+  );
+  const src = readFileSync(new URL("../skills.js", import.meta.url), "utf8");
+  assert.match(src, /function resolveEmailSelection[\s\S]*recentEmailSet\(\)/,
+    "delete_email resolves against the TTL-aware set, not the raw listing");
+  assert.match(src, /const item = recentEmailSet\(\)/,
+    "read_email resolves against the TTL-aware set, not the raw listing");
+  console.log("  ✓ an expired listing cannot be read or trashed");
+}
+
 // 4) Instructions inside an email remain untrusted data. A read turn cannot
 // force-select deletion, and attacker-shaped query arguments cannot validate.
 {
@@ -224,6 +243,17 @@ async function offerConfirmation(params) {
   assert.match(gmailSource, /\/messages\/\$\{encodeURIComponent\(id\)\}\/trash/);
   assert.match(gmailSource, /method:\s*"POST"/);
   console.log("  ✓ gmail.js contains only the recoverable trash endpoint");
+}
+
+{
+  const serverSource = readFileSync(new URL("../server.js", import.meta.url), "utf8");
+  assert.match(serverSource, /async function gateOrRunToolCalls/,
+    "mixed read+confirm batches share one helper rather than three drifting copies");
+  assert.match(serverSource, /const pre = await skill\.precheck\(params/,
+    "direct dispatch awaits async prechecks instead of treating a Promise as success");
+  assert.match(serverSource, /emailFollowupAgainst/,
+    "level-3 'read/open the second one' is claimed while a fresh listing exists");
+  console.log("  ✓ mixed-batch confirm, awaited precheck, and level-3 email routing are wired");
 }
 
 console.log("PASS ✅  email-delete: numbered, named, recoverable Gmail trashing stays behind an explicit yes");
