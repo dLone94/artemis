@@ -273,8 +273,14 @@ orb.setStatus = (s) => {
   // Broadcast the same state to anything that isn't the cockpit HUD. The music
   // bed needs it to duck, and on about.html the HUD does not exist — hud() is a
   // no-op there, so a listener that went through it would never hear a word.
-  document.body.dataset.aiState = s;
-  try { window.dispatchEvent(new CustomEvent("artemis-voice-state", { detail: s })); } catch (e) {}
+  //
+  // Capture is a real, bounded duck ("capturing"), not "listening". The orb
+  // still shows listening so the visual stays familiar, but the mix must not
+  // treat that as the resting armed state — setStatus("listening") used to
+  // overwrite the capturing broadcast and the bed never dipped.
+  const mixState = (s === "listening" && wakeCapturing) ? "capturing" : s;
+  document.body.dataset.aiState = mixState;
+  try { window.dispatchEvent(new CustomEvent("artemis-voice-state", { detail: mixState })); } catch (e) {}
 };
 
 const liveStatus = $("liveStatus");
@@ -1803,6 +1809,7 @@ let wakeRecMeetingGeneration = 0;
 let wakeArmed = false;        // true after "Artemis" with no command → next phrase is the command
 let wakeArmedTimer = null;
 let wakeWatchdog = 0;
+let wakeCapturing = false;    // true while the local engine is recording the post-wake command
 
 // Start the recognizer safely — swallow "already started" / throttle errors.
 function safeStartRec() {
@@ -2489,7 +2496,6 @@ function dispatchUtterance(text, { suppressClosingAck = false } = {}) {
 // the same mic stream — including ~1.2s of pre-roll from before detection
 // fired — so nothing you said is ever lost to a mic handoff. The WAV goes to
 // batch STT (the reliable path); no MediaRecorder, no chunk streaming.
-let wakeCapturing = false;
 async function onLocalWake(ev) {
   if (ev && ev.error) {
     setLiveStatus("Wake audio stalled.");
@@ -2504,8 +2510,9 @@ async function onLocalWake(ev) {
   wakeCapturing = true;
   // The bed drops to the capture level ONLY here — after the wake word fired
   // and while her command is actually being recorded. Merely being armed is
-  // the resting state and must stay at full level.
-  try { window.dispatchEvent(new CustomEvent("artemis-voice-state", { detail: "capturing" })); } catch (e) {}
+  // the resting state and must stay at full level. setStatus("listening")
+  // below keeps the orb visual; the mix maps it to "capturing" while this flag
+  // is set so it does not restore the resting gain.
   playEarcon();
   orb.feed(0.6);
   orb.setStatus("listening");
@@ -2827,7 +2834,7 @@ function runWakeCommand(cmd, { suppressClosingAck = false } = {}) {
 
 function handleWake(raw) {
   if (meetingVoiceActive()) return;
-  const w = matchWake(raw);
+  const w = matchWake(raw, activeWakeProfile());
   let interruptedTts = false;
   // If she's mid-sentence when you say her name, that's an interrupt — stop her
   // and take the command, don't drop it. (Only a fresh wake word interrupts; a

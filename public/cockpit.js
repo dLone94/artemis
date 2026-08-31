@@ -450,11 +450,14 @@ const music = (() => {
     btn.textContent = "MUSIC: " + (!available ? "ADD FILE" : el && !el.paused ? "ON" : "OFF");
     btn.classList.toggle("is-na", !available);
   }
-  // duck under her voice, and only under her voice
+  // duck under her voice, and under post-wake command capture — not under
+  // the armed "listening" rest state. Capture arrives via artemis-voice-state
+  // because the orb stays on "listening" visually while the mix uses "capturing".
   function onState(s) {
     if (!el || el.paused) return;
     fadeTo(levelFor(s), musicRampMs(s));
   }
+  try { window.addEventListener("artemis-voice-state", (e) => onState(e.detail)); } catch (e) {}
   // is a file actually there? (startIfWanted waits on this so the boot-tap
   // restore doesn't lose a race with the probe and play the wrong bed)
   const probeP = fetch("/assets/music.mp3", { method: "HEAD" })

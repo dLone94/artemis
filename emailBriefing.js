@@ -92,7 +92,8 @@ const ABOUT_SET_RE =
 const SELECT_RE = new RegExp(
   String.raw`\b(?:tell\s+me\s+(?:more\s+)?about|what\s+(?:does|did)|read|open|show(?:\s+me)?|summar(?:ise|ize))\b` +
     String.raw`[^.?!]{0,40}?` +
-    String.raw`\b(?:(first|second|third|fourth|fifth|one|two|three|four|five|latest|last|newest)\s+(?:one|email|message)?|` +
+    String.raw`\b(?:(?:number|no\.?|#)\s+(\d+|one|two|three|four|five)|` +
+    String.raw`(first|second|third|fourth|fifth|one|two|three|four|five|latest|last|newest)\s+(?:one|email|message)?|` +
     String.raw`(?:the\s+)?([\w.&'-]{2,30})\s+(?:one|email|message))\b`,
   "i"
 );
@@ -109,11 +110,14 @@ export function emailFollowupForText(text) {
   if (!s) return null;
   const select = s.match(SELECT_RE);
   if (select) {
-    // Either alternative can capture the token, and the sender branch can win
-    // the race on "the first one" — so classify the token, not the branch.
-    const token = String(select[1] || select[2] || "").trim();
+    // "number 2", ordinal, and sender branches each have a capture; classify
+    // the token that actually matched rather than which alternative won.
+    const token = String(select[1] || select[2] || select[3] || "").trim();
     const key = token.toLowerCase();
     const level = READ_VERB_RE.test(s) ? 3 : DETAIL_VERB_RE.test(s) ? 2 : 2;
+    if (/^\d+$/.test(key)) {
+      return { level, ref: { type: "position", value: Number(key) } };
+    }
     if (key === "latest" || key === "last" || key === "newest") {
       return { level, ref: { type: "position", value: 1 } };
     }
@@ -124,6 +128,32 @@ export function emailFollowupForText(text) {
   }
   if (ABOUT_SET_RE.test(s)) return { level: 1 };
   return null;
+}
+
+/**
+ * Should this utterance be answered as an email follow-up against `emails`?
+ *
+ * Level 1–2 (summarise the set / one gist) can claim an empty set so the
+ * caller can say the context is stale. Level 3 (read/open a specific mail)
+ * only claims the turn when a FRESH set exists — otherwise "open the second
+ * one" is not ours to steal from app launch.
+ */
+export function emailFollowupAgainst(text, emails) {
+  const followup = emailFollowupForText(text);
+  if (!followup) return null;
+  const list = Array.isArray(emails) ? emails : [];
+  if (followup.level >= 3 && !list.length) return null;
+  return { followup, emails: list };
+}
+
+/** LEVEL 3 — a spoken read of one email's body. Capped and sanitised. */
+export function spokenEmailRead(mail) {
+  if (!mail) return "I don't have that email.";
+  const who = senderName(mail.from);
+  const about = cleanText(mail.subject, 90);
+  const body = cleanText(mail.body, 700);
+  const head = about ? `${who} — ${about}.` : `${who}.`;
+  return body ? `${head} ${body}` : head;
 }
 
 /**

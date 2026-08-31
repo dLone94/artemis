@@ -79,16 +79,38 @@ function fuzzyEq(a, b) {
 }
 
 // Returns { matched:true, rest:"<command after the wake word>" } or null.
-export function matchWake(transcript) {
+export function matchWake(transcript, profile) {
   const words = normalize(transcript).split(" ").filter(Boolean);
   if (!words.length) return null;
 
-  // multi-word phrases first (more reliable): compare the first K words
-  for (const phrase of WAKE_WORDS) {
-    const pw = normalize(phrase).split(" ");
+  // The active profile's phrase and aliases first — displaying "Hey Jarvis"
+  // while matching only "Artemis" is how the browser fallback looked armed
+  // and heard nothing. WAKE_WORDS stay as a second net for Artemis mishears.
+  const phrases = [];
+  const seen = new Set();
+  const addPhrase = (phrase) => {
+    const key = normalize(phrase);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    phrases.push(key);
+  };
+  if (profile && profile.phrase) addPhrase(profile.phrase);
+  for (const phrase of WAKE_WORDS) addPhrase(phrase);
+
+  for (const phrase of phrases) {
+    const pw = phrase.split(" ").filter(Boolean);
     if (words.length < pw.length) continue;
     const ok = pw.every((p, i) => fuzzyEq(words[i], p));
     if (ok) return { matched: true, rest: words.slice(pw.length).join(" ") };
+  }
+
+  if (profile && profile.aliasPattern) {
+    try {
+      const alias = new RegExp(`^(?:${profile.aliasPattern})$`, "i");
+      for (let i = 0; i < Math.min(words.length, 3); i++) {
+        if (alias.test(words[i])) return { matched: true, rest: words.slice(i + 1).join(" ") };
+      }
+    } catch (e) { /* invalid aliasPattern is a profile-validation concern */ }
   }
 
   // single "artemis" appearing within the first 3 words (e.g. "um, artemis …")

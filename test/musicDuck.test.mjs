@@ -22,6 +22,7 @@ const read = (rel) => readFileSync(join(ROOT, rel), "utf8");
 import {
   BACKGROUND_MUSIC_GAIN,
   BACKGROUND_MUSIC_DUCK_GAIN,
+  BACKGROUND_MUSIC_LISTEN_GAIN,
   musicGainFor,
   musicRampMs
 } from "../public/musicLevels.js";
@@ -134,6 +135,16 @@ test("wake-armed listening must NOT duck", async () => {
   assert.ok(Math.abs(m.audio.volume - FULL) < 1e-6, `listening must stay at ${FULL}, got ${m.audio.volume}`);
 });
 
+test("post-wake command capture DOES duck — listening is rest, capturing is not", async () => {
+  const m = await bootPageMusic();
+  m.say("capturing");
+  m.advance(1000);
+  assert.ok(
+    Math.abs(m.audio.volume - BACKGROUND_MUSIC_LISTEN_GAIN) < 1e-6,
+    `capturing must sit at ${BACKGROUND_MUSIC_LISTEN_GAIN}, got ${m.audio.volume}`
+  );
+});
+
 test("thinking must not duck either — she isn't talking yet", async () => {
   const m = await bootPageMusic();
   m.say("thinking");
@@ -206,6 +217,7 @@ test("the levels are quiet enough for speech to dominate", () => {
   assert.equal(musicGainFor("speaking"), DUCKED);
   assert.equal(musicGainFor("idle"), BACKGROUND_MUSIC_GAIN);
   assert.equal(musicGainFor("listening"), BACKGROUND_MUSIC_GAIN, "listening is the resting state, not a duck");
+  assert.equal(musicGainFor("capturing"), BACKGROUND_MUSIC_LISTEN_GAIN, "post-wake capture dips the bed");
   // attack fast, release slow — no pumping between sentences
   assert.ok(musicRampMs("speaking") <= 250 && musicRampMs("speaking") >= 100);
   assert.ok(musicRampMs("idle") >= 500 && musicRampMs("idle") <= 1000);
@@ -226,6 +238,8 @@ test("the cockpit ducks on speech only — the state the daily driver runs in", 
   assert.match(cockpit, /el\.volume = FULL;/, "the element is created at the resting gain");
   assert.match(cockpit, /el\.volume = levelFor\(document\.body\.dataset\.aiState\);/,
     "play() opens at the level the CURRENT state calls for");
+  assert.match(cockpit, /artemis-voice-state/,
+    "the cockpit hears capture directly — HUD state stays 'listening' during wake capture");
 });
 
 test("main.js broadcasts the voice state outside the HUD", () => {
